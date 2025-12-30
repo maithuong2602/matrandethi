@@ -1113,7 +1113,7 @@ const QuestionManager: React.FC = () => {
                 
                 <div className="p-6 flex-1 overflow-y-auto space-y-6">
                     <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm text-yellow-800">
-                        <p>Hệ thống phát hiện <strong>{duplicateGroups.length}</strong> nhóm câu hỏi có nội dung giống nhau hoặc <strong>gần giống (>85%)</strong> trong danh sách hiện tại (do nhập thủ công hoặc chỉnh sửa).</p>
+                        <p>Hệ thống phát hiện <strong>{duplicateGroups.length}</strong> nhóm câu hỏi có nội dung giống nhau hoặc <strong>gần giống (&gt;85%)</strong> trong danh sách hiện tại (do nhập thủ công hoặc chỉnh sửa).</p>
                         <p className="mt-1">Vui lòng xem xét và xử lý trước khi xuất file.</p>
                     </div>
 
