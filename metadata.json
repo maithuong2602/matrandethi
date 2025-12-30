@@ -1,0 +1,5 @@
+{
+  "name": "matran",
+  "description": "Hệ thống quản lý đề thi chuyên nghiệp, hỗ trợ xây dựng ma trận, chuẩn hóa câu hỏi và tạo đề thi tự động.",
+  "requestFramePermissions": []
+}
