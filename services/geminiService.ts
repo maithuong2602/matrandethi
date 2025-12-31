@@ -6,7 +6,11 @@ export const generateQuestion = async (topic: string, level: string): Promise<st
     try {
         const response = await ai.models.generateContent({
             model: 'gemini-3-flash-preview',
-            contents: `Create a multiple choice question about "${topic}" at level "${level}" in Vietnamese. Format as JSON with fields: question, options (array), correctIndex.`,
+            contents: `Create a multiple choice question about "${topic}" at level "${level}" in Vietnamese. 
+            REQUIREMENTS: 
+            1. Every option text MUST end with a period (.). 
+            2. Distractors must have high noise and be highly plausible to increase difficulty.
+            Format as JSON with fields: question, options (array), correctIndex.`,
             config: {
                 responseMimeType: "application/json"
             }
@@ -22,7 +26,9 @@ export const standardizeQuestionText = async (rawText: string): Promise<string> 
     try {
         const response = await ai.models.generateContent({
             model: 'gemini-3-flash-preview',
-            contents: `Standardize the following raw question text into a structured JSON format with 'question', 'options', 'correctAnswer'.\n\nRaw Text:\n${rawText}`,
+            contents: `Standardize the following raw question text into a structured JSON format with 'question', 'options', 'correctAnswer'.
+            IMPORTANT: Ensure every option text ends with a period (.). 
+            Raw Text:\n${rawText}`,
              config: {
                 responseMimeType: "application/json"
             }
@@ -58,7 +64,7 @@ export const parseQuestionsWithAI = async (text: string, grade?: string, lesson?
         - "content": The main question text/stem.
         - "level": "NB" (Nhận biết), "TH" (Thông hiểu), "VD" (Vận dụng), or "VDC" (Vận dụng cao). If not explicitly stated, try to infer from the difficulty, or default to "NB".
         - "criteria": The criteria code (e.g. "1.1", "2.3") if present at the start of the question numbering (e.g. "Câu 1.1..."), otherwise return an empty string "".
-        - "options": (For MC only) An array of 4 objects, each having "id" (must be "A", "B", "C", "D"), "text" (string) and "isCorrect" (boolean).
+        - "options": (For MC only) An array of 4 objects, each having "id" (must be "A", "B", "C", "D"), "text" (string - MUST end with a period ".") and "isCorrect" (boolean).
         - "answer": (For Essay, Fill-in-the-blank, or single-choice MC) The answer text, key, or the correct option ID (e.g., "A").
         - "mcType": (For MC only) "multiple-choice" (single correct), "multiple-answer" (multiple correct), or "fill-blank" (if it looks like a fill-in-the-blank question). Infer this based on the options and content.
 
@@ -100,14 +106,16 @@ export const generateSingleQuestion = async (
         Yêu cầu đầu ra:
         - Câu hỏi phải rõ ràng, ngắn gọn, phù hợp với tiêu chí.
         - 4 lựa chọn, chỉ có 1 đáp án đúng.
+        - Mỗi lựa chọn trong 'options' PHẢI kết thúc bằng dấu chấm (.).
+        - Các phương án nhiễu phải có độ nhiễu cao, tính phân loại tốt, dễ gây nhầm lẫn nếu không nắm vững kiến thức.
         - Trả về định dạng JSON chính xác như sau:
         {
             "content": "Nội dung câu hỏi...",
             "options": [
-                { "id": "A", "text": "Lựa chọn A", "isCorrect": false },
-                { "id": "B", "text": "Lựa chọn B", "isCorrect": true },
-                { "id": "C", "text": "Lựa chọn C", "isCorrect": false },
-                { "id": "D", "text": "Lựa chọn D", "isCorrect": false }
+                { "id": "A", "text": "Nội dung phương án A.", "isCorrect": false },
+                { "id": "B", "text": "Nội dung phương án B.", "isCorrect": true },
+                { "id": "C", "text": "Nội dung phương án C.", "isCorrect": false },
+                { "id": "D", "text": "Nội dung phương án D.", "isCorrect": false }
             ]
         }
         `;
@@ -160,7 +168,7 @@ export const generateBulkQuestions = async (
         switch (questionType) {
             case 'true-false':
                 typeInstruction = "câu hỏi trắc nghiệm có nhiều phương án đúng (4 lựa chọn a, b, c, d)";
-                jsonSchemaNote = "Trắc nghiệm nhiều đáp án: 'options' có 4 phần tử. BẮT BUỘC phải có nhiều hơn 1 đáp án đúng (isCorrect=true).";
+                jsonSchemaNote = "Trắc nghiệm nhiều đáp án: 'options' có 4 phần tử. BẮT BUỘC phải có nhiều hơn 1 đáp án đúng (isCorrect=true). Mỗi text trong options kết thúc bằng dấu chấm (.).";
                 break;
             case 'fill-blank':
                 typeInstruction = "câu hỏi điền khuyết (yêu cầu điền từ/cụm từ còn thiếu vào chỗ trống)";
@@ -179,7 +187,7 @@ export const generateBulkQuestions = async (
                 break;
             default: // multiple-choice
                 typeInstruction = "câu hỏi trắc nghiệm khách quan (4 lựa chọn, 1 đáp án đúng)";
-                jsonSchemaNote = "Trắc nghiệm: 'options' có 4 phần tử, 1 cái có isCorrect=true.";
+                jsonSchemaNote = "Trắc nghiệm: 'options' có 4 phần tử, 1 cái có isCorrect=true. Mọi text trong options PHẢI kết thúc bằng dấu chấm (.).";
                 break;
         }
 
@@ -195,6 +203,7 @@ export const generateBulkQuestions = async (
 
         Yêu cầu đầu ra chung:
         - Các câu hỏi phải rõ ràng, ngắn gọn, phù hợp với tiêu chí.
+        - Các phương án nhiễu phải có tính nhiễu cao, bám sát thực tế giảng dạy và dễ gây nhầm lẫn cho học sinh nếu không hiểu sâu.
         - ${jsonSchemaNote}
         - options IDs must be "A", "B", "C", "D".
         - Trả về định dạng JSON là một danh sách (array) các đối tượng câu hỏi.
