@@ -10,6 +10,7 @@ import {
   Layers, 
   Plus, 
   Trash2, 
+  Trash,
   Check, 
   X, 
   AlertCircle, 
@@ -721,6 +722,42 @@ const QuestionManager: React.FC = () => {
       e.target.value = '';
   };
 
+  // TASK: Xóa danh sách câu hỏi theo phần hoặc xóa tất cả
+  const handleClearMcQuestions = () => {
+    const mcCount = questions.filter(q => q.category === 'mc').length;
+    if (mcCount === 0) return;
+    const confirmed = window.confirm(`Bạn có chắc chắn muốn xóa toàn bộ ${mcCount} câu hỏi trắc nghiệm không?`);
+    if (confirmed) {
+      setQuestions(prev => prev.filter(q => q.category !== 'mc'));
+      setAlertMessage(`Đã xóa ${mcCount} câu hỏi trắc nghiệm.`);
+    }
+  };
+
+  const handleClearEssayQuestions = () => {
+    const essayCount = questions.filter(q => q.category === 'essay').length;
+    if (essayCount === 0) return;
+    const confirmed = window.confirm(`Bạn có chắc chắn muốn xóa toàn bộ ${essayCount} câu hỏi tự luận không?`);
+    if (confirmed) {
+      setQuestions(prev => prev.filter(q => q.category !== 'essay'));
+      setAlertMessage(`Đã xóa ${essayCount} câu hỏi tự luận.`);
+    }
+  };
+
+  const handleClearAllQuestions = () => {
+    if (questions.length === 0) {
+      setAlertMessage("Không có câu hỏi nào để xóa.");
+      return;
+    }
+    const confirmed = window.confirm(
+      `XÁC NHẬN XÓA TẤT CẢ DỮ LIỆU:\n\n` +
+      `Bạn có chắc chắn muốn xóa TOÀN BỘ ${questions.length} câu hỏi hiện có không?\n\n` +
+      `Thao tác này sẽ xóa sạch danh sách câu hỏi để bạn có thể soạn mới từ đầu.`
+    );
+    if (confirmed) {
+      setQuestions([]);
+      setAlertMessage(`Đã xóa sạch toàn bộ ${questions.length} câu hỏi.`);
+    }
+  };
 
   return (
     <div className="max-w-7xl mx-auto pb-20">
@@ -760,9 +797,21 @@ const QuestionManager: React.FC = () => {
             
             {/* General Info Card */}
             <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
-                <h2 className="text-lg font-semibold text-primary mb-4 flex items-center gap-2">
-                    <Info size={20} /> THÔNG TIN CHUNG
-                </h2>
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-lg font-semibold text-primary flex items-center gap-2">
+                        <Info size={20} /> THÔNG TIN CHUNG
+                    </h2>
+                    {questions.length > 0 && (
+                        <button 
+                            type="button"
+                            onClick={handleClearAllQuestions}
+                            className="text-xs text-red-600 hover:text-red-700 hover:bg-red-50 px-3 py-1.5 rounded-lg border border-red-200 transition-colors flex items-center gap-1.5 font-medium"
+                            title="Xóa toàn bộ câu hỏi hiện có trong danh sách"
+                        >
+                            <Trash size={14} /> Xóa sạch câu hỏi ({questions.length})
+                        </button>
+                    )}
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Khối</label>
@@ -799,12 +848,33 @@ const QuestionManager: React.FC = () => {
 
             {/* Multiple Choice Section */}
             <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
-                <h2 className="text-lg font-semibold text-primary mb-4 flex items-center gap-2">
-                    <ListChecks size={20} /> PHẦN 1: TRẮC NGHIỆM
-                </h2>
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-lg font-semibold text-primary flex items-center gap-2">
+                        <ListChecks size={20} /> PHẦN 1: TRẮC NGHIỆM
+                        <span className="text-xs font-normal text-gray-500">
+                            ({questions.filter(q => q.category === 'mc').length} câu)
+                        </span>
+                    </h2>
+                    {questions.some(q => q.category === 'mc') && (
+                        <button 
+                            type="button"
+                            onClick={handleClearMcQuestions}
+                            className="text-xs text-red-600 hover:text-red-700 hover:bg-red-50 px-3 py-1.5 rounded-lg border border-red-200 transition-colors flex items-center gap-1.5 font-medium"
+                            title="Xóa tất cả câu hỏi trắc nghiệm"
+                        >
+                            <Trash size={14} /> Xóa tất cả trắc nghiệm
+                        </button>
+                    )}
+                </div>
                 
                 <div className="space-y-6">
-                    {questions.filter(q => q.category === 'mc').map((q, idx) => (
+                    {questions.filter(q => q.category === 'mc').length === 0 ? (
+                        <div className="py-8 text-center border-2 border-dashed border-gray-200 rounded-xl bg-gray-50/50">
+                            <p className="text-sm font-medium text-gray-500">Chưa có câu hỏi trắc nghiệm nào.</p>
+                            <p className="text-xs text-gray-400 mt-1">Bấm "Thêm câu hỏi", "Tạo câu hỏi AI" hoặc "Nhập hàng loạt" bên dưới để thêm câu hỏi.</p>
+                        </div>
+                    ) : (
+                        questions.filter(q => q.category === 'mc').map((q, idx) => (
                         <div key={q.id} className="border border-gray-200 rounded-lg p-4 bg-gray-50 relative group">
                             <button 
                                 onClick={() => handleRemoveQuestion(q.id)}
@@ -1000,7 +1070,7 @@ const QuestionManager: React.FC = () => {
                                 </div>
                             )}
                         </div>
-                    ))}
+                    )))}
                 </div>
 
                 <div className="flex gap-3 mt-4">
@@ -1027,11 +1097,32 @@ const QuestionManager: React.FC = () => {
 
             {/* Essay Section */}
             <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
-                <h2 className="text-lg font-semibold text-primary mb-4 flex items-center gap-2">
-                    <PenTool size={20} /> PHẦN 2: TỰ LUẬN
-                </h2>
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-lg font-semibold text-primary flex items-center gap-2">
+                        <PenTool size={20} /> PHẦN 2: TỰ LUẬN
+                        <span className="text-xs font-normal text-gray-500">
+                            ({questions.filter(q => q.category === 'essay').length} câu)
+                        </span>
+                    </h2>
+                    {questions.some(q => q.category === 'essay') && (
+                        <button 
+                            type="button"
+                            onClick={handleClearEssayQuestions}
+                            className="text-xs text-red-600 hover:text-red-700 hover:bg-red-50 px-3 py-1.5 rounded-lg border border-red-200 transition-colors flex items-center gap-1.5 font-medium"
+                            title="Xóa tất cả câu hỏi tự luận"
+                        >
+                            <Trash size={14} /> Xóa tất cả tự luận
+                        </button>
+                    )}
+                </div>
                  <div className="space-y-6">
-                    {questions.filter(q => q.category === 'essay').map((q, idx) => (
+                    {questions.filter(q => q.category === 'essay').length === 0 ? (
+                        <div className="py-8 text-center border-2 border-dashed border-gray-200 rounded-xl bg-gray-50/50">
+                            <p className="text-sm font-medium text-gray-500">Chưa có câu hỏi tự luận nào.</p>
+                            <p className="text-xs text-gray-400 mt-1">Bấm "Thêm câu tự luận" hoặc "Tạo câu hỏi AI" bên dưới để thêm câu hỏi.</p>
+                        </div>
+                    ) : (
+                        questions.filter(q => q.category === 'essay').map((q, idx) => (
                         <div key={q.id} className="border border-gray-200 rounded-lg p-4 bg-gray-50 relative">
                              <button 
                                 onClick={() => handleRemoveQuestion(q.id)}
@@ -1127,7 +1218,7 @@ const QuestionManager: React.FC = () => {
                                  />
                             </div>
                         </div>
-                    ))}
+                    )))}
                 </div>
                  <div className="flex gap-3 mt-4">
                     <button 
@@ -1158,7 +1249,7 @@ const QuestionManager: React.FC = () => {
             </div>
 
             {/* Action Buttons */}
-            <div className="flex flex-wrap gap-4">
+            <div className="flex flex-wrap items-center gap-4">
                 <button 
                     onClick={handleJsonExportClick} 
                     className="px-6 py-3 bg-orange-500 text-white rounded-xl font-medium hover:bg-orange-600 transition-all flex items-center gap-2 shadow-lg shadow-orange-500/20"
@@ -1169,6 +1260,16 @@ const QuestionManager: React.FC = () => {
                     <FileInput size={20} /> Nhập JSON
                     <input type="file" accept=".json" onChange={handleJsonImport} className="hidden" />
                 </label>
+                {questions.length > 0 && (
+                    <button 
+                        type="button"
+                        onClick={handleClearAllQuestions} 
+                        className="px-6 py-3 bg-rose-50 border border-rose-200 text-rose-600 rounded-xl font-medium hover:bg-rose-100 hover:border-rose-300 transition-all flex items-center gap-2 shadow-sm ml-auto"
+                        title="Xóa sạch toàn bộ danh sách câu hỏi hiện có"
+                    >
+                        <Trash size={20} /> Xóa toàn bộ câu hỏi
+                    </button>
+                )}
             </div>
 
         </div>
