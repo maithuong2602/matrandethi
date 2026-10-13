@@ -14,6 +14,16 @@ export const setCustomApiKey = (key: string) => {
     }
 };
 
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
+
+export const getGeminiModel = (): string => {
+    if (typeof window !== 'undefined') {
+        const stored = localStorage.getItem('gemini_model');
+        if (stored) return stored;
+    }
+    return DEFAULT_GEMINI_MODEL;
+};
+
 const getGenAIClient = () => {
     const userKey = getCustomApiKey();
     const envKey = (typeof process !== 'undefined' && process.env) 
@@ -27,7 +37,7 @@ export const generateQuestion = async (topic: string, level: string): Promise<st
     try {
         const ai = getGenAIClient();
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: getGeminiModel(),
             contents: `Create a multiple choice question about "${topic}" at level "${level}" in Vietnamese. 
             REQUIREMENTS: 
             1. Every option text MUST end with a period (.). 
@@ -48,7 +58,7 @@ export const standardizeQuestionText = async (rawText: string): Promise<string> 
     try {
         const ai = getGenAIClient();
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: getGeminiModel(),
             contents: `Standardize the following raw question text into a structured JSON format with 'question', 'options', 'correctAnswer'.
             IMPORTANT: Ensure every option text ends with a period (.). 
             Raw Text:\n${rawText}`,
@@ -118,7 +128,7 @@ export const parseQuestionsWithAI = async (
         contents.push(prompt);
 
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: getGeminiModel(),
             contents: contents,
             config: {
                 responseMimeType: "application/json"
@@ -167,7 +177,7 @@ export const generateSingleQuestion = async (
         `;
 
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: getGeminiModel(),
             contents: prompt,
             config: {
                 responseMimeType: "application/json",
@@ -304,7 +314,7 @@ export const generateBulkQuestions = async (
         contents.push(prompt);
 
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: getGeminiModel(),
             contents: contents,
             config: {
                 responseMimeType: "application/json",
@@ -357,7 +367,7 @@ export const generateEssayRubric = async (questionContent: string): Promise<stri
         `;
 
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: getGeminiModel(),
             contents: prompt,
         });
 
@@ -421,7 +431,7 @@ export const reviewExamWithAI = async (
         `;
 
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: getGeminiModel(),
             contents: prompt,
             config: {
                 responseMimeType: "application/json"
