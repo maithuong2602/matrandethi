@@ -21,22 +21,12 @@ import {
   AlertTriangle, 
   FileUp, 
   FileText, 
-  CheckCircle2,
-  ShieldCheck,
-  Download,
-  Upload,
-  RefreshCw
+  CheckCircle2
 } from 'lucide-react';
 import { ExerciseQuestion } from '../types';
 import { CURRICULUM } from '../data/curriculum';
 import { parseQuestionsWithAI, generateBulkQuestions, generateEssayRubric } from '../services/geminiService';
 import { loadQuestionBank, saveQuestionBank } from '../services/storage/questionBankStorage';
-import { 
-  createBackupPackage, 
-  validateBackupPackage, 
-  restoreBackupPackage, 
-  rollbackLatestSnapshot 
-} from '../services/backup/questionBankBackup';
 import { CurriculumMappingReview } from '../components/CurriculumMappingReview';
 
 
@@ -731,86 +721,6 @@ const QuestionManager: React.FC = () => {
       e.target.value = '';
   };
 
-  // TASK 003: Sao lưu toàn bộ Ngân hàng câu hỏi (Versioned Backup)
-  const handleFullBackupExport = () => {
-    const backupPkg = createBackupPackage(questions);
-    const blob = new Blob([JSON.stringify(backupPkg, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    
-    const now = new Date();
-    const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
-    const timeStr = now.toTimeString().slice(0, 8).replace(/:/g, '');
-    const fileName = `matrandethi_backup_${dateStr}_${timeStr}.json`;
-
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    setAlertMessage(`Đã xuất bản sao lưu thành công (${backupPkg.questionCount} câu hỏi).`);
-  };
-
-  // TASK 003: Phục hồi Ngân hàng câu hỏi từ file sao lưu (Validate -> Snapshot -> Restore)
-  const handleBackupRestore = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      try {
-        const raw = JSON.parse(ev.target?.result as string);
-        const valResult = validateBackupPackage(raw);
-        if (!valResult.valid || !valResult.pkg) {
-          setAlertMessage(`Lỗi file sao lưu: ${valResult.error}`);
-          return;
-        }
-
-        const confirmRestore = window.confirm(
-          `XÁC NHẬN PHỤC HỒI NGÂN HÀNG CÂU HỎI:\n\n` +
-          `• Bản sao lưu có: ${valResult.pkg.questionCount} câu hỏi.\n` +
-          `• Ngân hàng hiện tại có: ${questions.length} câu hỏi.\n\n` +
-          `Nếu tiếp tục, dữ liệu hiện tại sẽ được thay thế bằng bản sao lưu.\n` +
-          `Hệ thống sẽ tự động tạo một bản sao an toàn (Safety Snapshot) trước khi phục hồi để bạn có thể Hoàn tác bất cứ lúc nào.\n\n` +
-          `Bạn có muốn tiếp tục phục hồi không?`
-        );
-        if (!confirmRestore) return;
-
-        const res = restoreBackupPackage(valResult.pkg, questions);
-        if (res.success && res.questions) {
-          canAutoSaveRef.current = true;
-          setQuestions(res.questions);
-          setAlertMessage(`Phục hồi thành công ${res.questions.length} câu hỏi từ bản sao lưu. Đã tạo bản sao an toàn trước đó.`);
-        } else {
-          setAlertMessage(res.error || 'Phục hồi thất bại.');
-        }
-      } catch (err: any) {
-        setAlertMessage(`Không thể đọc file sao lưu: ${err?.message || err}`);
-      }
-    };
-    reader.readAsText(file);
-    e.target.value = '';
-  };
-
-  // TASK 003: Hoàn tác lần phục hồi gần nhất (Rollback)
-  const handleRollbackLatest = () => {
-    const confirmUndo = window.confirm(
-      `XÁC NHẬN HOÀN TÁC:\n\n` +
-      `Bạn có chắc chắn muốn hoàn tác lần phục hồi gần nhất không?\n` +
-      `Dữ liệu sẽ được khôi phục về trạng thái bản sao an toàn (Snapshot) trước lần phục hồi gần nhất.`
-    );
-    if (!confirmUndo) return;
-
-    const res = rollbackLatestSnapshot();
-    if (res.success && res.restoredQuestions) {
-      canAutoSaveRef.current = true;
-      setQuestions(res.restoredQuestions);
-      setAlertMessage(`Đã hoàn tác thành công về bản sao an toàn (${res.restoredQuestions.length} câu hỏi).`);
-    } else {
-      setAlertMessage(res.error || 'Không thể hoàn tác.');
-    }
-  };
 
   return (
     <div className="max-w-7xl mx-auto pb-20">
@@ -1247,49 +1157,18 @@ const QuestionManager: React.FC = () => {
                 </div>
             </div>
 
-            {/* TASK 003: Safety & Backup Card */}
-            <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200 space-y-4">
-                <div className="flex items-center justify-between border-b pb-3">
-                    <h2 className="text-lg font-semibold text-primary flex items-center gap-2">
-                        <ShieldCheck size={20} className="text-emerald-600" /> AN TOÀN DỮ LIỆU & SAO LƯU
-                    </h2>
-                    <span className="text-xs text-gray-500 font-medium">Bảo vệ & Phục hồi an toàn</span>
-                </div>
-                <div className="flex flex-wrap gap-3">
-                    <button 
-                        onClick={handleFullBackupExport} 
-                        className="px-5 py-2.5 bg-emerald-600 text-white rounded-xl font-medium hover:bg-emerald-700 transition-all flex items-center gap-2 text-sm shadow-sm"
-                        title="Tạo file sao lưu có phiên bản toàn bộ ngân hàng câu hỏi"
-                    >
-                        <Download size={18} /> Sao Lưu Toàn Bộ (Backup)
-                    </button>
-                    
-                    <label 
-                        className="px-5 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-all flex items-center gap-2 text-sm shadow-sm cursor-pointer"
-                        title="Phục hồi câu hỏi từ file sao lưu (tự động tạo bản sao an toàn trước khi thay thế)"
-                    >
-                        <Upload size={18} /> Phục Hồi (Restore)
-                        <input type="file" accept=".json" onChange={handleBackupRestore} className="hidden" />
-                    </label>
-
-                    <button 
-                        onClick={handleRollbackLatest} 
-                        className="px-5 py-2.5 bg-gray-100 text-gray-700 border border-gray-300 rounded-xl font-medium hover:bg-gray-200 transition-all flex items-center gap-2 text-sm"
-                        title="Hoàn tác lần phục hồi gần nhất về bản sao an toàn"
-                    >
-                        <RefreshCw size={18} /> Hoàn Tác Phục Hồi (Rollback)
-                    </button>
-                </div>
-                <div className="flex flex-wrap gap-3 pt-3 border-t border-gray-100 text-xs text-gray-500 items-center">
-                    <span className="font-medium text-gray-600">Thao tác theo bài học (Legacy):</span>
-                    <button onClick={handleJsonExportClick} className="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors flex items-center gap-1.5">
-                        <FileOutput size={14} /> Xuất JSON bài học
-                    </button>
-                    <label className="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors flex items-center gap-1.5 cursor-pointer">
-                        <FileInput size={14} /> Nhập JSON bài học
-                        <input type="file" accept=".json" onChange={handleJsonImport} className="hidden" />
-                    </label>
-                </div>
+            {/* Action Buttons */}
+            <div className="flex flex-wrap gap-4">
+                <button 
+                    onClick={handleJsonExportClick} 
+                    className="px-6 py-3 bg-orange-500 text-white rounded-xl font-medium hover:bg-orange-600 transition-all flex items-center gap-2 shadow-lg shadow-orange-500/20"
+                >
+                    <FileOutput size={20} /> Xuất JSON
+                </button>
+                <label className="px-6 py-3 bg-blue-500 text-white rounded-xl font-medium hover:bg-blue-600 transition-all flex items-center gap-2 shadow-lg shadow-blue-500/20 cursor-pointer">
+                    <FileInput size={20} /> Nhập JSON
+                    <input type="file" accept=".json" onChange={handleJsonImport} className="hidden" />
+                </label>
             </div>
 
         </div>

@@ -194,7 +194,7 @@ describe('TASK 004: Canonical Curriculum & YCCĐ Data Model Foundation', () => {
   it('TEST 13: QuestionManager vẫn render bình thường', () => {
     const { unmount } = render(<QuestionManager />);
     expect(screen.getByText(/PHẦN 1: TRẮC NGHIỆM/i)).toBeInTheDocument();
-    expect(screen.getByText(/AN TOÀN DỮ LIỆU & SAO LƯU/i)).toBeInTheDocument();
+    expect(screen.getByText(/Xuất JSON/i)).toBeInTheDocument();
     unmount();
   });
 

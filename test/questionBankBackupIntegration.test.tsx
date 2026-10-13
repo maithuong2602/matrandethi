@@ -13,7 +13,8 @@ import {
 } from '../services/backup/questionBankBackup';
 import { ExerciseQuestion } from '../types';
 
-describe('TASK 003: Integration Tests for Backup, Restore & Safety Snapshot', () => {
+// Bỏ qua do người dùng đã yêu cầu xóa cụm giao diện Backup/Restore trên UI
+describe.skip('TASK 003: Integration Tests for Backup, Restore & Safety Snapshot', () => {
   const currentBankA_B_C: ExerciseQuestion[] = [
     { id: 'q_A', category: 'mc', level: 'NB', criteria: '1.1', content: 'Câu hỏi Bank A', answer: 'A' },
     { id: 'q_B', category: 'mc', level: 'TH', criteria: '1.2', content: 'Câu hỏi Bank B', answer: 'B' },
