@@ -1,9 +1,25 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { Home, FilePlus, GitGraph, LayoutGrid, ChevronRight } from 'lucide-react';
+import { Home, FilePlus, GitGraph, LayoutGrid, ChevronRight, Settings, Key, Check, X, Sparkles, ExternalLink } from 'lucide-react';
+import { getCustomApiKey, setCustomApiKey } from '../services/geminiService';
 
 const Layout: React.FC = () => {
   const location = useLocation();
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [hasApiKey, setHasApiKey] = useState(false);
+
+  useEffect(() => {
+    const key = getCustomApiKey();
+    setApiKeyInput(key);
+    setHasApiKey(Boolean(key));
+  }, [isSettingsOpen]);
+
+  const handleSaveApiKey = () => {
+    setCustomApiKey(apiKeyInput);
+    setHasApiKey(Boolean(apiKeyInput.trim()));
+    setIsSettingsOpen(false);
+  };
 
   const getBreadcrumb = () => {
     switch (location.pathname) {
@@ -71,10 +87,15 @@ const Layout: React.FC = () => {
 
         <div className="p-3 border-t border-gray-100 flex-shrink-0 overflow-hidden">
           <div className="bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg p-3 text-white text-sm opacity-0 group-hover:opacity-100 transition-opacity duration-300 transform translate-y-4 group-hover:translate-y-0">
-            <p className="font-semibold mb-1 whitespace-nowrap">Phiên bản Pro</p>
-            <p className="opacity-80 text-xs mb-3 whitespace-nowrap">Tính năng AI cao cấp.</p>
-            <button className="w-full py-1.5 bg-white/20 hover:bg-white/30 rounded text-xs transition-colors whitespace-nowrap">
-              Xem chi tiết
+            <p className="font-semibold mb-1 whitespace-nowrap flex items-center gap-1.5">
+              <Sparkles size={14} /> Phiên bản Pro 2025
+            </p>
+            <p className="opacity-80 text-xs mb-3 whitespace-nowrap">Định dạng mới & AI Khảo thí.</p>
+            <button 
+              onClick={() => setIsSettingsOpen(true)}
+              className="w-full py-1.5 bg-white/20 hover:bg-white/30 rounded text-xs font-semibold transition-colors whitespace-nowrap flex items-center justify-center gap-1.5"
+            >
+              <Key size={13} /> Cài đặt API Key
             </button>
           </div>
           <div className="absolute bottom-4 left-0 w-full flex justify-center group-hover:hidden text-primary">
@@ -92,11 +113,33 @@ const Layout: React.FC = () => {
              <span className="text-gray-900 font-medium">{getBreadcrumb()}</span>
            </div>
            
-           <div className="flex items-center gap-3">
+           <div className="flex items-center gap-4">
+             {/* AI Status Badge */}
+             <button
+                onClick={() => setIsSettingsOpen(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${
+                  hasApiKey 
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' 
+                    : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
+                }`}
+                title="Bấm để cấu hình Gemini API Key"
+             >
+                <span className={`w-2 h-2 rounded-full ${hasApiKey ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`}></span>
+                {hasApiKey ? 'AI Gemini: Đã kết nối' : 'Cần cài Gemini Key'}
+             </button>
+
+             <button
+               onClick={() => setIsSettingsOpen(true)}
+               className="p-2 text-gray-500 hover:text-primary hover:bg-gray-100 rounded-lg transition-colors"
+               title="Cài đặt hệ thống"
+             >
+               <Settings size={18} />
+             </button>
+
              <div className="w-8 h-8 rounded-full bg-primary text-white flex items-center justify-center font-bold text-xs shadow-sm">
-               AD
+               GV
              </div>
-             <span className="text-sm font-medium text-gray-700 hidden sm:block">Admin User</span>
+             <span className="text-sm font-semibold text-gray-700 hidden sm:block">Giáo Viên</span>
            </div>
         </header>
 
@@ -104,6 +147,73 @@ const Layout: React.FC = () => {
           <Outlet />
         </main>
       </div>
+
+      {/* API KEY SETTINGS MODAL */}
+      {isSettingsOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-fade-in-up">
+            <div className="flex justify-between items-center mb-4 border-b pb-4">
+              <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+                <Key className="text-primary" /> Cấu Hình Google Gemini AI
+              </h3>
+              <button onClick={() => setIsSettingsOpen(false)} className="text-gray-400 hover:text-gray-600">
+                <X size={20} />
+              </button>
+            </div>
+
+            <p className="text-xs text-gray-600 mb-4 leading-relaxed">
+              Nhập API Key của Google Gemini để kích hoạt các tính năng tạo câu hỏi hàng loạt, thẩm định đề thi (Reviewer), và tự động bù đắp đề thi.
+            </p>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">
+                  Gemini API Key:
+                </label>
+                <input 
+                  type="password"
+                  className="w-full p-2.5 border border-gray-300 rounded-xl text-sm font-mono focus:ring-2 focus:ring-primary focus:border-transparent outline-none"
+                  placeholder="AIzaSy..."
+                  value={apiKeyInput}
+                  onChange={(e) => setApiKeyInput(e.target.value)}
+                />
+              </div>
+
+              <div className="bg-blue-50 p-3 rounded-xl text-xs text-blue-800 space-y-1">
+                <p className="font-semibold flex items-center gap-1">
+                  <Sparkles size={14} /> Cách lấy API Key miễn phí:
+                </p>
+                <p>
+                  Truy cập Google AI Studio để tạo khóa API miễn phí trong 30 giây.
+                </p>
+                <a 
+                  href="https://aistudio.google.com/app/apikey" 
+                  target="_blank" 
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-primary font-bold hover:underline mt-1"
+                >
+                  Mở Google AI Studio <ExternalLink size={12} />
+                </a>
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3 border-t pt-4">
+              <button 
+                onClick={() => setIsSettingsOpen(false)}
+                className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-xl text-sm font-semibold"
+              >
+                Hủy
+              </button>
+              <button 
+                onClick={handleSaveApiKey}
+                className="px-6 py-2 bg-primary text-white rounded-xl text-sm font-bold hover:bg-primary-dark shadow-md flex items-center gap-1.5"
+              >
+                <Check size={16} /> Lưu Cấu Hình
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -253,29 +253,73 @@ const MatrixBuilder: React.FC = () => {
                             // 5-12: Counts (NB_TN, NB_TL...), 
                             // 13: Percent, 
                             // 14: Examined Periods (string number, initialized to '0')
-                            matrixRows.push([
-                                stt.toString(), mainTopic, subTopic, lessonName, soTiet, 
-                                '','','','','','','','','0', '0' 
-                            ]);
-                            // Spec Row: STT, Main, Sub, Lesson, Req, NB, TH, VD, VDC
-                            specRows.push([
-                                stt.toString(), mainTopic, subTopic, lessonName, requirements, 
-                                '0-0', '0-0', '0-0', '0-0'
-                            ]);
+                            // Preserve existing row if present
+                            const existingRow = dir.matrixData?.matrix?.rows?.find((r: any) => 
+                                r[1] === mainTopic && r[2] === subTopic && r[3] === lessonName
+                            );
+                            if (existingRow) {
+                                matrixRows.push([
+                                    stt.toString(), mainTopic, subTopic, lessonName, soTiet, 
+                                    existingRow[5] || '', existingRow[6] || '', existingRow[7] || '', existingRow[8] || '',
+                                    existingRow[9] || '', existingRow[10] || '', existingRow[11] || '', existingRow[12] || '',
+                                    existingRow[13] || '0', existingRow[14] || '0'
+                                ]);
+                            } else {
+                                matrixRows.push([
+                                    stt.toString(), mainTopic, subTopic, lessonName, soTiet, 
+                                    '','','','','','','','','0', '0' 
+                                ]);
+                            }
+                            const existingSpec = dir.matrixData?.spec?.rows?.find((r: any) =>
+                                r[1] === mainTopic && r[2] === subTopic && r[3] === lessonName
+                            );
+                            if (existingSpec) {
+                                specRows.push([
+                                    stt.toString(), mainTopic, subTopic, lessonName, requirements, 
+                                    existingSpec[5] || '0-0', existingSpec[6] || '0-0', existingSpec[7] || '0-0', existingSpec[8] || '0-0'
+                                ]);
+                            } else {
+                                specRows.push([
+                                    stt.toString(), mainTopic, subTopic, lessonName, requirements, 
+                                    '0-0', '0-0', '0-0', '0-0'
+                                ]);
+                            }
                             availableCounts.push(counts);
                             stt++;
                         });
                     } else {
                         // Create placeholder row for subtopic
                         const requirements = getRequirementsHtml(grade, mainTopic, subTopic);
-                        matrixRows.push([
-                            stt.toString(), mainTopic, subTopic, '', '0', 
-                            '','','','','','','','','0', '0'
-                        ]);
-                        specRows.push([
-                             stt.toString(), mainTopic, subTopic, '', requirements, 
-                             '0-0', '0-0', '0-0', '0-0'
-                        ]);
+                        const existingRow = dir.matrixData?.matrix?.rows?.find((r: any) => 
+                            r[1] === mainTopic && r[2] === subTopic && (r[3] === '' || !r[3])
+                        );
+                        if (existingRow) {
+                            matrixRows.push([
+                                stt.toString(), mainTopic, subTopic, '', '0', 
+                                existingRow[5] || '', existingRow[6] || '', existingRow[7] || '', existingRow[8] || '',
+                                existingRow[9] || '', existingRow[10] || '', existingRow[11] || '', existingRow[12] || '',
+                                existingRow[13] || '0', existingRow[14] || '0'
+                            ]);
+                        } else {
+                            matrixRows.push([
+                                stt.toString(), mainTopic, subTopic, '', '0', 
+                                '','','','','','','','','0', '0'
+                            ]);
+                        }
+                        const existingSpec = dir.matrixData?.spec?.rows?.find((r: any) =>
+                            r[1] === mainTopic && r[2] === subTopic && (r[3] === '' || !r[3])
+                        );
+                        if (existingSpec) {
+                            specRows.push([
+                                stt.toString(), mainTopic, subTopic, '', requirements, 
+                                existingSpec[5] || '0-0', existingSpec[6] || '0-0', existingSpec[7] || '0-0', existingSpec[8] || '0-0'
+                            ]);
+                        } else {
+                            specRows.push([
+                                stt.toString(), mainTopic, subTopic, '', requirements, 
+                                '0-0', '0-0', '0-0', '0-0'
+                            ]);
+                        }
                         availableCounts.push({ NB: {TN:0,TL:0}, TH: {TN:0,TL:0}, VD: {TN:0,TL:0}, VDC: {TN:0,TL:0} });
                         stt++;
                     }

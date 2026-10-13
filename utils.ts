@@ -87,8 +87,11 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
     
     // Check if tenKyThi already has year info, if not append it
     let tenKyThiFull = headerInfo.tenKyThi.toUpperCase();
+    if (tenKyThiFull.startsWith("LỚP")) {
+        tenKyThiFull = tenKyThiFull.replace(/LỚP\s*\d+\s*-\s*/, "KIỂM TRA ");
+    }
     if (!tenKyThiFull.includes("NĂM HỌC")) {
-        // Typically append current school year if missing
+        tenKyThiFull += ` NĂM HỌC ${currentYear}-${nextYear}`;
     }
 
     // CSS Definitions
@@ -138,50 +141,84 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
         </style>
     `;
 
-    // ---------------- SECTION 1: EXAM HEADER & CONTENT ----------------
-    // New Header Format: 1 Table, 2 Columns, No Border
+    const PAGE_NUM = `<!--[if supportFields]><span style='mso-element:field-begin'></span><span style='mso-spacerun:yes'> </span>PAGE <span style='mso-element:field-separator'></span><![endif]--><span style='mso-no-proof:yes'></span><!--[if supportFields]><span style='mso-element:field-end'></span><![endif]-->`;
+    const TOTAL_PAGES = `<!--[if supportFields]><span style='mso-element:field-begin'></span><span style='mso-spacerun:yes'> </span>NUMPAGES <span style='mso-element:field-separator'></span><![endif]--><span style='mso-no-proof:yes'></span><!--[if supportFields]><span style='mso-element:field-end'></span><![endif]-->`;
+    const SECTION_PAGES = `<!--[if supportFields]><span style='mso-element:field-begin'></span><span style='mso-spacerun:yes'> </span>SECTIONPAGES <span style='mso-element:field-separator'></span><![endif]--><span style='mso-no-proof:yes'></span><!--[if supportFields]><span style='mso-element:field-end'></span><![endif]-->`;
+
+    // New Header Format: 1 Table, 2 Columns, Dotted Border
     const examHeaderHtml = `
-        <table style="width:100%; border: none; border-collapse: collapse; font-family: 'Times New Roman', serif; font-size: 13pt; margin-bottom: 15pt;">
+        <table border="0" cellpadding="0" cellspacing="0" style="width:100%; border: 1px dotted black; border-collapse: collapse; font-family: 'Times New Roman', serif; font-size: 13pt; margin-bottom: 15pt;">
             <tr>
                 <!-- Column 1: Left -->
-                <td style="border: none; width: 40%; text-align: center; vertical-align: top; padding: 0;">
-                    <p style="margin:0; text-transform: uppercase; font-size: 13pt;">${headerInfo.donVi}</p>
-                    <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 13pt; margin-bottom: 5pt;">TRƯỜNG ${headerInfo.tenTruong}</p>
-                    <div style="margin-top: 5px;">
+                <td style="border: 1px dotted black; width: 40%; text-align: center; vertical-align: top; padding: 5px;">
+                    <p style="margin:0; text-transform: uppercase; font-size: 13pt; text-align: center;">${headerInfo.donVi}</p>
+                    <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 13pt; margin-bottom: 5pt; text-align: center;">TRƯỜNG ${headerInfo.tenTruong}</p>
+                    <div style="margin-top: 5px; text-align: center;">
                         <span style="font-weight: bold; font-size: 13pt;">ĐỀ CHÍNH THỨC</span>
                     </div>
                 </td>
                 
                 <!-- Column 2: Right -->
-                <td style="border: none; width: 60%; text-align: center; vertical-align: top; padding: 0;">
-                    <p style="margin:0; font-weight: bold; text-transform: uppercase;">${tenKyThiFull}</p>
-                    <p style="margin:0; font-weight: bold; text-transform: uppercase;">MÔN: ${headerInfo.monHoc}</p>
-                    <p style="margin:0; font-style: italic;">Thời gian: ${headerInfo.thoiGian} (không kể thời gian giao đề)</p>
-                    <p style="margin:0; font-style: italic;">(Đề có <span style='mso-field-code:" SECTIONPAGES "'></span> trang)</p>
-                    <p style="margin:0; text-align: right; font-weight: bold; margin-top: 5pt; padding-right: 15pt;">Mã đề: ${headerInfo.maDe || '...........'}</p>
+                <td style="border: 1px dotted black; width: 60%; text-align: center; vertical-align: top; padding: 5px;">
+                    <p style="margin:0; font-weight: bold; text-transform: uppercase; text-align: center;">${tenKyThiFull}</p>
+                    <p style="margin:0; font-weight: bold; text-transform: uppercase; text-align: center;">MÔN: ${headerInfo.monHoc}</p>
+                    <p style="margin:0; font-style: italic; text-align: center;">Thời gian: ${headerInfo.thoiGian} (không kể thời gian giao đề)</p>
+                    <p style="margin:0; font-style: italic; text-align: center;">(Đề có ${SECTION_PAGES} trang)</p>
+                    <p style="margin:0; text-align: center; font-weight: bold; margin-top: 5pt;">Mã đề: ${headerInfo.maDe || '...........'}</p>
                 </td>
             </tr>
         </table>
 
-        <div style="margin-bottom: 15pt;">
-            <p style="margin: 0;">&nbsp;</p>
-            <p style="margin: 0; font-weight: bold; font-size: 13pt;">Họ và tên: .................................................................................... Lớp: .............................</p>
-        </div>
     `;
 
     // Exam Content (MC + Essay)
+    // Exam Content (MC + Essay)
     let examBodyHtml = '';
-    
+
+    // Student info line
+    examBodyHtml += `
+        <p style="margin-top: 15pt; margin-bottom: 10pt; font-size: 13pt; font-weight: bold;">
+            Họ và tên: .................................................................................... Lớp: .............................
+        </p>
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 15pt; font-family: 'Times New Roman', serif; font-size: 13pt;">
+            <tr>
+                <td style="border: 1px solid black; width: 30%; height: 2.5cm; vertical-align: top; padding: 5px; font-weight: bold;">
+                    Điểm
+                </td>
+                <td style="border: 1px solid black; width: 70%; height: 2.5cm; vertical-align: top; padding: 5px; font-weight: bold;">
+                    Nhận xét của giáo viên
+                </td>
+            </tr>
+        </table>
+    `;
+
     // Part 1: Trac Nghiem
     if (tracNghiemQuestions.length > 0) {
-        // Answer Grid matching the image provided (14 columns)
+        // Answer Grid
         let answerGridHtml = `
-            <div style="margin-top:12pt; margin-bottom:5pt;">
+            <div style="margin-top:5pt; margin-bottom:5pt;">
                 <h3 style="font-size: 13pt; font-weight: bold; margin: 0;">Phần 1. Trắc nghiệm (${totalTracNghiemPoints.toFixed(1).replace('.',',')} điểm)</h3>
                 <p style="font-size: 13pt; font-style: italic; margin: 3pt 0 5pt 0;">- Em hãy điền đáp án vào khung bên dưới cho câu trả lời đúng: (mỗi câu đúng 0,25 điểm)</p>
             </div>
             <table style="border-collapse: collapse; margin: 0 auto; width: 100%; table-layout: fixed;">`;
-        const cols = 14; 
+        
+        // Dynamically calculate columns (max 15 per row)
+        let cols = 15;
+        if (tracNghiemQuestions.length > 15) {
+            let minEmpty = 15;
+            let bestCols = 15;
+            for (let c = 15; c >= 10; c--) {
+                const rows = Math.ceil(tracNghiemQuestions.length / c);
+                const empty = (rows * c) - tracNghiemQuestions.length;
+                if (empty < minEmpty) {
+                    minEmpty = empty;
+                    bestCols = c;
+                }
+            }
+            cols = bestCols;
+        } else {
+            cols = tracNghiemQuestions.length;
+        }
         const numTotalRows = Math.ceil(tracNghiemQuestions.length / cols);
 
         for (let i = 0; i < numTotalRows; i++) {
@@ -190,9 +227,9 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
             for (let j = 0; j < cols; j++) {
                 const num = i * cols + j + 1;
                 if (num <= tracNghiemQuestions.length) {
-                    answerGridHtml += `<td style="border: 1px solid black; text-align: center; font-weight: bold; padding: 5px 2px; font-size: 12pt;">Câu<br/>${num}</td>`;
+                    answerGridHtml += `<td width="${(100 / cols).toFixed(2)}%" style="border: 1px solid black; text-align: center; font-weight: bold; padding: 5px 2px; font-size: 12pt; width: ${100 / cols}%;">Câu<br/>${num}</td>`;
                 } else {
-                    answerGridHtml += `<td style="border: 1px solid black; padding: 5px 2px;"></td>`; // Fill empty cells to keep grid structure
+                    answerGridHtml += `<td width="${(100 / cols).toFixed(2)}%" style="border: 1px solid black; padding: 5px 2px; width: ${100 / cols}%;">&nbsp;</td>`; // Fill empty cells to keep grid structure
                 }
             }
             answerGridHtml += '</tr>';
@@ -200,7 +237,7 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
             // Row for Answers (Empty boxes)
             answerGridHtml += '<tr>';
             for (let j = 0; j < cols; j++) {
-                answerGridHtml += `<td style="border: 1px solid black; height: 35px;"></td>`;
+                answerGridHtml += `<td width="${(100 / cols).toFixed(2)}%" style="border: 1px solid black; height: 35px; width: ${100 / cols}%;">&nbsp;</td>`;
             }
             answerGridHtml += '</tr>';
         }
@@ -217,13 +254,13 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                 
                 if (allShort) {
                     // Two Columns (Table)
-                    optionsHtml = '<table style="width: 100%; border: none; border-collapse: collapse; table-layout: fixed; margin-left: 0.5cm;">';
+                    optionsHtml = '<table border="0" cellpadding="0" cellspacing="0" style="width: 100%; border: none; border-collapse: collapse; table-layout: fixed; margin-left: 0.5cm;">';
                     for (let i = 0; i < q.options.length; i += 2) {
                         const opt1 = q.options[i];
                         const opt2 = q.options[i + 1];
                         optionsHtml += `<tr>
-                            <td style="width: 50%; vertical-align: top; padding: 2pt 5pt 2pt 0; font-size: 13pt;"><strong>${opt1.id}.</strong> ${opt1.text}</td>
-                            <td style="width: 50%; vertical-align: top; padding: 2pt 0 2pt 5pt; font-size: 13pt;">${opt2 ? `<strong>${opt2.id}.</strong> ${opt2.text}` : ''}</td>
+                            <td style="border: none; width: 50%; vertical-align: top; padding: 2pt 5pt 2pt 0; font-size: 13pt;"><strong>${opt1.id}.</strong> ${opt1.text}</td>
+                            <td style="border: none; width: 50%; vertical-align: top; padding: 2pt 0 2pt 5pt; font-size: 13pt;">${opt2 ? `<strong>${opt2.id}.</strong> ${opt2.text}` : ''}</td>
                         </tr>`;
                     }
                     optionsHtml += '</table>';
@@ -287,13 +324,13 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
         <table style="width:100%; border: none; font-family: 'Times New Roman', serif; font-size: 13pt; margin-bottom: 15pt;">
             <tr>
                 <td style="text-align: center; width: 45%; vertical-align: top;">
-                    <p style="margin:0; text-transform: uppercase; font-size: 13pt;">${headerInfo.donVi}</p>
-                    <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 13pt;">TRƯỜNG ${headerInfo.tenTruong}</p>
+                    <p style="margin:0; text-transform: uppercase; font-size: 13pt; text-align: center;">${headerInfo.donVi}</p>
+                    <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 13pt; text-align: center;">TRƯỜNG ${headerInfo.tenTruong}</p>
                 </td>
                 <td style="text-align: center; width: 55%; vertical-align: top;">
-                    <p style="margin:0; font-weight: bold; text-transform: uppercase;">HƯỚNG DẪN CHẤM ${headerInfo.tenKyThi}</p>
-                    <p style="margin:0; font-weight: bold; text-transform: uppercase;">MÔN: ${headerInfo.monHoc}</p>
-                    <p style="margin:0; font-style: italic;">(Hướng dẫn chấm gồm có <span style='mso-field-code:" SECTIONPAGES "'></span> trang)</p>
+                    <p style="margin:0; font-weight: bold; text-transform: uppercase; text-align: center;">HƯỚNG DẪN CHẤM ${headerInfo.tenKyThi.toUpperCase().replace(/LỚP\s*\d+\s*-\s*/, "KIỂM TRA ")}</p>
+                    <p style="margin:0; font-weight: bold; text-transform: uppercase; text-align: center;">MÔN: ${headerInfo.monHoc}</p>
+                    <p style="margin:0; font-style: italic; text-align: center;">(Hướng dẫn chấm gồm có ${SECTION_PAGES} trang)</p>
                 </td>
             </tr>
         </table>
@@ -312,50 +349,131 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
             <tbody>
     `;
 
+    // ---------------- HSKT LOGIC ----------------
+    let hsktCodes = new Set<string>();
+    try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+            const saved = localStorage.getItem('hsktChecked');
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                for (const [key, isChecked] of Object.entries(parsed)) {
+                    if (isChecked) hsktCodes.add(key.split(' ')[0]);
+                }
+            }
+        }
+    } catch { }
+
+    const isHskt = (q: any) => {
+        if (hsktCodes.size === 0) return true; // Default show all if nothing configured
+        if (!q.criteria) return false;
+        return hsktCodes.has(q.criteria.split(' ')[0]);
+    };
+
+    let hsktTotalPointsRaw = 0;
+    if (hsktCodes.size > 0) {
+        tracNghiemQuestions.forEach(q => {
+            if (isHskt(q)) hsktTotalPointsRaw += (q.points || 0.25);
+        });
+        tuLuanQuestions.forEach(q => {
+            if (isHskt(q)) hsktTotalPointsRaw += (q.points || 1.0);
+        });
+    }
+
     // MC Section (Grading Guide)
     let mcSectionHtml = '';
     if (tracNghiemQuestions.length > 0) {
-        // Generate nested grid for MC answers - 14 columns to match Question Paper
-        const mcCols = 14; 
+        // Generate nested grid for MC answers
+        let mcCols = 15;
+        if (tracNghiemQuestions.length > 15) {
+            let minEmpty = 15;
+            let bestCols = 15;
+            for (let c = 15; c >= 10; c--) {
+                const rows = Math.ceil(tracNghiemQuestions.length / c);
+                const empty = (rows * c) - tracNghiemQuestions.length;
+                if (empty < minEmpty) {
+                    minEmpty = empty;
+                    bestCols = c;
+                }
+            }
+            mcCols = bestCols;
+        } else {
+            mcCols = tracNghiemQuestions.length;
+        }
         const mcRows = Math.ceil(tracNghiemQuestions.length / mcCols);
         
-        let mcGrid = `<table style="width: 100%; border-collapse: collapse; text-align: center; font-size: 11pt; margin: 0 auto;">`;
+        let mcGrid = `<table style="width: 100%; border-collapse: collapse; text-align: center; font-size: 11pt; margin: 0 auto; table-layout: fixed;">`;
         for (let r = 0; r < mcRows; r++) {
-            // Row: Numbers
             mcGrid += `<tr>`;
             for (let c = 0; c < mcCols; c++) {
                 const idx = r * mcCols + c;
                 if (idx < tracNghiemQuestions.length) {
-                    mcGrid += `<td style="border: 1px solid black; font-weight: bold; padding: 2px; background-color: #f0f0f0;">${idx + 1}</td>`;
+                    mcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; font-weight: bold; padding: 2px; background-color: #f0f0f0; width: ${100 / mcCols}%;">${idx + 1}</td>`;
                 } else {
-                    mcGrid += `<td style="border: 1px solid black; padding: 2px;"></td>`;
+                    mcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / mcCols}%;">&nbsp;</td>`;
                 }
             }
-            mcGrid += `</tr>`;
-            // Row: Answers
-            mcGrid += `<tr>`;
+            mcGrid += `</tr><tr>`;
             for (let c = 0; c < mcCols; c++) {
                 const idx = r * mcCols + c;
                 if (idx < tracNghiemQuestions.length) {
                     const q = tracNghiemQuestions[idx];
                     const correctOpt = q.options?.find((o: any) => o.isCorrect);
-                    mcGrid += `<td style="border: 1px solid black; padding: 2px;">${correctOpt ? correctOpt.id : ''}</td>`;
+                    mcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / mcCols}%;">${correctOpt ? correctOpt.id : ''}</td>`;
                 } else {
-                    mcGrid += `<td style="border: 1px solid black; padding: 2px;"></td>`;
+                    mcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / mcCols}%;">&nbsp;</td>`;
                 }
             }
             mcGrid += `</tr>`;
         }
         mcGrid += `</table>`;
 
+        let middleColumnHtml = mcGrid;
+
+        if (hsktCodes.size > 0) {
+            let hsktMcGrid = `<table style="width: 100%; border-collapse: collapse; text-align: center; font-size: 11pt; margin: 0 auto; table-layout: fixed;">`;
+            for (let r = 0; r < mcRows; r++) {
+                hsktMcGrid += `<tr>`;
+                for (let c = 0; c < mcCols; c++) {
+                    const idx = r * mcCols + c;
+                    if (idx < tracNghiemQuestions.length) {
+                        hsktMcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; font-weight: bold; padding: 2px; background-color: #f0f0f0; width: ${100 / mcCols}%;">${idx + 1}</td>`;
+                    } else {
+                        hsktMcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / mcCols}%;">&nbsp;</td>`;
+                    }
+                }
+                hsktMcGrid += `</tr><tr>`;
+                for (let c = 0; c < mcCols; c++) {
+                    const idx = r * mcCols + c;
+                    if (idx < tracNghiemQuestions.length) {
+                        const q = tracNghiemQuestions[idx];
+                        if (isHskt(q)) {
+                            const correctOpt = q.options?.find((o: any) => o.isCorrect);
+                            hsktMcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / mcCols}%;">${correctOpt ? correctOpt.id : ''}</td>`;
+                        } else {
+                            hsktMcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / mcCols}%; font-style: italic; color: #999; text-decoration: line-through;">Miễn</td>`;
+                        }
+                    } else {
+                        hsktMcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / mcCols}%;">&nbsp;</td>`;
+                    }
+                }
+                hsktMcGrid += `</tr>`;
+            }
+            hsktMcGrid += `</table>`;
+
+            middleColumnHtml += `
+                <div style="color: red; font-size: 12pt; text-align: left; margin: 8px 0 4px 0;">Hướng dẫn chấm dành cho HSKT</div>
+                ${hsktMcGrid}
+            `;
+        }
+
         mcSectionHtml = `
             <tr>
                 <td style="border: 1px solid black; padding: 10px; text-align: center; font-weight: bold; vertical-align: middle;">
-                    Trắc nghiệm: ${totalTracNghiemPoints.toFixed(1).replace('.',',')} điểm
+                    Trắc nghiệm:<br/>${totalTracNghiemPoints.toFixed(1).replace('.',',')} điểm
                     <br/><span style="font-weight: normal; font-style: italic; font-size: 11pt;">(mỗi câu trả lời đúng được 0.25 đ)</span>
                 </td>
                 <td style="border: 1px solid black; padding: 10px; vertical-align: middle;">
-                    ${mcGrid}
+                    ${middleColumnHtml}
                 </td>
                 <td style="border: 1px solid black; padding: 10px; text-align: center; font-weight: bold; vertical-align: middle;">
                     ${totalTracNghiemPoints.toFixed(1).replace('.',',')}đ
@@ -435,18 +553,23 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                 `;
             }
 
+            let hsktNote = '';
+            if (hsktCodes.size > 0 && !isHskt(q)) {
+                hsktNote = ` <span style="color: red; font-weight: normal; font-style: italic;">(Miễn đối với HSKT)</span>`;
+            }
+
             essaySectionHtml += `<tr>`;
             if (isFirst) {
                 essaySectionHtml += `
                     <td rowspan="${rowspan}" style="border: 1px solid black; padding: 10px; text-align: center; font-weight: bold; vertical-align: top;">
-                        Tự luận: ${totalTuLuanPoints.toFixed(1).replace('.',',')} điểm
+                        Tự luận:<br/>${totalTuLuanPoints.toFixed(1).replace('.',',')} điểm
                     </td>
                 `;
             }
             essaySectionHtml += `
                 <td style="border: 1px solid black; padding: 5px; vertical-align: top;">
                     <div style="border-bottom: 1px solid #000; margin-bottom: 5px; padding-bottom: 2px;">
-                        <span style="font-weight: bold; text-decoration: underline;">${qLabel}:</span> ${q.content.split('\n')[0].substring(0, 100)}...
+                        <span style="font-weight: bold; text-decoration: underline;">${qLabel}:</span> ${q.content.split('\n')[0].substring(0, 100)}...${hsktNote}
                     </div>
                     <table style="width: 100%; border-collapse: collapse; border: none;">
                         ${nestedTableRows}
@@ -476,10 +599,12 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
     
     let gradingFooterText = `
         <div style="text-align: center; margin-top: 15px; font-weight: bold;">---Hết---</div>
-        <div style="margin-top: 10px; font-style: italic; font-size: 11pt;">
-            | Học sinh có thể trình bày theo cách khác, hợp lí, chính xác thì cho điểm tối đa.
+        <div style="margin-top: 10px; font-style: italic; font-size: 11pt; text-align: center;">
+            Học sinh có thể trình bày theo cách khác, hợp lí, chính xác thì cho điểm tối đa.
         </div>
     `;
+
+
 
     // 3. Document Structure
     return `
@@ -504,7 +629,10 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                 <br clear=all style='mso-special-character:line-break;page-break-before:always;mso-break-type:section-break'>
             </div>
             
+            <p style="page-break-before: always; margin: 0; padding: 0; font-size: 1pt;">&nbsp;</p>
+            
             <div class="Section2">
+                <br clear=all style='page-break-before:always'>
                 ${gradingGuideHeader}
                 ${gradingTableStart}
                 ${mcSectionHtml}
@@ -515,16 +643,18 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
             </div>
             
             <!-- Footer Definitions -->
+            <!--[if gte mso 9]>
             <div style='mso-element:footer' id='f1'>
                 <p class=MsoFooter>
-                    Trang <span style='mso-field-code:" PAGE "'></span>/<span style='mso-field-code:" SECTIONPAGES "'></span>
+                    Trang ${PAGE_NUM}/${SECTION_PAGES}
                 </p>
             </div>
             <div style='mso-element:footer' id='f2'>
                 <p class=MsoFooter>
-                    Trang <span style='mso-field-code:" PAGE "'></span>/<span style='mso-field-code:" SECTIONPAGES "'></span>
+                    Trang ${PAGE_NUM}/${SECTION_PAGES}
                 </p>
             </div>
+            <![endif]-->
         </body>
     </html>`;
 };
@@ -539,8 +669,9 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
     // Determine exam type for logic branching
     const isFinalExam = /cuối\s+k[ìỳ]/i.test(examName);
     
-    const matrixTitle = `KHUNG MA TRẬN ĐỀ KIỂM TRA MÔN TIN LỚP ${gradeStr} - ${examName.toUpperCase()} NĂM HỌC ${currentYear}-${nextYear}`;
-    const specTitle = `BẢNG ĐẶC TẢ ĐỀ KIỂM TRA MÔN TIN LỚP ${gradeStr} - ${examName.toUpperCase()} NĂM HỌC ${currentYear}-${nextYear}`;
+    const cleanExamName = examName.toUpperCase().replace(new RegExp(`^LỚP\\s*${gradeStr}\\s*-\\s*`, 'i'), '');
+    const matrixTitle = `KHUNG MA TRẬN ĐỀ KIỂM TRA MÔN TIN LỚP ${gradeStr} - ${cleanExamName} NĂM HỌC ${currentYear}-${nextYear}`;
+    const specTitle = `BẢNG ĐẶC TẢ ĐỀ KIỂM TRA MÔN TIN LỚP ${gradeStr} - ${cleanExamName} NĂM HỌC ${currentYear}-${nextYear}`;
     const pointsTNKQ = 0.25;
     const pointsTL = 1.0;
 
@@ -587,13 +718,13 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
     // CSS Definitions
     const css = `
         <style>
-            @page Section1 {
+            @page SectionMatrix {
                 size: 29.7cm 21cm;
                 margin: 1.5cm 2cm 1.5cm 2cm;
                 mso-page-orientation: landscape;
             }
-            div.Section1 {
-                page: Section1;
+            div.SectionMatrix {
+                page: SectionMatrix;
             }
             body { 
                 font-family: 'Times New Roman', Times, serif; 
@@ -798,7 +929,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             const firstRow = subRows[0];
             const lessonName = firstRow[3]; // "Bài"
 
-            const positionSummary: string[] = [];
+            const posGroups: Record<string, string[]> = { NB: [], TH: [], VD: [] };
 
             subRows.forEach((r: any) => {
                  subSoTiet += parseFloat(String(r[4]) || '0');
@@ -810,15 +941,18 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                  
                  const originalIdx = data.matrix.rows.indexOf(r); 
                  
-                 const posNB_TN = positionMap[`${originalIdx}-5`]; if(posNB_TN) positionSummary.push(`NB: ${posNB_TN}`);
-                 const posNB_TL = positionMap[`${originalIdx}-6`]; if(posNB_TL) positionSummary.push(`NB: ${posNB_TL}`);
-                 const posTH_TN = positionMap[`${originalIdx}-7`]; if(posTH_TN) positionSummary.push(`TH: ${posTH_TN}`);
-                 const posTH_TL = positionMap[`${originalIdx}-8`]; if(posTH_TL) positionSummary.push(`TH: ${posTH_TL}`);
-                 const posVD_TN = positionMap[`${originalIdx}-9`]; if(posVD_TN) positionSummary.push(`VD: ${posVD_TN}`);
-                 const posVD_TL = positionMap[`${originalIdx}-10`]; if(posVD_TL) positionSummary.push(`VD: ${posVD_TL}`);
-                 const posVDC_TN = positionMap[`${originalIdx}-11`]; if(posVDC_TN) positionSummary.push(`VDC: ${posVDC_TN}`);
-                 const posVDC_TL = positionMap[`${originalIdx}-12`]; if(posVDC_TL) positionSummary.push(`VDC: ${posVDC_TL}`);
+                 const posNB_TN = positionMap[`${originalIdx}-5`]; if(posNB_TN) posGroups.NB.push(posNB_TN.replace('Câu ', ''));
+                 const posNB_TL = positionMap[`${originalIdx}-6`]; if(posNB_TL) posGroups.NB.push(posNB_TL.replace('Câu ', ''));
+                 const posTH_TN = positionMap[`${originalIdx}-7`]; if(posTH_TN) posGroups.TH.push(posTH_TN.replace('Câu ', ''));
+                 const posTH_TL = positionMap[`${originalIdx}-8`]; if(posTH_TL) posGroups.TH.push(posTH_TL.replace('Câu ', ''));
+                 const posVD_TN = positionMap[`${originalIdx}-9`]; if(posVD_TN) posGroups.VD.push(posVD_TN.replace('Câu ', ''));
+                 const posVD_TL = positionMap[`${originalIdx}-10`]; if(posVD_TL) posGroups.VD.push(posVD_TL.replace('Câu ', ''));
             });
+            
+            const positionSummary: string[] = [];
+            if (posGroups.NB.length > 0) positionSummary.push(`NB: Câu ${posGroups.NB.join(', ')}`);
+            if (posGroups.TH.length > 0) positionSummary.push(`TH: Câu ${posGroups.TH.join(', ')}`);
+            if (posGroups.VD.length > 0) positionSummary.push(`VD: Câu ${posGroups.VD.join(', ')}`);
             
             let contentDisplay = `${subTopic}<br/>(${subSoTiet} tiết`;
             // Condition: Hide % if it's Final Exam
@@ -835,8 +969,8 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             }
             matrixBodyHtml += `<td class="text-left">${contentDisplay}</td>`;
             
-            // Counts & Points for 5-12
-            for(let k=5; k<=12; k++){
+            // Counts & Points for 5-10
+            for(let k=5; k<=10; k++){
                 const val = subCounts[k];
                 const isTNKQ = k % 2 !== 0;
                 const pt = val * (isTNKQ ? pointsTNKQ : pointsTL);
@@ -886,11 +1020,10 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                  return `<div>${count}</div><div>/ ${formatDiem(pt)}đ</div>`;
             };
 
-            // NB(TN), TH(TN), VD(TL), VDC(TL)
+            // NB(TN), TH(TN), VD(TL)
             specBodyHtml += `<td>${renderCountPoints(subCounts[5], 'TN')}</td>`;
             specBodyHtml += `<td>${renderCountPoints(subCounts[7], 'TN')}</td>`;
             specBodyHtml += `<td>${renderCountPoints(subCounts[10], 'TL')}</td>`;
-            specBodyHtml += `<td>${renderCountPoints(subCounts[12], 'TL')}</td>`;
             
             specBodyHtml += '</tr>';
 
@@ -924,7 +1057,6 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 <td colspan="2"><b><div>${matrixTotals.cau[5] + matrixTotals.cau[6]} câu</div><div>${formatDiem(nb_diem)}đ</div></b></td>
                 <td colspan="2"><b><div>${matrixTotals.cau[7] + matrixTotals.cau[8]} câu</div><div>${formatDiem(th_diem)}đ</div></b></td>
                 <td colspan="2"><b><div>${matrixTotals.cau[9] + matrixTotals.cau[10]} câu</div><div>${formatDiem(vd_diem)}đ</div></b></td>
-                <td colspan="2"><b><div>${matrixTotals.cau[11] + matrixTotals.cau[12]} câu</div><div>${formatDiem(vdc_diem)}đ</div></b></td>
                 <td><b>${formatDiem(totalExamPoints)}</b></td>
             </tr>
             <tr>
@@ -932,29 +1064,28 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 <td colspan="2"><b>${formatPercent(nb_percent)}%</b></td>
                 <td colspan="2"><b>${formatPercent(th_percent)}%</b></td>
                 <td colspan="2"><b>${formatPercent(vd_percent)}%</b></td>
-                <td colspan="2"><b>${formatPercent(vdc_percent)}%</b></td>
                 <td><b>100%</b></td>
             </tr>
             <tr>
                 <td colspan="3"><b>Tỉ lệ chung (%)</b></td>
                 <td colspan="4"><b>${formatPercent(nb_th_percent)}%</b></td>
-                <td colspan="4"><b>${formatPercent(vd_percent + vdc_percent)}%</b></td>
+                <td colspan="2"><b>${formatPercent(vd_percent)}%</b></td>
                 <td><b>100%</b></td>
             </tr>
         </tfoot>`;
 
-    // Only counting the specific columns: NB_TN, TH_TN, VD_TL, VDC_TL
+    // Only counting the specific columns: NB_TN, TH_TN, VD_TL
     let specFooterHtml = `
         <tfoot>
             <tr>
                 <td colspan="4" class="text-left"><b>Tổng</b></td>
                 <td><b>${specTotals.nb}</b></td><td><b>${specTotals.th}</b></td>
-                <td><b>${specTotals.vd}</b></td><td><b>${specTotals.vdc}</b></td>
+                <td><b>${specTotals.vd}</b></td>
             </tr>
             <tr>
                 <td colspan="4" class="text-left"><b>Tỉ lệ %</b></td>
                 <td><b>${formatPercent(nb_percent)}%</b></td><td><b>${formatPercent(th_percent)}%</b></td>
-                <td><b>${formatPercent(vd_percent)}%</b></td><td><b>${formatPercent(vdc_percent)}%</b></td>
+                <td><b>${formatPercent(vd_percent)}%</b></td>
             </tr>
         </tfoot>`;
 
@@ -968,7 +1099,6 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 <col class="col-level"> <col class="col-level">
                 <col class="col-level"> <col class="col-level">
                 <col class="col-level"> <col class="col-level">
-                <col class="col-level"> <col class="col-level">
                 <col class="col-total">
             </colgroup>
             <thead>
@@ -976,17 +1106,15 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                     <th rowspan="3">TT</th>
                     <th rowspan="3">Chương/Chủ đề</th>
                     <th rowspan="3">Nội dung/Đơn vị kiến thức</th>
-                    <th colspan="8">Mức độ nhận thức</th>
+                    <th colspan="6">Mức độ nhận thức</th>
                     <th rowspan="3">Tổng % điểm</th>
                 </tr>
                 <tr>
                     <th colspan="2">Nhận biết</th>
                     <th colspan="2">Thông hiểu</th>
                     <th colspan="2">Vận dụng</th>
-                    <th colspan="2">Vận dụng cao</th>
                 </tr>
                 <tr>
-                    <th>TNKQ</th><th>TL</th>
                     <th>TNKQ</th><th>TL</th>
                     <th>TNKQ</th><th>TL</th>
                     <th>TNKQ</th><th>TL</th>
@@ -1015,7 +1143,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 <col class="col-noidung">
                 <!-- Removed col-bai -->
                 <col class="col-req">
-                <col class="col-level"><col class="col-level"><col class="col-level"><col class="col-level">
+                <col class="col-level"><col class="col-level"><col class="col-level">
             </colgroup>
             <caption>${specTitle}</caption>
             <thead>
@@ -1024,10 +1152,10 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                     <th rowspan="2">Nội dung/Đơn vị kiến thức</th>
                     <!-- Removed th Bai -->
                     <th rowspan="2">Mức độ đánh giá</th>
-                    <th colspan="4">Số câu hỏi theo mức độ nhận thức</th>
+                    <th colspan="3">Số câu hỏi theo mức độ nhận thức</th>
                 </tr>
                 <tr>
-                    <th>Nhận biết<br/>(TNKQ)</th><th>Thông hiểu<br/>(TNKQ)</th><th>Vận dụng<br/>(TL)</th><th>Vận dụng cao<br/>(TL)</th>
+                    <th>Nhận biết<br/>(TNKQ)</th><th>Thông hiểu<br/>(TNKQ)</th><th>Vận dụng<br/>(TL)</th>
                 </tr>
             </thead>
             <tbody>${specBodyHtml}</tbody>
@@ -1048,9 +1176,10 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             </xml>
         </head>
         <body>
-            <div class="Section1">
+            <div class="SectionMatrix">
                 ${matrixTableHtml}
-                <br class="page-break"/>
+            </div>
+            <div class="SectionMatrix" style="page-break-before: always;">
                 ${specTableHtml}
             </div>
         </body>
@@ -1064,15 +1193,281 @@ export const generateAzotaKeyHtml = (questions: any[]) => {
     let answers = ``;
     questions.forEach((q, index) => {
         const num = index + 1;
-        // Check for MC questions (excluding essay type if mixed)
         if (q.category !== 'essay' && q.options && q.options.length > 0) {
-            // Only for single choice usually, but Azota supports basic key list
             const correctOpt = q.options.find((opt: any) => opt.isCorrect);
             if (correctOpt) {
-                // Assuming options have ID 'A', 'B', 'C', 'D' or similar
                 answers += `<p style="font-size: 13pt;">${num}. ${correctOpt.id}</p>`;
             }
+        } else if (q.answer) {
+            answers += `<p style="font-size: 13pt;">${num}. ${q.answer}</p>`;
         }
     });
     return keyHtml + answers + '</div>';
+};
+
+// --- CHUYÊN NGHIỆP: BỘ TIỆN ÍCH TRỘN ĐỀ VÀ HỒ SƠ KHẢO THÍ ĐA MÃ ĐỀ ---
+
+export const shuffleArray = <T>(array: T[]): T[] => {
+    const copy = [...array];
+    for (let i = copy.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [copy[i], copy[j]] = [copy[j], copy[i]];
+    }
+    return copy;
+};
+
+export const generateExamVariants = (
+    baseQuestions: any[],
+    variantCodes: string[] = ['101', '102', '103', '104'],
+    shuffleOptions: boolean = true
+): any[] => {
+    // Phân loại câu hỏi theo các phần theo quy định của Bộ GD&ĐT
+    const part1 = baseQuestions.filter(q => (q.questionType === 'multiple-choice' || (!q.questionType && q.category !== 'essay' && q.options && q.options.length === 4 && q.options[0]?.id?.toUpperCase() === 'A')));
+    const part2 = baseQuestions.filter(q => q.questionType === 'true-false');
+    const part3 = baseQuestions.filter(q => q.questionType === 'short-answer' || q.mcType === 'fill-blank');
+    const part4 = baseQuestions.filter(q => q.category === 'essay' || q.questionType === 'essay' || (!q.questionType && q.category === 'essay'));
+
+    return variantCodes.map((code, codeIdx) => {
+        let currentP1 = [...part1];
+        let currentP2 = [...part2];
+        let currentP3 = [...part3];
+        let currentP4 = [...part4];
+
+        // Mã đầu tiên (gốc) giữ nguyên thứ tự, các mã tiếp theo cũng không đảo câu hỏi để bám theo ma trận
+        // if (codeIdx > 0) {
+        //     currentP1 = shuffleArray(currentP1);
+        //     currentP2 = shuffleArray(currentP2);
+        //     currentP3 = shuffleArray(currentP3);
+        // }
+
+        // Hoán vị các phương án A, B, C, D của câu trắc nghiệm nhiều lựa chọn
+        if (shuffleOptions && codeIdx > 0) {
+            currentP1 = currentP1.map(q => {
+                if (!q.options || q.options.length < 2) return q;
+                const shuffledOpts = shuffleArray(q.options);
+                const standardIds = ['A', 'B', 'C', 'D', 'E', 'F'];
+                const remappedOpts = shuffledOpts.map((opt, idx) => ({
+                    ...opt,
+                    id: standardIds[idx] || opt.id
+                }));
+                const correctOpt = remappedOpts.find((o: any) => o.isCorrect);
+                return {
+                    ...q,
+                    options: remappedOpts,
+                    answer: correctOpt ? correctOpt.id : q.answer
+                };
+            });
+        }
+
+        const combined = [...currentP1, ...currentP2, ...currentP3, ...currentP4];
+        
+        // Tạo bảng đáp án chi tiết cho mã đề này
+        const answerKey = combined.map((q, idx) => {
+            const num = idx + 1;
+            let ansStr = '';
+            let qType: 'multiple-choice' | 'true-false' | 'short-answer' | 'essay' = 'multiple-choice';
+
+            if (q.questionType === 'true-false') {
+                qType = 'true-false';
+                if (q.options && q.options.length > 0) {
+                    ansStr = q.options.map((o: any) => `${o.id || 'x'}-${o.isCorrect ? 'Đ' : 'S'}`).join('; ');
+                } else {
+                    ansStr = q.answer || '';
+                }
+            } else if (q.questionType === 'short-answer' || q.mcType === 'fill-blank') {
+                qType = 'short-answer';
+                ansStr = q.answer || '';
+            } else if (q.category === 'essay' || q.questionType === 'essay') {
+                qType = 'essay';
+                ansStr = 'Xem HD chấm';
+            } else {
+                qType = 'multiple-choice';
+                const correct = q.options?.find((o: any) => o.isCorrect);
+                ansStr = correct ? correct.id : (q.answer || '');
+            }
+
+            return {
+                number: num,
+                answer: ansStr,
+                points: q.points || (q.category === 'essay' ? 1.0 : (q.questionType === 'true-false' ? 1.0 : 0.25)),
+                type: qType,
+                details: q.answer
+            };
+        });
+
+        return {
+            code,
+            questions: combined,
+            answerKey
+        };
+    });
+};
+
+// Xuất bảng ma trận so sánh đáp án chéo giữa các mã đề (Cross-Reference Matrix)
+export const generateMultiCodeAnswerKeyMatrixHtml = (
+    variants: any[],
+    headerInfo: any
+): string => {
+    if (!variants || variants.length === 0) return '';
+    const maxQuestions = Math.max(...variants.map(v => v.questions.length));
+
+    let headerRows = `<tr>
+        <th style="border: 1px solid black; padding: 6px; background-color: #f0f0f0; text-align: center; width: 60px;">Câu</th>`;
+    variants.forEach(v => {
+        headerRows += `<th style="border: 1px solid black; padding: 6px; background-color: #e8f0fe; text-align: center; font-weight: bold;">Mã đề ${v.code}</th>`;
+    });
+    headerRows += `</tr>`;
+
+    let dataRows = '';
+    for (let i = 0; i < maxQuestions; i++) {
+        const qNum = i + 1;
+        const rowBg = i % 2 === 0 ? '#ffffff' : '#fafafa';
+        dataRows += `<tr style="background-color: ${rowBg};">
+            <td style="border: 1px solid black; padding: 5px; text-align: center; font-weight: bold;">${qNum}</td>`;
+        
+        variants.forEach(v => {
+            const keyItem = v.answerKey[i];
+            const displayAns = keyItem ? keyItem.answer : '-';
+            const isEssay = keyItem?.type === 'essay';
+            const cellStyle = isEssay ? 'font-style: italic; color: #555;' : 'font-weight: bold; color: #004494;';
+            dataRows += `<td style="border: 1px solid black; padding: 5px; text-align: center; ${cellStyle}">${displayAns}</td>`;
+        });
+        dataRows += `</tr>`;
+    }
+
+    return `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <title>Bảng Ma Trận Đáp Án Các Mã Đề - ${headerInfo.tenKyThi}</title>
+            <style>
+                body { font-family: 'Times New Roman', serif; font-size: 13pt; margin: 2cm; }
+                table { border-collapse: collapse; width: 100%; margin-top: 15pt; }
+                th, td { border: 1px solid black; }
+                .title { text-align: center; font-weight: bold; font-size: 15pt; text-transform: uppercase; margin-bottom: 5pt; }
+                .subtitle { text-align: center; font-style: italic; margin-bottom: 15pt; font-size: 12pt; }
+            </style>
+        </head>
+        <body>
+            <table style="width:100%; border: none; margin-bottom: 20pt;">
+                <tr>
+                    <td style="border: none; text-align: center; width: 45%;">
+                        <p style="margin:0; text-transform: uppercase; text-align: center;">${headerInfo.donVi || 'PHÒNG GD&ĐT'}</p>
+                        <p style="margin:0; font-weight: bold; text-transform: uppercase; text-align: center;">TRƯỜNG ${headerInfo.tenTruong || 'THCS'}</p>
+                    </td>
+                    <td style="border: none; text-align: center; width: 55%;">
+                        <p style="margin:0; font-weight: bold; text-transform: uppercase; text-align: center;">${headerInfo.tenKyThi}</p>
+                        <p style="margin:0; font-weight: bold; text-transform: uppercase; text-align: center;">MÔN: ${headerInfo.monHoc}</p>
+                    </td>
+                </tr>
+            </table>
+
+            <div class="title">BẢNG ĐỐI CHIẾU ĐÁP ÁN CÁC MÃ ĐỀ THI</div>
+            <div class="subtitle">(Áp dụng cho các mã đề: ${variants.map(v => v.code).join(', ')})</div>
+
+            <table>
+                <thead>
+                    ${headerRows}
+                </thead>
+                <tbody>
+                    ${dataRows}
+                </tbody>
+            </table>
+
+            <div style="margin-top: 25pt; display: flex; justify-content: space-between;">
+                <div style="text-align: center; width: 40%;">
+                    <p style="font-weight: bold; margin: 0;">TỔ TRƯỞNG CHUYÊN MÔN</p>
+                    <p style="font-style: italic; margin-top: 5pt;">(Ký và ghi rõ họ tên)</p>
+                </div>
+                <div style="text-align: center; width: 40%;">
+                    <p style="font-style: italic; margin: 0;">Ngày ..... tháng ..... năm 20...</p>
+                    <p style="font-weight: bold; margin-top: 5pt;">NGƯỜI RA ĐỀ</p>
+                    <p style="font-style: italic; margin-top: 5pt;">(Ký và ghi rõ họ tên)</p>
+                </div>
+            </div>
+        </body>
+        </html>
+    `;
+};
+
+export const extractHtmlParts = (fullHtml: string) => {
+    const headMatch = fullHtml.match(/<head[^>]*>([\s\S]*?)<\/head>/i);
+    const bodyMatch = fullHtml.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+    
+    let style = '';
+    if (headMatch) {
+        const styleMatch = headMatch[1].match(/<style[^>]*>([\s\S]*?)<\/style>/i);
+        if (styleMatch) style = styleMatch[1];
+    }
+    
+    return {
+        style,
+        body: bodyMatch ? bodyMatch[1] : fullHtml
+    };
+};
+
+// Xuất trọn bộ Hồ sơ Khảo thí đầy đủ (Ma trận + Bản đặc tả + Các mã đề + Barem chấm)
+export const generateFullDossierHtml = (
+    matrixData: MatrixData | null,
+    variants: any[],
+    headerInfo: any
+): string => {
+    let combinedStyles = '';
+    
+    let matrixHtml = '';
+    if (matrixData) {
+        const parts = extractHtmlParts(generatePrintHTML(matrixData, headerInfo.tenKyThi));
+        combinedStyles += parts.style;
+        matrixHtml = `
+            <div style="text-align: center; font-weight: bold; font-size: 16pt; margin-bottom: 10pt; text-transform: uppercase;">
+                PHẦN I. KHUNG MA TRẬN & BẢN ĐẶC TẢ ĐỀ KIỂM TRA
+            </div>
+            ${parts.body}
+            <br clear=all style='mso-special-character:line-break;page-break-before:always'>
+        `;
+    }
+
+    const examCodesHtml = variants.map((v, idx) => {
+        const vHeader = { ...headerInfo, maDe: v.code };
+        const parts = extractHtmlParts(generateExamWordHtml(v.questions, vHeader));
+        if (idx === 0) combinedStyles += parts.style; // Style is identical for all variants
+        
+        let out = parts.body;
+        if (idx < variants.length - 1) {
+            out += `<br clear=all style='mso-special-character:line-break;page-break-before:always'>`;
+        }
+        return out;
+    }).join('');
+
+    const keyMatrixParts = extractHtmlParts(generateMultiCodeAnswerKeyMatrixHtml(variants, headerInfo));
+    combinedStyles += keyMatrixParts.style;
+    const answerKeyMatrixHtml = `
+        <br clear=all style='mso-special-character:line-break;page-break-before:always'>
+        ${keyMatrixParts.body}
+    `;
+
+    return `
+        <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+        <head>
+            <meta charset="utf-8">
+            <title>HỒ SƠ KHẢO THÍ - ${headerInfo.tenKyThi} - ${headerInfo.monHoc}</title>
+            <style>
+                ${combinedStyles}
+            </style>
+            <xml>
+                <w:WordDocument>
+                    <w:View>Print</w:View>
+                    <w:Zoom>100</w:Zoom>
+                    <w:DoNotOptimizeForBrowser/>
+                </w:WordDocument>
+            </xml>
+        </head>
+        <body>
+            ${matrixHtml}
+            ${examCodesHtml}
+            ${answerKeyMatrixHtml}
+        </body>
+        </html>
+    `;
 };

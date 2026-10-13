@@ -292,19 +292,21 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
         
         // Helper to collect positions for this row
         const getPositions = () => {
-            const parts = [];
-            // Order: NB, TH, VD, VDC
-            const posNB_TN = positionMap[`${rowIndex}-5`]; if(posNB_TN) parts.push(`NB: ${posNB_TN}`);
-            const posNB_TL = positionMap[`${rowIndex}-6`]; if(posNB_TL) parts.push(`NB: ${posNB_TL}`);
+            const posGroups: Record<string, string[]> = { NB: [], TH: [], VD: [] };
             
-            const posTH_TN = positionMap[`${rowIndex}-7`]; if(posTH_TN) parts.push(`TH: ${posTH_TN}`);
-            const posTH_TL = positionMap[`${rowIndex}-8`]; if(posTH_TL) parts.push(`TH: ${posTH_TL}`);
+            const posNB_TN = positionMap[`${rowIndex}-5`]; if(posNB_TN) posGroups.NB.push(posNB_TN.replace('Câu ', ''));
+            const posNB_TL = positionMap[`${rowIndex}-6`]; if(posNB_TL) posGroups.NB.push(posNB_TL.replace('Câu ', ''));
             
-            const posVD_TN = positionMap[`${rowIndex}-9`]; if(posVD_TN) parts.push(`VD: ${posVD_TN}`);
-            const posVD_TL = positionMap[`${rowIndex}-10`]; if(posVD_TL) parts.push(`VD: ${posVD_TL}`);
+            const posTH_TN = positionMap[`${rowIndex}-7`]; if(posTH_TN) posGroups.TH.push(posTH_TN.replace('Câu ', ''));
+            const posTH_TL = positionMap[`${rowIndex}-8`]; if(posTH_TL) posGroups.TH.push(posTH_TL.replace('Câu ', ''));
+            
+            const posVD_TN = positionMap[`${rowIndex}-9`]; if(posVD_TN) posGroups.VD.push(posVD_TN.replace('Câu ', ''));
+            const posVD_TL = positionMap[`${rowIndex}-10`]; if(posVD_TL) posGroups.VD.push(posVD_TL.replace('Câu ', ''));
 
-            const posVDC_TN = positionMap[`${rowIndex}-11`]; if(posVDC_TN) parts.push(`VDC: ${posVDC_TN}`);
-            const posVDC_TL = positionMap[`${rowIndex}-12`]; if(posVDC_TL) parts.push(`VDC: ${posVDC_TL}`);
+            const parts = [];
+            if (posGroups.NB.length > 0) parts.push(`NB: Câu ${posGroups.NB.join(', ')}`);
+            if (posGroups.TH.length > 0) parts.push(`TH: Câu ${posGroups.TH.join(', ')}`);
+            if (posGroups.VD.length > 0) parts.push(`VD: Câu ${posGroups.VD.join(', ')}`);
             
             return parts;
         };
@@ -360,11 +362,10 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                     )}
                 </td>
                 
-                {/* Specific Columns: NB(TN), TH(TN), VD(TL), VDC(TL) */}
+                {/* Specific Columns: NB(TN), TH(TN), VD(TL) */}
                 {renderCell(nb_tn, avail.NB.TN, 'TN', 5)}
                 {renderCell(th_tn, avail.TH.TN, 'TN', 7)}
                 {renderCell(vd_tl, avail.VD.TL, 'TL', 10)}
-                {renderCell(vdc_tl, avail.VDC.TL, 'TL', 12)}
             </tr>
         );
     };
@@ -385,14 +386,12 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                             <th colSpan={2} className="border border-slate-300 p-2 bg-green-50">Nhận biết</th>
                             <th colSpan={2} className="border border-slate-300 p-2 bg-blue-50">Thông hiểu</th>
                             <th colSpan={2} className="border border-slate-300 p-2 bg-yellow-50">Vận dụng</th>
-                            <th colSpan={2} className="border border-slate-300 p-2 bg-red-50">Vận dụng cao</th>
                             <th rowSpan={2} className="border border-slate-300 p-2">Tổng % điểm</th>
                         </tr>
                         <tr className="bg-gray-100 text-gray-700 text-xs">
                             <th className="border border-slate-300 p-2 bg-green-50">TNKQ</th><th className="border border-slate-300 p-2 bg-green-50">TL</th>
                             <th className="border border-slate-300 p-2 bg-blue-50">TNKQ</th><th className="border border-slate-300 p-2 bg-blue-50">TL</th>
                             <th className="border border-slate-300 p-2 bg-yellow-50">TNKQ</th><th className="border border-slate-300 p-2 bg-yellow-50">TL</th>
-                            <th className="border border-slate-300 p-2 bg-red-50">TNKQ</th><th className="border border-slate-300 p-2 bg-red-50">TL</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -478,7 +477,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                                                     <span className={examinedPeriods > 0 ? 'text-gray-800' : 'text-gray-300'}>{parseInt(String(row[14]) || '0', 10)}</span>
                                                                 )}
                                                             </td>
-                                                            {[5,6,7,8,9,10,11,12].map(ci => {
+                                                            {[5,6,7,8,9,10].map(ci => {
                                                                  const cau = parseInt(String(row[ci]) || '0');
                                                                  const isTNKQ = ci % 2 !== 0; // 5(TN), 6(TL), 7(TN)...
                                                                  const diem = cau * (isTNKQ ? pointsTNKQ : pointsTL);
@@ -505,7 +504,6 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                             <td colSpan={2} className="border border-slate-300 p-2 text-center">{formatDiem(nbPoints)}</td>
                             <td colSpan={2} className="border border-slate-300 p-2 text-center">{formatDiem(thPoints)}</td>
                             <td colSpan={2} className="border border-slate-300 p-2 text-center">{formatDiem(vdPoints)}</td>
-                            <td colSpan={2} className="border border-slate-300 p-2 text-center">{formatDiem(vdcPoints)}</td>
                             <td className="border border-slate-300 p-2 text-center text-primary">{formatDiem(totalTestPoints)}</td>
                         </tr>
                         <tr>
@@ -513,13 +511,12 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                             <td colSpan={2} className="border border-slate-300 p-2 text-center">{nb_percent.toFixed(0)}%</td>
                             <td colSpan={2} className="border border-slate-300 p-2 text-center">{th_percent.toFixed(0)}%</td>
                             <td colSpan={2} className="border border-slate-300 p-2 text-center">{vd_percent.toFixed(0)}%</td>
-                            <td colSpan={2} className="border border-slate-300 p-2 text-center">{vdc_percent.toFixed(0)}%</td>
                             <td className="border border-slate-300 p-2 text-center">100%</td>
                         </tr>
                         <tr>
                             <td colSpan={6} className="text-right p-2 border border-slate-300">Tỉ lệ chung (%)</td>
                             <td colSpan={4} className="border border-slate-300 p-2 text-center">{(nb_percent + th_percent).toFixed(0)}%</td>
-                            <td colSpan={4} className="border border-slate-300 p-2 text-center">{(vd_percent + vdc_percent).toFixed(0)}%</td>
+                            <td colSpan={2} className="border border-slate-300 p-2 text-center">{(vd_percent).toFixed(0)}%</td>
                             <td className="border border-slate-300 p-2 text-center">100%</td>
                         </tr>
                     </tfoot>
@@ -558,7 +555,6 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                             <th className="border border-slate-300 p-2 w-24 text-center">Nhận biết<br/>(TNKQ)</th>
                             <th className="border border-slate-300 p-2 w-24 text-center">Thông hiểu<br/>(TNKQ)</th>
                             <th className="border border-slate-300 p-2 w-24 text-center">Vận dụng<br/>(TL)</th>
-                            <th className="border border-slate-300 p-2 w-24 text-center">Vận dụng cao<br/>(TL)</th>
                         </tr>
                      </thead>
                      <tbody>

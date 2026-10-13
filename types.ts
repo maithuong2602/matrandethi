@@ -22,7 +22,19 @@ export interface MatrixItem {
   expert: number;
 }
 
-// Types for Exercise Creator
+// Canonical Curriculum Attachment for Question Bank Schema v2
+export interface QuestionCurriculumAttachment {
+  requirementId?: string; // Canonical CTGDPT 2018 ID (e.g. "TH7-C-004"), only present when verified or auto_resolved
+  mappingStatus: 'verified' | 'auto_resolved' | 'needs_review' | 'unmapped';
+  mappingMethod: 'exact_criterion' | 'lesson_level_unique' | 'single_requirement_lesson' | 'semantic_suggestion' | 'manual' | 'none';
+  candidateRequirementIds?: string[];
+  confidence?: number;
+  sourceLessonId?: string;
+  sourceCriterionCode?: string;
+  notes?: string;
+}
+
+// Types for Exercise Creator & Exam Generator
 export interface ExerciseQuestion {
   id: string;
   category: 'mc' | 'essay';
@@ -30,13 +42,45 @@ export interface ExerciseQuestion {
   criteria: string;
   content: string;
   image?: string; // Base64 string for image
-  // Multiple Choice specific
+  // Question Format Type (MoET 2025 Standard)
+  questionType?: 'multiple-choice' | 'true-false' | 'short-answer' | 'essay';
+  // Multiple Choice / True-False specific
   mcType?: 'multiple-choice' | 'multiple-answer' | 'fill-blank';
   options?: { id: string; text: string; isCorrect: boolean }[];
-  answer?: string; // Stores "A", "B" etc for MC, or text for fill-blank/essay
+  answer?: string; // Stores "A", "B" etc for MC, or text for fill-blank/essay/short-answer
   // Essay specific
   essayType?: string;
   originalNumber?: string; // for bulk tracking
+  points?: number; // Score weighting
+  // Schema v2: Canonical curriculum attachment (Backward-compatible optional)
+  curriculum?: QuestionCurriculumAttachment;
+}
+
+// Multi-code Exam Variant Structure
+export interface ExamVariant {
+  code: string;
+  questions: any[];
+  answerKey: {
+    number: number;
+    answer: string;
+    points: number;
+    type: 'multiple-choice' | 'true-false' | 'short-answer' | 'essay';
+    details?: string;
+  }[];
+}
+
+// AI Exam Review Result
+export interface ExamReviewResult {
+  overallScore: number; // 0-100
+  verdict: string;
+  strengths: string[];
+  weaknesses: string[];
+  recommendations: string[];
+  questionAnalyses: {
+    questionIndex: number;
+    status: 'good' | 'warning' | 'error';
+    comment: string;
+  }[];
 }
 
 export interface CurriculumData {

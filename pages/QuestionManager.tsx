@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   FileSignature, 
   Info, 
@@ -11,23 +11,65 @@ import {
   Plus, 
   Trash2, 
   Check, 
-  X,
-  AlertCircle,
-  Sparkles,
-  Loader2,
-  Wand2,
-  Image as ImageIcon,
-  BookOpenCheck,
-  AlertTriangle
+  X, 
+  AlertCircle, 
+  Sparkles, 
+  Loader2, 
+  Wand2, 
+  Image as ImageIcon, 
+  BookOpenCheck, 
+  AlertTriangle, 
+  FileUp, 
+  FileText, 
+  CheckCircle2,
+  ShieldCheck,
+  Download,
+  Upload,
+  RefreshCw
 } from 'lucide-react';
 import { ExerciseQuestion } from '../types';
 import { CURRICULUM } from '../data/curriculum';
 import { parseQuestionsWithAI, generateBulkQuestions, generateEssayRubric } from '../services/geminiService';
+import { loadQuestionBank, saveQuestionBank } from '../services/storage/questionBankStorage';
+import { 
+  createBackupPackage, 
+  validateBackupPackage, 
+  restoreBackupPackage, 
+  rollbackLatestSnapshot 
+} from '../services/backup/questionBankBackup';
+import { CurriculumMappingReview } from '../components/CurriculumMappingReview';
+
 
 const QuestionManager: React.FC = () => {
   const [grade, setGrade] = useState('');
   const [lesson, setLesson] = useState('');
   const [questions, setQuestions] = useState<ExerciseQuestion[]>([]);
+  const isLoadedRef = useRef(false);
+  const canAutoSaveRef = useRef(true);
+
+  // TASK 002 & 003: Nạp ngân hàng câu hỏi bền vững từ Storage và kiểm soát cách ly an toàn
+  useEffect(() => {
+    const result = loadQuestionBank();
+    if (result.success) {
+      setQuestions(result.data);
+      canAutoSaveRef.current = true;
+    } else {
+      canAutoSaveRef.current = result.canAutoSave ?? false;
+      if (result.error) {
+        setAlertMessage(result.error);
+      }
+    }
+    isLoadedRef.current = true;
+  }, []);
+
+  // TASK 002 & 003: Tự động lưu bền vững khi danh sách câu hỏi thay đổi (được bảo vệ chống ghi đè khi cách ly)
+  useEffect(() => {
+    if (!isLoadedRef.current || !canAutoSaveRef.current) return;
+    const saveRes = saveQuestionBank(questions);
+    if (!saveRes.success && saveRes.error) {
+      setAlertMessage(saveRes.error);
+    }
+  }, [questions]);
   
   // Modal & UI States
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
@@ -37,9 +79,37 @@ const QuestionManager: React.FC = () => {
   const [pendingAction, setPendingAction] = useState<'export_json' | null>(null); // Track action after duplicate check
 
   const [activeSection, setActiveSection] = useState<'mc' | 'essay'>('mc');
+  const [viewMode, setViewMode] = useState<'edit' | 'review'>('edit');
+  const [hsktChecked, setHsktChecked] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem('hsktChecked');
+      return saved ? JSON.parse(saved) : {};
+    } catch { return {}; }
+  });
+
+  useEffect(() => {
+    localStorage.setItem('hsktChecked', JSON.stringify(hsktChecked));
+  }, [hsktChecked]);
+
+  const handleSaveManualMapping = (qId: string, reqId: string | null, status: 'verified' | 'needs_review' | 'unmapped') => {
+    setQuestions(prev => prev.map(q => {
+      if (q.id !== qId) return q;
+      return {
+        ...q,
+        curriculum: {
+          ...(q.curriculum || {}),
+          mappingStatus: status,
+          mappingMethod: status === 'verified' ? 'manual' : (q.curriculum?.mappingMethod || 'none'),
+          requirementId: reqId || undefined
+        }
+      };
+    }));
+  };
 
   const [bulkText, setBulkText] = useState('');
-  // Removed showOutput, outputContent states
+  const [bulkTab, setBulkTab] = useState<'text' | 'pdf'>('text');
+  const [bulkPdf, setBulkPdf] = useState<{ name: string; size: string; base64: string } | null>(null);
+
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -50,6 +120,7 @@ const QuestionManager: React.FC = () => {
   const [genCriteriaCode, setGenCriteriaCode] = useState('');
   const [genQuantity, setGenQuantity] = useState(1);
   const [genType, setGenType] = useState('multiple-choice');
+  const [genPdf, setGenPdf] = useState<{ name: string; size: string; base64: string } | null>(null);
 
   // Derived state for available lessons and criteria
   const availableLessons = grade ? CURRICULUM.lessonData[grade] : [];
@@ -330,9 +401,45 @@ const QuestionManager: React.FC = () => {
       return existingQuestions.some(eq => calculateSimilarity(eq.content, newQuestionContent) >= 0.90);
   };
 
+  const handlePdfFileChange = (e: React.ChangeEvent<HTMLInputElement>, target: 'gen' | 'bulk') => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+          setAlertMessage("Vui lòng chỉ chọn tệp định dạng PDF (.pdf).");
+          return;
+      }
+
+      if (file.size > 25 * 1024 * 1024) {
+          setAlertMessage("Kích thước file PDF không được vượt quá 25MB.");
+          return;
+      }
+
+      const reader = new FileReader();
+      reader.onloadend = () => {
+          const base64 = reader.result as string;
+          const fileInfo = {
+              name: file.name,
+              size: (file.size / (1024 * 1024)).toFixed(2) + ' MB',
+              base64
+          };
+          if (target === 'gen') {
+              setGenPdf(fileInfo);
+          } else {
+              setBulkPdf(fileInfo);
+          }
+      };
+      reader.readAsDataURL(file);
+      e.target.value = '';
+  };
+
   const handleAIImport = async () => {
-    if (!bulkText.trim()) {
+    if (bulkTab === 'text' && !bulkText.trim()) {
         setAlertMessage("Vui lòng nhập nội dung để phân tích.");
+        return;
+    }
+    if (bulkTab === 'pdf' && !bulkPdf) {
+        setAlertMessage("Vui lòng tải lên file PDF đề thi / bài tập để phân tích.");
         return;
     }
     
@@ -343,16 +450,22 @@ const QuestionManager: React.FC = () => {
     
     setIsAnalyzing(true);
     try {
-        const aiQuestions = await parseQuestionsWithAI(bulkText, grade, lesson);
+        const aiQuestions = await parseQuestionsWithAI(
+            bulkTab === 'text' ? bulkText : '', 
+            grade, 
+            lesson, 
+            bulkTab === 'pdf' ? bulkPdf?.base64 : undefined
+        );
         
         if (aiQuestions.length === 0) {
-            setAlertMessage("Không tìm thấy câu hỏi phù hợp với bài học đã chọn hoặc lỗi định dạng.");
+            setAlertMessage("Không tìm thấy câu hỏi phù hợp với bài học đã chọn hoặc file PDF không có câu hỏi hợp lệ.");
             return;
         }
 
         const newQuestions: ExerciseQuestion[] = aiQuestions.map((q: any) => ({
             id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
             category: q.category || 'mc',
+            questionType: q.questionType || (q.category === 'essay' ? 'essay' : 'multiple-choice'),
             level: q.level || 'NB',
             criteria: q.criteria || '',
             content: q.content || '',
@@ -390,6 +503,7 @@ const QuestionManager: React.FC = () => {
         
         setIsBulkModalOpen(false);
         setBulkText('');
+        setBulkPdf(null);
     } catch (error) {
         setAlertMessage("Đã xảy ra lỗi khi phân tích AI. Vui lòng thử lại.");
     } finally {
@@ -412,7 +526,15 @@ const QuestionManager: React.FC = () => {
 
       setIsGenerating(true);
       try {
-          const results = await generateBulkQuestions(grade, lesson, genLevel, criteriaText, genQuantity, genType);
+          const results = await generateBulkQuestions(
+              grade, 
+              lesson, 
+              genLevel, 
+              criteriaText, 
+              genQuantity, 
+              genType,
+              genPdf?.base64
+          );
           
           if (results && results.length > 0) {
               const newQuestions: ExerciseQuestion[] = results.map((q: any) => {
@@ -609,17 +731,120 @@ const QuestionManager: React.FC = () => {
       e.target.value = '';
   };
 
+  // TASK 003: Sao lưu toàn bộ Ngân hàng câu hỏi (Versioned Backup)
+  const handleFullBackupExport = () => {
+    const backupPkg = createBackupPackage(questions);
+    const blob = new Blob([JSON.stringify(backupPkg, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
+    const timeStr = now.toTimeString().slice(0, 8).replace(/:/g, '');
+    const fileName = `matrandethi_backup_${dateStr}_${timeStr}.json`;
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setAlertMessage(`Đã xuất bản sao lưu thành công (${backupPkg.questionCount} câu hỏi).`);
+  };
+
+  // TASK 003: Phục hồi Ngân hàng câu hỏi từ file sao lưu (Validate -> Snapshot -> Restore)
+  const handleBackupRestore = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const raw = JSON.parse(ev.target?.result as string);
+        const valResult = validateBackupPackage(raw);
+        if (!valResult.valid || !valResult.pkg) {
+          setAlertMessage(`Lỗi file sao lưu: ${valResult.error}`);
+          return;
+        }
+
+        const confirmRestore = window.confirm(
+          `XÁC NHẬN PHỤC HỒI NGÂN HÀNG CÂU HỎI:\n\n` +
+          `• Bản sao lưu có: ${valResult.pkg.questionCount} câu hỏi.\n` +
+          `• Ngân hàng hiện tại có: ${questions.length} câu hỏi.\n\n` +
+          `Nếu tiếp tục, dữ liệu hiện tại sẽ được thay thế bằng bản sao lưu.\n` +
+          `Hệ thống sẽ tự động tạo một bản sao an toàn (Safety Snapshot) trước khi phục hồi để bạn có thể Hoàn tác bất cứ lúc nào.\n\n` +
+          `Bạn có muốn tiếp tục phục hồi không?`
+        );
+        if (!confirmRestore) return;
+
+        const res = restoreBackupPackage(valResult.pkg, questions);
+        if (res.success && res.questions) {
+          canAutoSaveRef.current = true;
+          setQuestions(res.questions);
+          setAlertMessage(`Phục hồi thành công ${res.questions.length} câu hỏi từ bản sao lưu. Đã tạo bản sao an toàn trước đó.`);
+        } else {
+          setAlertMessage(res.error || 'Phục hồi thất bại.');
+        }
+      } catch (err: any) {
+        setAlertMessage(`Không thể đọc file sao lưu: ${err?.message || err}`);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  // TASK 003: Hoàn tác lần phục hồi gần nhất (Rollback)
+  const handleRollbackLatest = () => {
+    const confirmUndo = window.confirm(
+      `XÁC NHẬN HOÀN TÁC:\n\n` +
+      `Bạn có chắc chắn muốn hoàn tác lần phục hồi gần nhất không?\n` +
+      `Dữ liệu sẽ được khôi phục về trạng thái bản sao an toàn (Snapshot) trước lần phục hồi gần nhất.`
+    );
+    if (!confirmUndo) return;
+
+    const res = rollbackLatestSnapshot();
+    if (res.success && res.restoredQuestions) {
+      canAutoSaveRef.current = true;
+      setQuestions(res.restoredQuestions);
+      setAlertMessage(`Đã hoàn tác thành công về bản sao an toàn (${res.restoredQuestions.length} câu hỏi).`);
+    } else {
+      setAlertMessage(res.error || 'Không thể hoàn tác.');
+    }
+  };
+
   return (
     <div className="max-w-7xl mx-auto pb-20">
-      <div className="text-center mb-10">
+      <div className="text-center mb-10 relative">
         <h1 className="text-3xl font-bold text-primary flex items-center justify-center gap-3">
           <FileSignature size={36} />
           Tạo Bài Tập / Quản Lý Câu Hỏi
         </h1>
         <p className="text-gray-500 mt-2">Hệ thống tạo file Word hoàn chỉnh với mã nhận thức và tiêu chí cụ thể.</p>
+        
+        <div className="mt-4 flex justify-center">
+          <div className="inline-flex bg-gray-100 p-1 rounded-lg">
+            <button
+              onClick={() => setViewMode('edit')}
+              className={`px-4 py-2 rounded-md text-sm font-semibold transition-all ${viewMode === 'edit' ? 'bg-white text-primary shadow' : 'text-gray-600 hover:text-gray-900'}`}
+            >
+              Chế độ soạn thảo
+            </button>
+            <button
+              onClick={() => setViewMode('review')}
+              className={`px-4 py-2 rounded-md text-sm font-semibold transition-all flex items-center gap-2 ${viewMode === 'review' ? 'bg-white text-primary shadow' : 'text-gray-600 hover:text-gray-900'}`}
+            >
+              <CheckCircle2 size={16} /> Rà soát YCCĐ
+            </button>
+          </div>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+
+      {viewMode === 'review' ? (
+        <CurriculumMappingReview questions={questions} onSaveMapping={handleSaveManualMapping} />
+      ) : (
+        <>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
         {/* Main Content (Left 2 cols) */}
         <div className="lg:col-span-2 space-y-8">
             
@@ -710,13 +935,36 @@ const QuestionManager: React.FC = () => {
                                     {!q.criteria && <p className="text-[10px] text-red-500 mt-1">Bắt buộc</p>}
                                 </div>
                                 <select 
-                                    className="p-2 text-sm border rounded"
-                                    value={q.mcType}
-                                    onChange={(e) => handleUpdateQuestion(q.id, 'mcType', e.target.value)}
+                                    className="p-2 text-sm border rounded font-medium text-gray-700 bg-white"
+                                    value={q.questionType || (q.mcType === 'fill-blank' ? 'fill-blank' : (q.mcType === 'multiple-answer' ? 'multiple-choice' : 'multiple-choice'))}
+                                    onChange={(e) => {
+                                        const newType = e.target.value as any;
+                                        handleUpdateQuestion(q.id, 'questionType', newType);
+                                        if (newType === 'true-false') {
+                                            const subIds = ['a', 'b', 'c', 'd'];
+                                            const currentOpts = q.options || [];
+                                            const newOpts = subIds.map((id, i) => ({
+                                                id,
+                                                text: currentOpts[i]?.text || '',
+                                                isCorrect: currentOpts[i]?.isCorrect ?? true
+                                            }));
+                                            handleUpdateQuestion(q.id, 'options', newOpts);
+                                        } else if (newType === 'multiple-choice') {
+                                            const subIds = ['A', 'B', 'C', 'D'];
+                                            const currentOpts = q.options || [];
+                                            const newOpts = subIds.map((id, i) => ({
+                                                id,
+                                                text: currentOpts[i]?.text || '',
+                                                isCorrect: i === 0
+                                            }));
+                                            handleUpdateQuestion(q.id, 'options', newOpts);
+                                        }
+                                    }}
                                 >
-                                    <option value="multiple-choice">1 Đáp án đúng</option>
-                                    <option value="multiple-answer">Nhiều đáp án</option>
-                                    <option value="fill-blank">Điền khuyết</option>
+                                    <option value="multiple-choice">Trắc nghiệm 4 chọn 1 (Phần I)</option>
+                                    <option value="true-false">Trắc nghiệm Đúng / Sai (Phần II - 2025)</option>
+                                    <option value="short-answer">Trắc nghiệm Trả lời ngắn (Phần III - 2025)</option>
+                                    <option value="fill-blank">Điền khuyết từ</option>
                                 </select>
                             </div>
 
@@ -724,7 +972,7 @@ const QuestionManager: React.FC = () => {
                                 <textarea 
                                     className="w-full p-3 border rounded-lg text-sm mb-2 focus:border-primary outline-none"
                                     rows={2}
-                                    placeholder="Nhập nội dung câu hỏi..."
+                                    placeholder={q.questionType === 'true-false' ? "Nhập ngữ cảnh / đoạn thông tin dẫn đề cho 4 ý Đúng/Sai..." : "Nhập nội dung câu hỏi..."}
                                     value={q.content}
                                     onChange={(e) => handleContentChange(q.id, e.target.value)}
                                 />
@@ -756,15 +1004,66 @@ const QuestionManager: React.FC = () => {
                                 )}
                             </div>
 
-                            {q.mcType !== 'fill-blank' ? (
+                            {/* Question Options / Inputs based on format */}
+                            {q.questionType === 'true-false' ? (
+                                <div className="space-y-2.5 bg-blue-50/50 p-3 rounded-lg border border-blue-100">
+                                    <p className="text-xs font-semibold text-blue-800 mb-1">4 ý đánh giá Đúng / Sai (Mỗi ý chọn Đúng hoặc Sai):</p>
+                                    {q.options?.map((opt) => (
+                                        <div key={opt.id} className="flex items-center gap-2">
+                                            <div className="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-blue-100 rounded text-xs font-bold text-blue-700 uppercase">
+                                                {opt.id})
+                                            </div>
+                                            <input 
+                                                type="text" 
+                                                className="flex-1 p-2 border border-gray-300 rounded text-sm bg-white"
+                                                placeholder={`Nội dung nhận định ${opt.id}...`}
+                                                value={opt.text}
+                                                onChange={(e) => handleUpdateOption(q.id, opt.id, 'text', e.target.value)}
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => handleUpdateOption(q.id, opt.id, 'isCorrect', !opt.isCorrect)}
+                                                className={`px-3 py-1.5 rounded text-xs font-bold transition-all shadow-sm ${
+                                                    opt.isCorrect 
+                                                        ? 'bg-emerald-600 text-white hover:bg-emerald-700' 
+                                                        : 'bg-rose-600 text-white hover:bg-rose-700'
+                                                }`}
+                                            >
+                                                {opt.isCorrect ? '✓ ĐÚNG' : '✗ SAI'}
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : q.questionType === 'short-answer' ? (
+                                <div className="bg-amber-50 p-3 rounded-lg border border-amber-200">
+                                    <label className="block text-xs font-bold text-amber-800 mb-1">Đáp án trả lời ngắn chính xác (Học sinh điền):</label>
+                                    <input 
+                                        type="text" 
+                                        className="w-full p-2 border border-amber-300 rounded text-sm bg-white font-medium text-amber-900"
+                                        placeholder="Ví dụ: 1024, RAM, Số 15, v.v..."
+                                        value={q.answer || ''}
+                                        onChange={(e) => handleUpdateQuestion(q.id, 'answer', e.target.value)}
+                                    />
+                                </div>
+                            ) : q.mcType !== 'fill-blank' ? (
                                 <div className="space-y-2">
-                                    {q.options?.map((opt, optIdx) => (
+                                    {q.options?.map((opt) => (
                                         <div key={opt.id} className="flex items-center gap-2">
                                             <input 
-                                                type="checkbox" 
+                                                type="radio" 
+                                                name={`correct_${q.id}`}
                                                 checked={opt.isCorrect}
-                                                onChange={(e) => handleUpdateOption(q.id, opt.id, 'isCorrect', e.target.checked)}
+                                                onChange={() => {
+                                                    // Set only this option to true
+                                                    const updated = q.options?.map(o => ({
+                                                        ...o,
+                                                        isCorrect: o.id === opt.id
+                                                    }));
+                                                    handleUpdateQuestion(q.id, 'options', updated);
+                                                    handleUpdateQuestion(q.id, 'answer', opt.id);
+                                                }}
                                                 className="w-4 h-4 text-primary accent-primary cursor-pointer"
+                                                title="Đánh dấu đáp án đúng"
                                             />
                                             <div className="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-gray-100 rounded text-xs font-bold text-gray-600">
                                                 {opt.id}
@@ -782,7 +1081,7 @@ const QuestionManager: React.FC = () => {
                             ) : (
                                 <div>
                                     <input 
-                                        type="text"
+                                        type="text" 
                                         className="w-full p-2 border rounded text-sm"
                                         placeholder="Nhập đáp án điền khuyết..."
                                         value={q.answer || ''}
@@ -948,15 +1247,49 @@ const QuestionManager: React.FC = () => {
                 </div>
             </div>
 
-            {/* Action Buttons */}
-            <div className="flex flex-wrap gap-4">
-                <button onClick={handleJsonExportClick} className="px-6 py-3 bg-orange-500 text-white rounded-xl font-medium hover:bg-orange-600 transition-all flex items-center gap-2 shadow-lg shadow-orange-500/20">
-                    <FileOutput size={20} /> Xuất JSON
-                </button>
-                <label className="px-6 py-3 bg-blue-400 text-white rounded-xl font-medium hover:bg-blue-500 transition-all flex items-center gap-2 shadow-lg shadow-blue-400/20 cursor-pointer">
-                    <FileInput size={20} /> Nhập JSON
-                    <input type="file" accept=".json" onChange={handleJsonImport} className="hidden" />
-                </label>
+            {/* TASK 003: Safety & Backup Card */}
+            <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200 space-y-4">
+                <div className="flex items-center justify-between border-b pb-3">
+                    <h2 className="text-lg font-semibold text-primary flex items-center gap-2">
+                        <ShieldCheck size={20} className="text-emerald-600" /> AN TOÀN DỮ LIỆU & SAO LƯU
+                    </h2>
+                    <span className="text-xs text-gray-500 font-medium">Bảo vệ & Phục hồi an toàn</span>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                    <button 
+                        onClick={handleFullBackupExport} 
+                        className="px-5 py-2.5 bg-emerald-600 text-white rounded-xl font-medium hover:bg-emerald-700 transition-all flex items-center gap-2 text-sm shadow-sm"
+                        title="Tạo file sao lưu có phiên bản toàn bộ ngân hàng câu hỏi"
+                    >
+                        <Download size={18} /> Sao Lưu Toàn Bộ (Backup)
+                    </button>
+                    
+                    <label 
+                        className="px-5 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-all flex items-center gap-2 text-sm shadow-sm cursor-pointer"
+                        title="Phục hồi câu hỏi từ file sao lưu (tự động tạo bản sao an toàn trước khi thay thế)"
+                    >
+                        <Upload size={18} /> Phục Hồi (Restore)
+                        <input type="file" accept=".json" onChange={handleBackupRestore} className="hidden" />
+                    </label>
+
+                    <button 
+                        onClick={handleRollbackLatest} 
+                        className="px-5 py-2.5 bg-gray-100 text-gray-700 border border-gray-300 rounded-xl font-medium hover:bg-gray-200 transition-all flex items-center gap-2 text-sm"
+                        title="Hoàn tác lần phục hồi gần nhất về bản sao an toàn"
+                    >
+                        <RefreshCw size={18} /> Hoàn Tác Phục Hồi (Rollback)
+                    </button>
+                </div>
+                <div className="flex flex-wrap gap-3 pt-3 border-t border-gray-100 text-xs text-gray-500 items-center">
+                    <span className="font-medium text-gray-600">Thao tác theo bài học (Legacy):</span>
+                    <button onClick={handleJsonExportClick} className="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors flex items-center gap-1.5">
+                        <FileOutput size={14} /> Xuất JSON bài học
+                    </button>
+                    <label className="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors flex items-center gap-1.5 cursor-pointer">
+                        <FileInput size={14} /> Nhập JSON bài học
+                        <input type="file" accept=".json" onChange={handleJsonImport} className="hidden" />
+                    </label>
+                </div>
             </div>
 
         </div>
@@ -981,10 +1314,21 @@ const QuestionManager: React.FC = () => {
                                     return (
                                         <div key={level}>
                                             <h4 className="text-sm font-bold text-primary mb-2 bg-blue-50 p-1.5 rounded inline-block">{levelName}</h4>
-                                            <ul className="text-xs text-gray-700 space-y-2 list-disc pl-4 leading-relaxed">
-                                                {criteriaList.map((c, i) => (
-                                                    <li key={i}>{c.replace(/^\d+\.\d+\s/, '')}</li>
-                                                ))}
+                                            <ul className="text-xs text-gray-700 space-y-2 list-none leading-relaxed">
+                                                {criteriaList.map((c, i) => {
+                                                    const cleanText = c.replace(/^\d+\.\d+\s/, '');
+                                                    return (
+                                                    <li key={i} className="flex gap-2 items-start">
+                                                        <input 
+                                                            type="checkbox" 
+                                                            className="mt-0.5 cursor-pointer accent-red-500 flex-shrink-0" 
+                                                            title="Đánh dấu YCCĐ này dành cho HSKT"
+                                                            checked={!!hsktChecked[c]}
+                                                            onChange={() => setHsktChecked(prev => ({...prev, [c]: !prev[c]}))}
+                                                        />
+                                                        <span className={hsktChecked[c] ? "font-semibold text-red-600" : ""}>{cleanText}</span>
+                                                    </li>
+                                                )})}
                                             </ul>
                                         </div>
                                     );
@@ -997,7 +1341,9 @@ const QuestionManager: React.FC = () => {
                 </div>
             </div>
         </aside>
-      </div>
+          </div>
+        </>
+      )}
 
       {/* AI Generate Question Modal */}
       {isGenModalOpen && (
@@ -1044,12 +1390,13 @@ const QuestionManager: React.FC = () => {
                         >
                             {activeSection === 'mc' ? (
                                 <>
-                                    <option value="multiple-choice">Trắc nghiệm (4 lựa chọn)</option>
-                                    <option value="true-false">Trắc nghiệm (Nhiều đáp án đúng)</option>
-                                    <option value="fill-blank">Điền khuyết</option>
+                                    <option value="multiple-choice">Trắc nghiệm nhiều lựa chọn (Phần I - 4 chọn 1)</option>
+                                    <option value="true-false">Trắc nghiệm Đúng / Sai (Phần II - 4 ý a,b,c,d - Chuẩn 2025)</option>
+                                    <option value="short-answer">Trắc nghiệm Trả lời ngắn (Phần III - Chuẩn 2025)</option>
+                                    <option value="fill-blank">Điền khuyết / Khuyết từ</option>
                                 </>
                             ) : (
-                                <option value="essay">Tự luận</option>
+                                <option value="essay">Tự luận (Kèm barem chấm chi tiết)</option>
                             )}
                         </select>
                     </div>
@@ -1067,6 +1414,55 @@ const QuestionManager: React.FC = () => {
                             })}
                         </select>
                     </div>
+
+                    {/* PDF Grounding Attachment */}
+                    <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                            <label className="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
+                                <FileText size={16} className="text-purple-600" /> Ngữ liệu PDF tham khảo (Tùy chọn)
+                            </label>
+                            {genPdf && (
+                                <span className="text-[11px] text-emerald-600 font-bold flex items-center gap-1">
+                                    <CheckCircle2 size={13} /> Đã nạp PDF
+                                </span>
+                            )}
+                        </div>
+
+                        {!genPdf ? (
+                            <label className="border-2 border-dashed border-purple-200 hover:border-purple-400 bg-purple-50/40 hover:bg-purple-50/80 rounded-xl p-3.5 flex flex-col items-center justify-center cursor-pointer transition-all text-center group">
+                                <FileUp className="text-purple-500 mb-1 group-hover:scale-110 transition-transform" size={24} />
+                                <span className="text-xs font-bold text-purple-900">Bấm để tải file PDF (SGK, SGV, đề mẫu...)</span>
+                                <span className="text-[10px] text-gray-500 mt-0.5">AI sẽ đọc trực tiếp nội dung PDF này để ra đề bám sát 100% ngữ liệu</span>
+                                <input 
+                                    type="file" 
+                                    accept=".pdf,application/pdf" 
+                                    className="hidden" 
+                                    onChange={(e) => handlePdfFileChange(e, 'gen')} 
+                                />
+                            </label>
+                        ) : (
+                            <div className="bg-purple-50 border border-purple-200 rounded-xl p-3 flex items-center justify-between">
+                                <div className="flex items-center gap-2.5 overflow-hidden">
+                                    <div className="w-8 h-8 rounded-lg bg-purple-200 text-purple-800 flex items-center justify-center flex-shrink-0 font-bold text-xs">
+                                        PDF
+                                    </div>
+                                    <div className="truncate">
+                                        <p className="text-xs font-bold text-purple-900 truncate">{genPdf.name}</p>
+                                        <p className="text-[10px] text-purple-600 font-medium">{genPdf.size} • AI sẽ ra đề bám sát nội dung này</p>
+                                    </div>
+                                </div>
+                                <button 
+                                    type="button"
+                                    onClick={() => setGenPdf(null)}
+                                    className="p-1 hover:bg-purple-200 rounded-lg text-purple-700 transition-colors"
+                                    title="Gỡ bỏ tài liệu này"
+                                >
+                                    <X size={16} />
+                                </button>
+                            </div>
+                        )}
+                    </div>
+
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Số lượng câu hỏi</label>
                         <input 
@@ -1079,7 +1475,7 @@ const QuestionManager: React.FC = () => {
                         />
                     </div>
                     <div className="text-xs text-gray-500 bg-gray-50 p-3 rounded">
-                        AI sẽ tạo <strong>{genQuantity}</strong> câu hỏi dựa trên nội dung bài <strong>"{lesson}"</strong> và cấu hình đã chọn.
+                        AI sẽ tạo <strong>{genQuantity}</strong> câu hỏi dựa trên nội dung bài <strong>"{lesson}"</strong> {genPdf ? `và tài liệu PDF "${genPdf.name}"` : ''}.
                     </div>
                 </div>
 
@@ -1167,30 +1563,86 @@ const QuestionManager: React.FC = () => {
                 </div>
                 
                 <div className="p-6 flex-1 overflow-y-auto">
-                    <div className="bg-gradient-to-r from-purple-50 to-blue-50 border border-purple-100 rounded-lg p-5 mb-6">
+                    {/* Bulk Method Tabs */}
+                    <div className="flex gap-2 mb-4 p-1 bg-gray-100 rounded-xl max-w-sm">
+                        <button
+                            type="button"
+                            onClick={() => setBulkTab('text')}
+                            className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${bulkTab === 'text' ? 'bg-white text-primary shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+                        >
+                            Dán văn bản (Ctrl+V)
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setBulkTab('pdf')}
+                            className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${bulkTab === 'pdf' ? 'bg-white text-primary shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+                        >
+                            <FileText size={14} /> Tải file PDF đề thi
+                        </button>
+                    </div>
+
+                    <div className="bg-gradient-to-r from-purple-50 to-blue-50 border border-purple-100 rounded-lg p-4 mb-5">
                         <div className="flex items-start gap-3">
-                            <Sparkles className="text-purple-600 mt-1 flex-shrink-0" size={20} />
+                            <Sparkles className="text-purple-600 mt-0.5 flex-shrink-0" size={18} />
                             <div>
-                                <p className="font-bold text-gray-800 mb-1">Công nghệ phân tích thông minh</p>
-                                <p className="text-sm text-gray-600 leading-relaxed">
-                                    Chỉ cần copy toàn bộ nội dung từ file Word, PDF hoặc website và dán vào bên dưới.
-                                    Hệ thống sẽ tự động:
+                                <p className="font-bold text-gray-800 text-xs mb-0.5">Công nghệ phân tích câu hỏi tự động</p>
+                                <p className="text-xs text-gray-600 leading-relaxed">
+                                    {bulkTab === 'pdf' 
+                                        ? `Tải lên file PDF chứa đề thi hoặc danh sách bài tập. AI sẽ tự động đọc tài liệu PDF, bóc tách toàn bộ câu hỏi và lọc đúng nội dung bài "${lesson || '...'}"`
+                                        : `Chỉ cần copy nội dung từ Word/PDF và dán vào dưới. AI sẽ tự động nhận diện câu hỏi, đáp án và lọc đúng bài "${lesson || '...'}"`
+                                    }
                                 </p>
-                                <ul className="list-disc list-inside text-sm text-gray-600 mt-2 space-y-1 ml-1">
-                                    <li>Nhận diện câu hỏi trắc nghiệm, tự luận và đáp án.</li>
-                                    <li><strong>Tự động lọc</strong> và chỉ lấy các câu hỏi thuộc nội dung bài <strong>"{lesson || '...'}"</strong>.</li>
-                                    <li>Phân loại mức độ nhận thức (NB, TH, VD, VDC) dựa trên ngữ cảnh.</li>
-                                </ul>
                             </div>
                         </div>
                     </div>
 
-                    <textarea 
-                        className="w-full h-64 p-4 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-transparent resize-none font-mono text-sm shadow-inner"
-                        placeholder="Dán nội dung câu hỏi vào đây (Ctrl+V)..."
-                        value={bulkText}
-                        onChange={(e) => setBulkText(e.target.value)}
-                    ></textarea>
+                    {bulkTab === 'text' ? (
+                        <textarea 
+                            className="w-full h-64 p-4 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-transparent resize-none font-mono text-sm shadow-inner"
+                            placeholder="Dán nội dung câu hỏi vào đây (Ctrl+V)..."
+                            value={bulkText}
+                            onChange={(e) => setBulkText(e.target.value)}
+                        ></textarea>
+                    ) : (
+                        <div className="py-4">
+                            {!bulkPdf ? (
+                                <label className="border-2 border-dashed border-blue-200 hover:border-primary bg-blue-50/40 hover:bg-blue-50/80 rounded-2xl p-10 flex flex-col items-center justify-center cursor-pointer transition-all text-center group">
+                                    <FileUp className="text-primary mb-3 group-hover:scale-110 transition-transform" size={40} />
+                                    <span className="text-base font-bold text-gray-800">Chọn hoặc Kéo thả file PDF đề thi vào đây</span>
+                                    <span className="text-xs text-gray-500 mt-1">Hỗ trợ file PDF lên đến 25MB</span>
+                                    <input 
+                                        type="file" 
+                                        accept=".pdf,application/pdf" 
+                                        className="hidden" 
+                                        onChange={(e) => handlePdfFileChange(e, 'bulk')} 
+                                    />
+                                    <span className="mt-4 px-4 py-2 bg-primary text-white text-xs font-bold rounded-lg shadow-sm">
+                                        Duyệt tệp PDF
+                                    </span>
+                                </label>
+                            ) : (
+                                <div className="bg-blue-50 border border-blue-200 rounded-2xl p-6 flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-12 h-12 rounded-xl bg-blue-200 text-blue-800 flex items-center justify-center font-bold text-sm">
+                                            PDF
+                                        </div>
+                                        <div>
+                                            <p className="text-sm font-bold text-gray-900">{bulkPdf.name}</p>
+                                            <p className="text-xs text-blue-600 font-semibold">{bulkPdf.size} • Sẵn sàng để AI phân tích và bóc tách câu hỏi</p>
+                                        </div>
+                                    </div>
+                                    <button 
+                                        type="button"
+                                        onClick={() => setBulkPdf(null)}
+                                        className="p-2 hover:bg-blue-200 rounded-xl text-blue-800 transition-colors"
+                                        title="Hủy file này"
+                                    >
+                                        <X size={18} />
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 <div className="p-6 border-t border-gray-100 flex justify-end gap-3 bg-gray-50">
@@ -1198,11 +1650,11 @@ const QuestionManager: React.FC = () => {
                     
                     <button 
                         onClick={handleAIImport} 
-                        disabled={isAnalyzing || !bulkText.trim()}
+                        disabled={isAnalyzing || (bulkTab === 'text' ? !bulkText.trim() : !bulkPdf)}
                         className="px-6 py-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all font-bold flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-purple-200"
                     >
                         {isAnalyzing ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
-                        {isAnalyzing ? 'Đang phân tích & lọc...' : 'Bắt đầu phân tích'}
+                        {isAnalyzing ? 'Đang phân tích & bóc tách...' : 'Bắt đầu phân tích'}
                     </button>
                 </div>
             </div>
