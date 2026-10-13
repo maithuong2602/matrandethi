@@ -41,6 +41,8 @@ export interface ExerciseQuestion {
   level: string; // NB, TH, VD, VDC
   criteria: string;
   content: string;
+  grade?: string; // Khối lớp (e.g. '6', '7', '8', '9')
+  lesson?: string; // Tên bài học (e.g. 'Bài 1: Lược sử công cụ tính toán')
   image?: string; // Base64 string for image
   // Question Format Type (MoET 2025 Standard)
   questionType?: 'multiple-choice' | 'true-false' | 'short-answer' | 'essay';

@@ -31,6 +31,90 @@ import { loadQuestionBank, saveQuestionBank } from '../services/storage/question
 import { CurriculumMappingReview } from '../components/CurriculumMappingReview';
 
 
+// Helper tự động gắn nhãn Khối & Bài cho dữ liệu cũ (legacy data) chưa có trường grade/lesson
+export const autoTagQuestion = (q: ExerciseQuestion): ExerciseQuestion => {
+  if (q.grade && q.lesson) return q;
+
+  let assignedGrade = q.grade;
+  let assignedLesson = q.lesson;
+
+  // 1. Phục hồi từ liên kết chương trình nếu có sourceLessonId
+  if (q.curriculum?.sourceLessonId) {
+    const src = q.curriculum.sourceLessonId;
+    for (const [g, lessons] of Object.entries(CURRICULUM.lessonData)) {
+      const matchedLesson = lessons.find(l => l.includes(src) || src.includes(l));
+      if (matchedLesson) {
+        assignedGrade = assignedGrade || g;
+        assignedLesson = assignedLesson || matchedLesson;
+        break;
+      }
+    }
+  }
+
+  // 2. Nhận diện từ khóa nội dung cho Bài 1 Tin 8 (Lược sử công cụ tính toán: Pascal, Babbage, v.v.)
+  const fullText = `${q.content || ''} ${q.criteria || ''} ${q.originalNumber || ''}`.toLowerCase();
+  if (!assignedLesson) {
+    const isGrade8Lesson1 = 
+      fullText.includes('pascal') || 
+      fullText.includes('babbage') || 
+      fullText.includes('lovelace') || 
+      fullText.includes('jacquard') || 
+      fullText.includes('công cụ tính toán') || 
+      fullText.includes('máy tính cơ học') || 
+      fullText.includes('napier') ||
+      fullText.includes('bàn tính') ||
+      fullText.includes('eniac') || 
+      fullText.includes('edvac') || 
+      fullText.includes('univac') || 
+      fullText.includes('thế hệ máy tính') ||
+      fullText.includes('đèn điện tử') ||
+      fullText.includes('chân không') ||
+      fullText.includes('bóng bán dẫn') ||
+      fullText.includes('transistor') ||
+      fullText.includes('vi mạch') ||
+      fullText.includes('mạch tích hợp') ||
+      fullText.includes('vi xử lý') ||
+      fullText.includes('microprocessor') ||
+      fullText.includes('lược sử') ||
+      fullText.includes('lịch sử máy tính') ||
+      fullText.includes('lập trình viên đầu tiên') ||
+      fullText.includes('thời kì tiền cơ học') ||
+      fullText.includes('thời kì cơ học') ||
+      fullText.includes('thời kì điện cơ') ||
+      fullText.includes('thời kì điện tử');
+
+    if (isGrade8Lesson1) {
+      assignedGrade = assignedGrade || '8';
+      assignedLesson = 'Bài 1: Lược sử công cụ tính toán';
+    }
+  }
+
+  // 3. Nhận diện theo mã tiêu chí từ CURRICULUM
+  if (!assignedLesson && q.criteria) {
+    for (const [g, lessons] of Object.entries(CURRICULUM.criteriaData)) {
+      for (const [lesName, levels] of Object.entries(lessons)) {
+        for (const critList of Object.values(levels)) {
+          if (critList.some(c => c.startsWith(q.criteria) || c.includes(q.criteria))) {
+            assignedGrade = assignedGrade || g;
+            assignedLesson = assignedLesson || lesName;
+            break;
+          }
+        }
+        if (assignedLesson) break;
+      }
+      if (assignedLesson) break;
+    }
+  }
+
+  if (!assignedLesson && !assignedGrade) return q;
+
+  return {
+    ...q,
+    grade: assignedGrade || q.grade,
+    lesson: assignedLesson || q.lesson
+  };
+};
+
 const QuestionManager: React.FC = () => {
   const [grade, setGrade] = useState('');
   const [lesson, setLesson] = useState('');
@@ -42,7 +126,8 @@ const QuestionManager: React.FC = () => {
   useEffect(() => {
     const result = loadQuestionBank();
     if (result.success) {
-      setQuestions(result.data);
+      const taggedData = result.data.map(autoTagQuestion);
+      setQuestions(taggedData);
       canAutoSaveRef.current = true;
     } else {
       canAutoSaveRef.current = result.canAutoSave ?? false;
@@ -160,20 +245,29 @@ const QuestionManager: React.FC = () => {
       return (longer.length - distance) / longer.length;
   };
 
+  // Lọc câu hỏi hiển thị theo Khối và Bài học hiện tại
+  const filteredQuestions = useMemo(() => {
+    if (!lesson) {
+      if (!grade) return questions;
+      return questions.filter(q => !q.grade || q.grade === grade);
+    }
+    return questions.filter(q => q.lesson === lesson && (!q.grade || !grade || q.grade === grade));
+  }, [questions, grade, lesson]);
+
   // Stats
   const questionSummary = useMemo(() => {
     const summary: Record<string, number> = {};
     const lessonNumberMatch = lesson.match(/Bài (\d+)|(\d+\w)/);
     const lessonNumber = lessonNumberMatch ? (lessonNumberMatch[1] || lessonNumberMatch[2]) : null;
     
-    questions.forEach(q => {
+    filteredQuestions.forEach(q => {
       if (q.criteria && lessonNumber) {
         const key = `B${lessonNumber}-${q.level}-${q.criteria}`;
         summary[key] = (summary[key] || 0) + 1;
       }
     });
     return summary;
-  }, [questions, lesson]);
+  }, [filteredQuestions, lesson]);
 
   // Handlers
   const handleAddQuestion = (type: 'mc' | 'essay') => {
@@ -183,6 +277,8 @@ const QuestionManager: React.FC = () => {
       level: 'NB',
       criteria: '',
       content: '',
+      grade: grade || '',
+      lesson: lesson || '',
       // MC defaults
       mcType: 'multiple-choice',
       options: [
@@ -194,7 +290,7 @@ const QuestionManager: React.FC = () => {
       // Essay defaults
       essayType: 'explanation'
     };
-    setQuestions([...questions, newQuestion]);
+    setQuestions(prev => [...prev, newQuestion]);
   };
 
   const handleRemoveQuestion = (id: string) => {
@@ -202,7 +298,15 @@ const QuestionManager: React.FC = () => {
   };
 
   const handleUpdateQuestion = (id: string, field: keyof ExerciseQuestion, value: any) => {
-    setQuestions(prev => prev.map(q => q.id === id ? { ...q, [field]: value } : q));
+    setQuestions(prev => prev.map(q => {
+      if (q.id !== id) return q;
+      return {
+        ...q,
+        [field]: value,
+        grade: q.grade || grade || '',
+        lesson: q.lesson || lesson || ''
+      };
+    }));
   };
 
   const handleUpdateOption = (qId: string, optId: string, field: 'text' | 'isCorrect', value: any) => {
@@ -460,6 +564,8 @@ const QuestionManager: React.FC = () => {
             level: q.level || 'NB',
             criteria: q.criteria || '',
             content: q.content || '',
+            grade: grade || '',
+            lesson: lesson || '',
             mcType: q.mcType || 'multiple-choice',
             options: Array.isArray(q.options) && q.options.length > 0 ? q.options.map((opt: any, idx: number) => ({
                 id: ['A', 'B', 'C', 'D'][idx] || idx.toString(),
@@ -478,7 +584,7 @@ const QuestionManager: React.FC = () => {
 
         let skippedCount = 0;
         const uniqueQuestions = newQuestions.filter(nq => {
-            const isDup = checkDuplicateBeforeAdd(questions, nq.content);
+            const isDup = checkDuplicateBeforeAdd(filteredQuestions, nq.content);
             if (isDup) skippedCount++;
             return !isDup;
         });
@@ -555,6 +661,8 @@ const QuestionManager: React.FC = () => {
                     level: genLevel,
                     criteria: genCriteriaCode,
                     content: q.content || 'Câu hỏi tự động',
+                    grade: grade || '',
+                    lesson: lesson || '',
                     mcType: mcType,
                     options: options,
                     answer: q.answer || '',
@@ -564,7 +672,7 @@ const QuestionManager: React.FC = () => {
 
               let skippedCount = 0;
               const uniqueQuestions = newQuestions.filter(nq => {
-                  const isDup = checkDuplicateBeforeAdd(questions, nq.content);
+                  const isDup = checkDuplicateBeforeAdd(filteredQuestions, nq.content);
                   if (isDup) skippedCount++;
                   return !isDup;
               });
@@ -634,8 +742,13 @@ const QuestionManager: React.FC = () => {
   };
 
   const handleJsonExportClick = () => {
+     if (filteredQuestions.length === 0) {
+         setAlertMessage("Không có câu hỏi nào để xuất file JSON.");
+         return;
+     }
+
      // 1. Validate Criteria (Existing logic)
-     const questionsMissingCriteria = questions.filter(q => !q.criteria);
+     const questionsMissingCriteria = filteredQuestions.filter(q => !q.criteria);
      if (questionsMissingCriteria.length > 0) {
          const confirmExport = window.confirm(
              `Cảnh báo: Có ${questionsMissingCriteria.length} câu hỏi chưa được gán "Tiêu chí".\n\n` +
@@ -646,13 +759,13 @@ const QuestionManager: React.FC = () => {
      }
 
      // 2. Check Duplicates (Fuzzy Match) - NEW LOGIC
-     const duplicates = findDuplicates(questions);
+     const duplicates = findDuplicates(filteredQuestions);
      if (duplicates.length > 0) {
          setDuplicateGroups(duplicates);
          setPendingAction('export_json'); // Set intent
          setIsDuplicateModalOpen(true);
      } else {
-         performJsonExport(questions);
+         performJsonExport(filteredQuestions);
      }
   };
 
@@ -664,8 +777,8 @@ const QuestionManager: React.FC = () => {
           try {
               const data = JSON.parse(ev.target?.result as string);
               if (data.info) {
-                  if (!grade) setGrade(data.info.grade);
-                  if (!lesson) setLesson(data.info.lesson);
+                  if (!grade && data.info.grade) setGrade(data.info.grade);
+                  if (!lesson && data.info.lesson) setLesson(data.info.lesson);
               }
               if (data.questions && Array.isArray(data.questions)) {
                   const incomingQuestions = data.questions as ExerciseQuestion[];
@@ -674,7 +787,7 @@ const QuestionManager: React.FC = () => {
                   const newDuplicate: ExerciseQuestion[] = [];
 
                   incomingQuestions.forEach(newQ => {
-                      if (checkDuplicateBeforeAdd(questions, newQ.content)) {
+                      if (checkDuplicateBeforeAdd(filteredQuestions, newQ.content)) {
                           newDuplicate.push(newQ);
                       } else {
                           newUnique.push(newQ);
@@ -699,9 +812,13 @@ const QuestionManager: React.FC = () => {
                   }
 
                   if (finalToAdd.length > 0) {
+                      const targetGrade = data.info?.grade || grade || '';
+                      const targetLesson = data.info?.lesson || lesson || '';
                       const processedQuestions = finalToAdd.map(q => ({
                           ...q,
                           id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+                          grade: q.grade || targetGrade,
+                          lesson: q.lesson || targetLesson,
                           options: q.options?.map((o, idx) => ({
                               ...o,
                               id: o.id || ['A','B','C','D'][idx]
@@ -722,40 +839,49 @@ const QuestionManager: React.FC = () => {
       e.target.value = '';
   };
 
-  // TASK: Xóa danh sách câu hỏi theo phần hoặc xóa tất cả
+  // TASK: Xóa danh sách câu hỏi theo phần hoặc xóa tất cả (theo bài hiện tại)
   const handleClearMcQuestions = () => {
-    const mcCount = questions.filter(q => q.category === 'mc').length;
+    const mcQuestions = filteredQuestions.filter(q => q.category === 'mc');
+    const mcCount = mcQuestions.length;
     if (mcCount === 0) return;
-    const confirmed = window.confirm(`Bạn có chắc chắn muốn xóa toàn bộ ${mcCount} câu hỏi trắc nghiệm không?`);
+    const lessonLabel = lesson ? `của "${lesson}"` : '';
+    const confirmed = window.confirm(`Bạn có chắc chắn muốn xóa toàn bộ ${mcCount} câu hỏi trắc nghiệm ${lessonLabel}?`);
     if (confirmed) {
-      setQuestions(prev => prev.filter(q => q.category !== 'mc'));
+      const idsToRemove = new Set(mcQuestions.map(q => q.id));
+      setQuestions(prev => prev.filter(q => !idsToRemove.has(q.id)));
       setAlertMessage(`Đã xóa ${mcCount} câu hỏi trắc nghiệm.`);
     }
   };
 
   const handleClearEssayQuestions = () => {
-    const essayCount = questions.filter(q => q.category === 'essay').length;
+    const essayQuestions = filteredQuestions.filter(q => q.category === 'essay');
+    const essayCount = essayQuestions.length;
     if (essayCount === 0) return;
-    const confirmed = window.confirm(`Bạn có chắc chắn muốn xóa toàn bộ ${essayCount} câu hỏi tự luận không?`);
+    const lessonLabel = lesson ? `của "${lesson}"` : '';
+    const confirmed = window.confirm(`Bạn có chắc chắn muốn xóa toàn bộ ${essayCount} câu hỏi tự luận ${lessonLabel}?`);
     if (confirmed) {
-      setQuestions(prev => prev.filter(q => q.category !== 'essay'));
+      const idsToRemove = new Set(essayQuestions.map(q => q.id));
+      setQuestions(prev => prev.filter(q => !idsToRemove.has(q.id)));
       setAlertMessage(`Đã xóa ${essayCount} câu hỏi tự luận.`);
     }
   };
 
   const handleClearAllQuestions = () => {
-    if (questions.length === 0) {
+    const count = filteredQuestions.length;
+    if (count === 0) {
       setAlertMessage("Không có câu hỏi nào để xóa.");
       return;
     }
+    const targetLabel = lesson ? `thuộc bài "${lesson}"` : 'hiện có';
     const confirmed = window.confirm(
-      `XÁC NHẬN XÓA TẤT CẢ DỮ LIỆU:\n\n` +
-      `Bạn có chắc chắn muốn xóa TOÀN BỘ ${questions.length} câu hỏi hiện có không?\n\n` +
-      `Thao tác này sẽ xóa sạch danh sách câu hỏi để bạn có thể soạn mới từ đầu.`
+      `XÁC NHẬN XÓA CÂU HỎI:\n\n` +
+      `Bạn có chắc chắn muốn xóa TOÀN BỘ ${count} câu hỏi ${targetLabel} không?\n\n` +
+      `Thao tác này sẽ xóa sạch danh sách câu hỏi của bài này để bạn có thể soạn mới từ đầu.`
     );
     if (confirmed) {
-      setQuestions([]);
-      setAlertMessage(`Đã xóa sạch toàn bộ ${questions.length} câu hỏi.`);
+      const idsToRemove = new Set(filteredQuestions.map(q => q.id));
+      setQuestions(prev => prev.filter(q => !idsToRemove.has(q.id)));
+      setAlertMessage(`Đã xóa sạch ${count} câu hỏi ${targetLabel}.`);
     }
   };
 
@@ -786,7 +912,6 @@ const QuestionManager: React.FC = () => {
         </div>
       </div>
 
-
       {viewMode === 'review' ? (
         <CurriculumMappingReview questions={questions} onSaveMapping={handleSaveManualMapping} />
       ) : (
@@ -800,15 +925,20 @@ const QuestionManager: React.FC = () => {
                 <div className="flex items-center justify-between mb-4">
                     <h2 className="text-lg font-semibold text-primary flex items-center gap-2">
                         <Info size={20} /> THÔNG TIN CHUNG
+                        {questions.length > 0 && lesson && (
+                            <span className="text-xs font-normal text-gray-500 bg-gray-100 px-2.5 py-0.5 rounded-full">
+                                Bài này: {filteredQuestions.length} / Tổng ngân hàng: {questions.length} câu
+                            </span>
+                        )}
                     </h2>
-                    {questions.length > 0 && (
+                    {filteredQuestions.length > 0 && (
                         <button 
                             type="button"
                             onClick={handleClearAllQuestions}
                             className="text-xs text-red-600 hover:text-red-700 hover:bg-red-50 px-3 py-1.5 rounded-lg border border-red-200 transition-colors flex items-center gap-1.5 font-medium"
-                            title="Xóa toàn bộ câu hỏi hiện có trong danh sách"
+                            title={lesson ? `Xóa sạch toàn bộ câu hỏi của bài "${lesson}"` : "Xóa toàn bộ câu hỏi hiện có trong danh sách"}
                         >
-                            <Trash size={14} /> Xóa sạch câu hỏi ({questions.length})
+                            <Trash size={14} /> Xóa sạch câu hỏi ({filteredQuestions.length})
                         </button>
                     )}
                 </div>
@@ -838,7 +968,7 @@ const QuestionManager: React.FC = () => {
                             <option value="">-- Chọn bài --</option>
                             {availableLessons?.map((l, idx) => (
                                 <option key={idx} value={l} disabled={l.startsWith('a.') || l.startsWith('b.')} className={l.startsWith('a.') || l.startsWith('b.') ? 'bg-gray-100 font-bold' : ''}>
-                                    {l}
+                                     {l}
                                 </option>
                             ))}
                         </select>
@@ -852,15 +982,15 @@ const QuestionManager: React.FC = () => {
                     <h2 className="text-lg font-semibold text-primary flex items-center gap-2">
                         <ListChecks size={20} /> PHẦN 1: TRẮC NGHIỆM
                         <span className="text-xs font-normal text-gray-500">
-                            ({questions.filter(q => q.category === 'mc').length} câu)
+                            ({filteredQuestions.filter(q => q.category === 'mc').length} câu)
                         </span>
                     </h2>
-                    {questions.some(q => q.category === 'mc') && (
+                    {filteredQuestions.some(q => q.category === 'mc') && (
                         <button 
                             type="button"
                             onClick={handleClearMcQuestions}
                             className="text-xs text-red-600 hover:text-red-700 hover:bg-red-50 px-3 py-1.5 rounded-lg border border-red-200 transition-colors flex items-center gap-1.5 font-medium"
-                            title="Xóa tất cả câu hỏi trắc nghiệm"
+                            title="Xóa tất cả câu hỏi trắc nghiệm của bài này"
                         >
                             <Trash size={14} /> Xóa tất cả trắc nghiệm
                         </button>
@@ -868,13 +998,13 @@ const QuestionManager: React.FC = () => {
                 </div>
                 
                 <div className="space-y-6">
-                    {questions.filter(q => q.category === 'mc').length === 0 ? (
+                    {filteredQuestions.filter(q => q.category === 'mc').length === 0 ? (
                         <div className="py-8 text-center border-2 border-dashed border-gray-200 rounded-xl bg-gray-50/50">
-                            <p className="text-sm font-medium text-gray-500">Chưa có câu hỏi trắc nghiệm nào.</p>
+                            <p className="text-sm font-medium text-gray-500">Chưa có câu hỏi trắc nghiệm nào cho bài học này.</p>
                             <p className="text-xs text-gray-400 mt-1">Bấm "Thêm câu hỏi", "Tạo câu hỏi AI" hoặc "Nhập hàng loạt" bên dưới để thêm câu hỏi.</p>
                         </div>
                     ) : (
-                        questions.filter(q => q.category === 'mc').map((q, idx) => (
+                        filteredQuestions.filter(q => q.category === 'mc').map((q, idx) => (
                         <div key={q.id} className="border border-gray-200 rounded-lg p-4 bg-gray-50 relative group">
                             <button 
                                 onClick={() => handleRemoveQuestion(q.id)}
@@ -1101,28 +1231,28 @@ const QuestionManager: React.FC = () => {
                     <h2 className="text-lg font-semibold text-primary flex items-center gap-2">
                         <PenTool size={20} /> PHẦN 2: TỰ LUẬN
                         <span className="text-xs font-normal text-gray-500">
-                            ({questions.filter(q => q.category === 'essay').length} câu)
+                            ({filteredQuestions.filter(q => q.category === 'essay').length} câu)
                         </span>
                     </h2>
-                    {questions.some(q => q.category === 'essay') && (
+                    {filteredQuestions.some(q => q.category === 'essay') && (
                         <button 
                             type="button"
                             onClick={handleClearEssayQuestions}
                             className="text-xs text-red-600 hover:text-red-700 hover:bg-red-50 px-3 py-1.5 rounded-lg border border-red-200 transition-colors flex items-center gap-1.5 font-medium"
-                            title="Xóa tất cả câu hỏi tự luận"
+                            title="Xóa tất cả câu hỏi tự luận của bài này"
                         >
                             <Trash size={14} /> Xóa tất cả tự luận
                         </button>
                     )}
                 </div>
                  <div className="space-y-6">
-                    {questions.filter(q => q.category === 'essay').length === 0 ? (
+                    {filteredQuestions.filter(q => q.category === 'essay').length === 0 ? (
                         <div className="py-8 text-center border-2 border-dashed border-gray-200 rounded-xl bg-gray-50/50">
-                            <p className="text-sm font-medium text-gray-500">Chưa có câu hỏi tự luận nào.</p>
+                            <p className="text-sm font-medium text-gray-500">Chưa có câu hỏi tự luận nào cho bài học này.</p>
                             <p className="text-xs text-gray-400 mt-1">Bấm "Thêm câu tự luận" hoặc "Tạo câu hỏi AI" bên dưới để thêm câu hỏi.</p>
                         </div>
                     ) : (
-                        questions.filter(q => q.category === 'essay').map((q, idx) => (
+                        filteredQuestions.filter(q => q.category === 'essay').map((q, idx) => (
                         <div key={q.id} className="border border-gray-200 rounded-lg p-4 bg-gray-50 relative">
                              <button 
                                 onClick={() => handleRemoveQuestion(q.id)}
@@ -1260,14 +1390,14 @@ const QuestionManager: React.FC = () => {
                     <FileInput size={20} /> Nhập JSON
                     <input type="file" accept=".json" onChange={handleJsonImport} className="hidden" />
                 </label>
-                {questions.length > 0 && (
+                {filteredQuestions.length > 0 && (
                     <button 
                         type="button"
                         onClick={handleClearAllQuestions} 
                         className="px-6 py-3 bg-rose-50 border border-rose-200 text-rose-600 rounded-xl font-medium hover:bg-rose-100 hover:border-rose-300 transition-all flex items-center gap-2 shadow-sm ml-auto"
-                        title="Xóa sạch toàn bộ danh sách câu hỏi hiện có"
+                        title={lesson ? `Xóa sạch toàn bộ câu hỏi của bài "${lesson}"` : "Xóa toàn bộ câu hỏi hiện có trong danh sách"}
                     >
-                        <Trash size={20} /> Xóa toàn bộ câu hỏi
+                        <Trash size={20} /> Xóa toàn bộ câu hỏi ({filteredQuestions.length})
                     </button>
                 )}
             </div>
