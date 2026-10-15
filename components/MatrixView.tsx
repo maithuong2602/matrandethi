@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { MatrixData } from '../types';
 import { formatDiem } from '../utils';
-import { Trash2, GripVertical } from 'lucide-react';
+import { Trash2, GripVertical, Plus, CheckSquare, Square, X } from 'lucide-react';
 
 interface MatrixViewProps {
     data: MatrixData;
@@ -288,6 +288,130 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
         setDraggedGroupIndex(null);
     };
 
+    // --- YCCĐ (Mức độ đánh giá) Checkbox & Dynamic Item Handlers ---
+    interface YccdSection {
+        levelTitle: string;
+        items: { id: string; text: string; checked: boolean }[];
+    }
+
+    const parseYccdHtml = (htmlContent: string): YccdSection[] => {
+        if (!htmlContent) return [];
+        // Match sections by <strong> tags
+        const regex = /<strong class="block font-semibold[^"]*">([\s\S]*?)<\/strong>([\s\S]*?)(?=(?:<strong class="block font-semibold[^"]*">|$))/gi;
+        const sections: YccdSection[] = [];
+        let match;
+
+        while ((match = regex.exec(htmlContent)) !== null) {
+            const levelTitle = match[1].trim();
+            const bodyHtml = match[2];
+            const items: { id: string; text: string; checked: boolean }[] = [];
+
+            // Extract each <div ...>...</div>
+            const divRegex = /<div([^>]*)>([\s\S]*?)<\/div>/gi;
+            let divMatch;
+            let idx = 0;
+            while ((divMatch = divRegex.exec(bodyHtml)) !== null) {
+                const attrs = divMatch[1];
+                const text = divMatch[2].trim();
+                const isUnchecked = /data-unchecked="true"/i.test(attrs);
+                items.push({
+                    id: `${levelTitle}-${idx++}`,
+                    text: text,
+                    checked: !isUnchecked
+                });
+            }
+
+            sections.push({
+                levelTitle,
+                items
+            });
+        }
+
+        // If no <strong> level tag found, create a fallback section
+        if (sections.length === 0 && htmlContent.trim()) {
+            const items: { id: string; text: string; checked: boolean }[] = [];
+            const divRegex = /<div([^>]*)>([\s\S]*?)<\/div>/gi;
+            let divMatch;
+            let idx = 0;
+            while ((divMatch = divRegex.exec(htmlContent)) !== null) {
+                const attrs = divMatch[1];
+                const text = divMatch[2].trim();
+                const isUnchecked = /data-unchecked="true"/i.test(attrs);
+                items.push({
+                    id: `default-${idx++}`,
+                    text: text,
+                    checked: !isUnchecked
+                });
+            }
+            if (items.length > 0) {
+                sections.push({ levelTitle: '', items });
+            }
+        }
+
+        return sections;
+    };
+
+    const serializeYccdSections = (sections: YccdSection[]): string => {
+        let result = '';
+        sections.forEach((sec, sIdx) => {
+            if (sec.levelTitle) {
+                const marginTopClass = sIdx === 0 ? '' : 'mt-2';
+                result += `<strong class="block font-semibold ${marginTopClass}">${sec.levelTitle}</strong>`;
+            }
+            sec.items.forEach(it => {
+                const uncheckedAttr = !it.checked ? ' data-unchecked="true"' : '';
+                result += `<div class="pl-2"${uncheckedAttr}>${it.text}</div>`;
+            });
+        });
+        return result;
+    };
+
+    const handleToggleYccd = (rowIndex: number, sectionIdx: number, itemIdx: number) => {
+        const currentReq = data.specifications.rows[rowIndex]?.[4] || '';
+        const sections = parseYccdHtml(currentReq);
+        if (sections[sectionIdx]?.items[itemIdx]) {
+            sections[sectionIdx].items[itemIdx].checked = !sections[sectionIdx].items[itemIdx].checked;
+            const newHtml = serializeYccdSections(sections);
+            const newData = JSON.parse(JSON.stringify(data));
+            newData.specifications.rows[rowIndex][4] = newHtml;
+            onUpdateMatrix(newData);
+        }
+    };
+
+    const handleAddYccd = (rowIndex: number, sectionIdx: number, newText: string) => {
+        const trimmed = newText.trim();
+        if (!trimmed) return;
+        const currentReq = data.specifications.rows[rowIndex]?.[4] || '';
+        const sections = parseYccdHtml(currentReq);
+        if (sections[sectionIdx]) {
+            const formattedText = trimmed.startsWith('–') || trimmed.startsWith('-') ? trimmed : `– ${trimmed}`;
+            sections[sectionIdx].items.push({
+                id: `${sections[sectionIdx].levelTitle}-${Date.now()}`,
+                text: formattedText,
+                checked: true
+            });
+            const newHtml = serializeYccdSections(sections);
+            const newData = JSON.parse(JSON.stringify(data));
+            newData.specifications.rows[rowIndex][4] = newHtml;
+            onUpdateMatrix(newData);
+        }
+    };
+
+    const handleDeleteYccd = (rowIndex: number, sectionIdx: number, itemIdx: number) => {
+        const currentReq = data.specifications.rows[rowIndex]?.[4] || '';
+        const sections = parseYccdHtml(currentReq);
+        if (sections[sectionIdx]?.items[itemIdx]) {
+            sections[sectionIdx].items.splice(itemIdx, 1);
+            const newHtml = serializeYccdSections(sections);
+            const newData = JSON.parse(JSON.stringify(data));
+            newData.specifications.rows[rowIndex][4] = newHtml;
+            onUpdateMatrix(newData);
+        }
+    };
+
+    const [addingYccdFor, setAddingYccdFor] = useState<{ rowIndex: number; sectionIdx: number } | null>(null);
+    const [newYccdText, setNewYccdText] = useState('');
+
     const renderSpecRow = (row: string[], rowIndex: number, rowspanMain: number | null, rowspanSub: number | null) => {
         const [stt, main, sub, lesson, req, nb_raw, th_raw, vd_raw, vdc_raw] = row;
         
@@ -348,6 +472,8 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
             );
         };
 
+        const yccdSections = parseYccdHtml(req);
+
         return (
             <tr key={`spec-${rowIndex}`} className="hover:bg-slate-50 group">
                 <td className="bg-white relative border border-slate-300 p-2 text-center align-middle">
@@ -356,8 +482,118 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                 {rowspanMain && <td className="bg-white align-top text-left border border-slate-300 p-2 font-medium" rowSpan={rowspanMain}>{main}</td>}
                 {rowspanSub && <td className="bg-white align-top text-left border border-slate-300 p-2" rowSpan={rowspanSub}>{sub}</td>}
                 <td className="bg-white text-left align-middle border border-slate-300 p-2 text-sm">{lesson}</td>
-                <td className="bg-white text-left text-sm border border-slate-300 p-2 min-w-[350px]">
-                    <div dangerouslySetInnerHTML={{__html: req}} />
+                <td className="bg-white text-left text-sm border border-slate-300 p-2 min-w-[360px]">
+                    {yccdSections.length === 0 ? (
+                        <div className="text-slate-400 italic">Chưa có yêu cầu cần đạt</div>
+                    ) : (
+                        <div className="space-y-2">
+                            {yccdSections.map((section, sIdx) => (
+                                <div key={`sec-${sIdx}`} className="yccd-section">
+                                    {section.levelTitle && (
+                                        <div className="flex items-center justify-between font-semibold text-slate-800 text-sm mt-1 mb-1 bg-slate-100/70 px-2 py-0.5 rounded">
+                                            <span>{section.levelTitle}</span>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setAddingYccdFor({ rowIndex, sectionIdx: sIdx });
+                                                    setNewYccdText('');
+                                                }}
+                                                className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 font-normal py-0.5 px-1.5 rounded hover:bg-blue-50 transition-colors"
+                                                title={`Thêm yêu cầu cần đạt mới cho mục ${section.levelTitle}`}
+                                            >
+                                                <Plus size={13} />
+                                                <span>Thêm YCCĐ</span>
+                                            </button>
+                                        </div>
+                                    )}
+
+                                    <div className="space-y-1 pl-1">
+                                        {section.items.map((item, iIdx) => (
+                                            <div
+                                                key={item.id}
+                                                className={`group/item flex items-start gap-2 p-1 rounded transition-colors ${
+                                                    item.checked
+                                                        ? 'hover:bg-slate-100/60'
+                                                        : 'bg-slate-50/80 opacity-60 text-slate-400'
+                                                }`}
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    checked={item.checked}
+                                                    onChange={() => handleToggleYccd(rowIndex, sIdx, iIdx)}
+                                                    className="mt-1 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer shrink-0"
+                                                    title={item.checked ? "Đã chọn ra trong đề (Click để bỏ chọn)" : "Chưa chọn ra trong đề (Click để chọn)"}
+                                                />
+                                                <span
+                                                    onClick={() => handleToggleYccd(rowIndex, sIdx, iIdx)}
+                                                    className={`cursor-pointer flex-1 leading-snug select-none text-[13px] ${
+                                                        item.checked ? 'text-slate-800' : 'line-through text-slate-400'
+                                                    }`}
+                                                >
+                                                    {item.text}
+                                                </span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleDeleteYccd(rowIndex, sIdx, iIdx)}
+                                                    className="opacity-0 group-hover/item:opacity-100 text-red-400 hover:text-red-600 p-0.5 rounded hover:bg-red-50 transition-opacity"
+                                                    title="Xoá yêu cầu cần đạt này"
+                                                >
+                                                    <X size={13} />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    {/* Inline Add Input for this Section */}
+                                    {addingYccdFor?.rowIndex === rowIndex && addingYccdFor?.sectionIdx === sIdx && (
+                                        <div className="mt-2 pl-2 pr-1 flex items-center gap-1.5 bg-blue-50/60 p-1.5 rounded border border-blue-200">
+                                            <input
+                                                type="text"
+                                                autoFocus
+                                                value={newYccdText}
+                                                onChange={(e) => setNewYccdText(e.target.value)}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') {
+                                                        handleAddYccd(rowIndex, sIdx, newYccdText);
+                                                        setAddingYccdFor(null);
+                                                        setNewYccdText('');
+                                                    } else if (e.key === 'Escape') {
+                                                        setAddingYccdFor(null);
+                                                        setNewYccdText('');
+                                                    }
+                                                }}
+                                                placeholder="Nhập nội dung YCCĐ mới (nhấn Enter để lưu)..."
+                                                className="flex-1 text-xs border border-blue-300 rounded px-2 py-1 outline-none focus:ring-1 focus:ring-blue-500 bg-white"
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    handleAddYccd(rowIndex, sIdx, newYccdText);
+                                                    setAddingYccdFor(null);
+                                                    setNewYccdText('');
+                                                }}
+                                                className="bg-blue-600 text-white text-xs px-2.5 py-1 rounded hover:bg-blue-700 font-medium"
+                                            >
+                                                Lưu
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setAddingYccdFor(null);
+                                                    setNewYccdText('');
+                                                }}
+                                                className="text-slate-400 hover:text-slate-600 p-1"
+                                                title="Hủy"
+                                            >
+                                                <X size={14} />
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
                     {positions.length > 0 && (
                         <div className="mt-3 pt-2 border-t border-dashed border-gray-300 text-xs text-blue-700">
                             <strong>Vị trí câu hỏi:</strong>

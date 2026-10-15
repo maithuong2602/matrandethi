@@ -1058,11 +1058,23 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             matrixBodyHtml += '</tr>';
 
             // --- SPEC ROW ---
-            const reqHtml = getRequirementsHtml(gradeStr, mainTopic, subTopic);
-            let formattedReq = reqHtml
+            // Use customized specification row HTML if available, otherwise fallback to getRequirementsHtml
+            const rawCustomReq = (firstRow && data.specifications?.rows) 
+                ? (data.specifications.rows[data.matrix.rows.indexOf(firstRow)]?.[4] || '')
+                : '';
+            const reqHtml = rawCustomReq || getRequirementsHtml(gradeStr, mainTopic, subTopic);
+
+            // Filter out unchecked YCCĐ items (marked with data-unchecked="true")
+            let activeReqHtml = reqHtml;
+            if (activeReqHtml.includes('data-unchecked="true"')) {
+                activeReqHtml = activeReqHtml.replace(/<div[^>]*data-unchecked="true"[^>]*>[\s\S]*?<\/div>/gi, '');
+            }
+
+            let formattedReq = activeReqHtml
                 .replace(/<strong class="block font-semibold.*?"/g, '<p style="font-weight: bold; margin: 4px 0 2px 0;"')
                 .replace(/<\/strong>/g, '</p>')
-                .replace(/<div class="pl-2">/g, '<p style="margin: 0 0 0 10px;">')
+                .replace(/<div class="pl-2"[^>]*>/g, '<p style="margin: 0 0 0 10px;">')
+                .replace(/<div[^>]*>/g, '<p style="margin: 0 0 0 10px;">')
                 .replace(/<\/div>/g, '</p>');
             
             if (positionSummary.length > 0) {
