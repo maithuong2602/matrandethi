@@ -469,25 +469,76 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
         // Helper to render cell with count and MAX AVAILABLE
         const renderCell = (count: number, max: number, type: 'TN' | 'TL', colIndex: number) => {
             const isEditing = editingCell?.row === rowIndex && editingCell?.col === colIndex;
+            const isTLColumn = colIndex === 10;
+            const currentTLPoint = isTLColumn ? getRowPointsTL(rowIndex) : pointsTL;
             
             return (
-                <td className="bg-white cursor-pointer hover:bg-sky-50 p-2 border border-slate-300 text-center w-24 align-middle" onClick={() => setEditingCell({row: rowIndex, col: colIndex})}>
+                <td className="bg-white hover:bg-sky-50 p-2 border border-slate-300 text-center w-24 align-middle transition-colors">
                     {isEditing ? (
-                        <div className="flex flex-col items-center">
-                            <input 
-                                autoFocus 
-                                type="number" 
-                                className="w-full text-center border border-sky-400 rounded p-1 outline-none text-sm" 
-                                defaultValue={count} 
-                                onBlur={(e) => handleCellChange(rowIndex, colIndex, e.target.value)} 
-                                onKeyDown={(e) => {if (e.key === 'Enter') handleCellChange(rowIndex, colIndex, e.currentTarget.value); if (e.key === 'Escape') setEditingCell(null);}} 
-                            />
-                            <span className="text-[10px] text-slate-400 mt-1">Kho: {max}</span>
+                        <div className="flex flex-col items-center gap-1.5 p-1.5 bg-white shadow-xl rounded-lg border-2 border-indigo-400 z-20 min-w-[110px]">
+                            <div className="flex items-center justify-between w-full gap-1">
+                                <span className="text-[11px] text-gray-600 font-semibold">Số câu:</span>
+                                <input 
+                                    autoFocus 
+                                    type="number" 
+                                    min="0"
+                                    className="w-12 text-center border border-sky-400 rounded p-1 outline-none text-xs font-bold bg-white" 
+                                    defaultValue={count} 
+                                    onBlur={(e) => {
+                                        if (!isTLColumn) handleCellChange(rowIndex, colIndex, e.target.value);
+                                    }} 
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') handleCellChange(rowIndex, colIndex, e.currentTarget.value); 
+                                        if (e.key === 'Escape') setEditingCell(null);
+                                    }} 
+                                    onChange={(e) => {
+                                        if (isTLColumn) handleCellChange(rowIndex, colIndex, e.target.value);
+                                    }}
+                                />
+                            </div>
+                            {isTLColumn && (
+                                <div className="flex items-center justify-between w-full gap-1 border-t border-indigo-100 pt-1">
+                                    <span className="text-[11px] text-indigo-700 font-bold">Điểm/câu:</span>
+                                    <input
+                                        type="number"
+                                        step="0.25"
+                                        min="0.25"
+                                        max="10"
+                                        className="w-12 text-center border border-indigo-400 rounded p-0.5 outline-none text-xs font-bold bg-indigo-50 text-indigo-800"
+                                        defaultValue={currentTLPoint}
+                                        onChange={(e) => {
+                                            const p = parseFloat(e.target.value);
+                                            if (!isNaN(p) && p > 0) {
+                                                handleUpdateRowEssayPoints(rowIndex, p);
+                                            }
+                                        }}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter' || e.key === 'Escape') setEditingCell(null);
+                                        }}
+                                    />
+                                </div>
+                            )}
+                            <button
+                                type="button"
+                                onClick={() => setEditingCell(null)}
+                                className="w-full text-center text-xs text-white bg-indigo-600 hover:bg-indigo-700 font-semibold py-0.5 rounded shadow-sm mt-0.5 transition-colors"
+                            >
+                                Xong
+                            </button>
                         </div>
                     ) : (
-                        <div className="flex flex-col items-center justify-center">
+                        <div 
+                            className="cursor-pointer flex flex-col items-center justify-center group/cell py-0.5"
+                            onClick={() => setEditingCell({row: rowIndex, col: colIndex})}
+                            title={isTLColumn ? "Nhấn để điều chỉnh số câu và điểm tương ứng" : "Nhấn để sửa số câu"}
+                        >
                             <span className={`font-semibold text-lg ${count > 0 ? 'text-gray-900' : 'text-gray-300'}`}>{count}</span>
                             <span className="text-xs text-gray-400" title="Số câu có sẵn trong ngân hàng">/ {max}</span>
+                            {isTLColumn && count > 0 && (
+                                <span className="text-[11px] font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-1.5 py-0.5 rounded border border-indigo-200 mt-1 transition-colors">
+                                    {currentTLPoint}đ/câu
+                                </span>
+                            )}
                         </div>
                     )}
                 </td>
@@ -679,7 +730,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                             <th className="border border-slate-300 p-2 bg-blue-50">TNKQ<br/><span className="text-[10px] text-gray-400 font-normal">({pointsTNKQ}đ)</span></th>
                             <th className="border border-slate-300 p-2 bg-blue-50">TL<br/><span className="text-[10px] text-gray-400 font-normal">({pointsTL}đ)</span></th>
                             <th className="border border-slate-300 p-2 bg-yellow-50">TNKQ<br/><span className="text-[10px] text-gray-400 font-normal">({pointsTNKQ}đ)</span></th>
-                            <th className="border border-slate-300 p-2 bg-yellow-50 font-bold text-indigo-700">TL<br/><span className="text-[10px] text-indigo-500 font-semibold">({pointsTL}đ)</span></th>
+                            <th className="border border-slate-300 p-2 bg-yellow-50 font-bold text-indigo-700">TL<br/><span className="text-[10px] text-indigo-600 font-medium">(tùy chỉnh đ)</span></th>
                         </tr>
                     </thead>
                     <tbody>
@@ -766,34 +817,86 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                                                     <span className={examinedPeriods > 0 ? 'text-gray-800' : 'text-gray-300'}>{parseInt(String(row[14]) || '0', 10)}</span>
                                                                 )}
                                                             </td>
-                                                            {[5,6,7,8,9,10].map(ci => {
-                                                                 const cau = parseInt(String(row[ci]) || '0');
-                                                                 const isEditing = editingCell?.row === item.index && editingCell?.col === ci;
-                                                                 return (
-                                                                     <td 
-                                                                         key={ci} 
-                                                                         className={`bg-white border border-slate-300 p-2 text-center cursor-pointer hover:bg-sky-50 ${cau>0?'text-gray-900 font-medium':'text-gray-300'}`}
-                                                                         onClick={() => setEditingCell({row: item.index, col: ci})}
-                                                                     >
-                                                                         {isEditing ? (
-                                                                             <input
-                                                                                 autoFocus
-                                                                                 type="number"
-                                                                                 min="0"
-                                                                                 className="w-16 text-center border border-sky-400 rounded p-1 outline-none text-sm font-bold bg-white"
-                                                                                 defaultValue={cau || ''}
-                                                                                 onBlur={(e) => handleCellChange(item.index, ci, e.target.value)}
-                                                                                 onKeyDown={(e) => {
-                                                                                     if (e.key === 'Enter') handleCellChange(item.index, ci, e.currentTarget.value);
-                                                                                     if (e.key === 'Escape') setEditingCell(null);
-                                                                                 }}
-                                                                             />
-                                                                         ) : (
-                                                                             <span>{cau > 0 ? `${cau} Câu` : '-'}</span>
-                                                                         )}
-                                                                     </td>
-                                                                 );
-                                                            })}
+                                                             {[5,6,7,8,9,10].map(ci => {
+                                                                  const cau = parseInt(String(row[ci]) || "0");
+                                                                  const isEditing = editingCell?.row === item.index && editingCell?.col === ci;
+                                                                  const isTLColumn = ci === 10;
+                                                                  const currentTLPoint = isTLColumn ? getRowPointsTL(item.index) : pointsTL;
+
+                                                                  return (
+                                                                      <td 
+                                                                          key={ci} 
+                                                                          className={`bg-white border border-slate-300 p-2 text-center hover:bg-sky-50 transition-colors ${cau>0?"text-gray-900 font-medium":"text-gray-300"}`} 
+                                                                      >
+                                                                          {isEditing ? (
+                                                                              <div className="flex flex-col items-center gap-1.5 p-1.5 bg-white shadow-xl rounded-lg border-2 border-indigo-400 z-20 min-w-[110px]">
+                                                                                  <div className="flex items-center justify-between w-full gap-1">
+                                                                                      <span className="text-[11px] text-gray-600 font-semibold">Số câu:</span>
+                                                                                      <input
+                                                                                          autoFocus
+                                                                                          type="number"
+                                                                                          min="0"
+                                                                                          className="w-14 text-center border border-sky-400 rounded p-1 outline-none text-xs font-bold bg-white"
+                                                                                          defaultValue={cau || ""}
+                                                                                          onBlur={(e) => {
+                                                                                              if (!isTLColumn) handleCellChange(item.index, ci, e.target.value);
+                                                                                          }}
+                                                                                          onKeyDown={(e) => {
+                                                                                              if (e.key === "Enter") handleCellChange(item.index, ci, e.currentTarget.value);
+                                                                                              if (e.key === "Escape") setEditingCell(null);
+                                                                                          }}
+                                                                                          onChange={(e) => {
+                                                                                              if (isTLColumn) handleCellChange(item.index, ci, e.target.value);
+                                                                                          }}
+                                                                                      />
+                                                                                  </div>
+                                                                                  {isTLColumn && (
+                                                                                      <div className="flex items-center justify-between w-full gap-1 border-t border-indigo-100 pt-1">
+                                                                                          <span className="text-[11px] text-indigo-700 font-bold">Điểm/câu:</span>
+                                                                                          <input
+                                                                                              type="number"
+                                                                                              step="0.25"
+                                                                                              min="0.25"
+                                                                                              max="10"
+                                                                                              className="w-14 text-center border border-indigo-400 rounded p-1 outline-none text-xs font-bold bg-indigo-50 text-indigo-800"
+                                                                                              defaultValue={currentTLPoint}
+                                                                                              onChange={(e) => {
+                                                                                                  const p = parseFloat(e.target.value);
+                                                                                                  if (!isNaN(p) && p > 0) {
+                                                                                                      handleUpdateRowEssayPoints(item.index, p);
+                                                                                                  }
+                                                                                              }}
+                                                                                              onKeyDown={(e) => {
+                                                                                                  if (e.key === "Enter" || e.key === "Escape") setEditingCell(null);
+                                                                                              }}
+                                                                                          />
+                                                                                      </div>
+                                                                                  )}
+                                                                                  <button
+                                                                                      type="button"
+                                                                                      onClick={() => setEditingCell(null)}
+                                                                                      className="w-full text-center text-xs text-white bg-indigo-600 hover:bg-indigo-700 font-semibold py-1 rounded shadow-sm mt-0.5 transition-colors"
+                                                                                  >
+                                                                                      Xong
+                                                                                  </button>
+                                                                              </div>
+                                                                          ) : (
+                                                                              <div 
+                                                                                  onClick={() => setEditingCell({row: item.index, col: ci})}
+                                                                                  className="cursor-pointer flex flex-col items-center justify-center group/cell py-0.5"
+                                                                                  title={isTLColumn ? "Nhấn để điều chỉnh số câu và điểm tương ứng" : "Nhấn để sửa số câu"}
+                                                                              >
+                                                                                  <span className="font-semibold text-sm">{cau > 0 ? `${cau} Câu` : "-"}</span>
+                                                                                  {isTLColumn && cau > 0 && (
+                                                                                      <span className="text-[11px] font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-1.5 py-0.5 rounded border border-indigo-200 mt-1 transition-colors">
+                                                                                          {currentTLPoint}đ/câu
+                                                                                      </span>
+                                                                                  )}
+                                                                              </div>
+                                                                          )}
+                                                                      </td>
+                                                                  );
+                                                             })}
                                                             
                                                             {/* Total % Score Column */}
                                                             <td className="bg-white border border-slate-300 p-2 text-center">
