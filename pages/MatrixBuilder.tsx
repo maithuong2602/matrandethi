@@ -838,9 +838,9 @@ const MatrixBuilder: React.FC = () => {
         const currentDir = getCurrentDirectory();
         if (currentDir?.matrixData) {
             const html = generatePrintHTML(currentDir.matrixData, currentDir.name);
-            const blob = new Blob(['\ufeff', html], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+            const blob = new Blob(['\ufeff', html], { type: 'application/msword' });
             const url = URL.createObjectURL(blob);
-            const link = document.createElement('a'); link.href = url; link.download = `MaTran_${currentDir.name.replace(/\s+/g, '_')}.docx`; 
+            const link = document.createElement('a'); link.href = url; link.download = `MaTran_${currentDir.name.replace(/\s+/g, '_')}.doc`; 
             document.body.appendChild(link); link.click(); document.body.removeChild(link); URL.revokeObjectURL(url);
         }
     };

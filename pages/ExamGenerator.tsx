@@ -494,21 +494,21 @@ const ExamGenerator: React.FC = () => {
             });
         } else if (exportType === 'key_matrix') {
             const html = generateMultiCodeAnswerKeyMatrixHtml(variants, headerInfo);
-            const blob = new Blob([html], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+            const blob = new Blob(['\ufeff', html], { type: 'application/msword' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
             const baseName = (customFileName || 'GK1 TIN 7-26-27-THUONG').trim();
-            a.download = `Bang_Dap_An_${baseName}.docx`;
+            a.download = `Bang_Dap_An_${baseName}.doc`;
             a.click();
         } else if (exportType === 'full_dossier') {
             const html = generateFullDossierHtml(null, variants, headerInfo);
-            const blob = new Blob([html], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+            const blob = new Blob(['\ufeff', html], { type: 'application/msword' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
             const baseName = (customFileName || 'GK1 TIN 7-26-27-THUONG').trim();
-            a.download = `Ho_So_${baseName}.docx`;
+            a.download = `Ho_So_${baseName}.doc`;
             a.click();
         } else if (exportType === 'all') {
             let combinedStyles = '';
@@ -544,24 +544,24 @@ const ExamGenerator: React.FC = () => {
                 </html>
             `;
             
-            const blob = new Blob([finalAllHtml], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+            const blob = new Blob(['\ufeff', finalAllHtml], { type: 'application/msword' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
             const baseName = (customFileName || 'GK1 TIN 7-26-27-THUONG').trim();
-            a.download = `Bo_De_${baseName}.docx`;
+            a.download = `Bo_De_${baseName}.doc`;
             a.click();
         } else {
             // Current active variant
             const currentV = variants.find(v => v.code === activeVariantCode);
             const vHeader = { ...headerInfo, maDe: activeVariantCode };
             const html = generateExamWordHtml(currentV ? currentV.questions : generatedTest, vHeader);
-            const blob = new Blob([html], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+            const blob = new Blob(['\ufeff', html], { type: 'application/msword' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
             const baseName = (customFileName || 'GK1 TIN 7-26-27-THUONG').trim();
-            a.download = `${baseName}.docx`;
+            a.download = `${baseName}.doc`;
             a.click();
         }
 
@@ -927,18 +927,18 @@ const ExamGenerator: React.FC = () => {
                                     const currentV = variants.find(v => v.code === activeVariantCode);
                                     const vHeader = { ...headerInfo, maDe: activeVariantCode };
                                     const html = generateExamWordHtml(currentV ? currentV.questions : generatedTest, vHeader);
-                                    const blob = new Blob([html], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+                                    const blob = new Blob(['\ufeff', html], { type: 'application/msword' });
                                     const url = URL.createObjectURL(blob);
                                     const a = document.createElement('a');
                                     a.href = url;
                                     const baseName = (customFileName || 'GK1 TIN 7-26-27-THUONG').trim();
-                                    a.download = `${baseName}.docx`;
+                                    a.download = `${baseName}.doc`;
                                     a.click();
                                 }}
                                 className="px-4 py-2 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 flex items-center gap-2 font-bold text-sm shadow-md shadow-emerald-200 transition-all"
-                                title="Tải ngay file Word mã đề hiện tại với tên GK1 TIN 7-26-27-THUONG.docx"
+                                title="Tải ngay file Word mã đề hiện tại với tên GK1 TIN 7-26-27-THUONG.doc"
                             >
-                                <Download size={16} /> Tải file Word ({customFileName || 'GK1 TIN 7-26-27-THUONG'}.docx)
+                                <Download size={16} /> Tải file Word ({customFileName || 'GK1 TIN 7-26-27-THUONG'}.doc)
                             </button>
                         </div>
                     </div>
@@ -1329,7 +1329,7 @@ const ExamGenerator: React.FC = () => {
                                 </div>
                             </div>
                             <div>
-                                <label className="block text-xs font-bold text-blue-700 mb-1">Tên file Word tải về (không cần gõ .docx)</label>
+                                <label className="block text-xs font-bold text-blue-700 mb-1">Tên file Word tải về (không cần gõ .doc)</label>
                                 <input 
                                     type="text" 
                                     className="w-full p-2 border-2 border-blue-400 bg-blue-50/30 rounded-lg text-sm font-semibold text-gray-800" 
