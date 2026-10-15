@@ -202,24 +202,24 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
             <tr>
                 <!-- Column 1: Left -->
                 <td style="border: 1px dotted black; width: 40%; text-align: center; vertical-align: top; padding: 6px;">
-                    <p style="margin:0; text-transform: uppercase; font-size: 12.5pt; text-align: center;">${headerInfo.donVi || 'UBND PHƯỜNG HẢI CHÂU'}</p>
-                    <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 12.5pt; text-align: center;">${schoolTop}</p>
+                    <p style="margin:0; text-transform: uppercase; font-size: 13pt; text-align: center;">${headerInfo.donVi || 'UBND PHƯỜNG HẢI CHÂU'}</p>
+                    <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 13pt; text-align: center;">${schoolTop}</p>
                     <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 13pt; text-align: center;">${schoolNameUnderlined}</p>
-                    <table align="center" border="0" cellpadding="0" cellspacing="0" style="margin: 2pt auto 4pt auto; width: 65%; border-collapse: collapse;">
+                    <table align="center" border="0" cellpadding="0" cellspacing="0" style="margin: 2pt auto 4pt auto; width: 35%; border-collapse: collapse;">
                         <tr><td style="border-bottom: 1.5pt solid black; font-size: 1pt; height: 1pt; line-height: 1pt;">&nbsp;</td></tr>
                     </table>
                     <div style="margin-top: 4px; text-align: center;">
-                        <b style="font-weight: bold; font-size: 12pt;">ĐỀ CHÍNH THỨC</b>
+                        <b style="font-weight: bold; font-size: 13pt;">ĐỀ CHÍNH THỨC</b>
                     </div>
                 </td>
                 
                 <!-- Column 2: Right -->
                 <td style="border: 1px dotted black; width: 60%; text-align: center; vertical-align: top; padding: 6px;">
-                    <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 12.5pt; text-align: center;">${tenKyThiFull}</p>
-                    <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 12.5pt; text-align: center;">${monHocFormatted}</p>
-                    <p style="margin:0; font-style: italic; font-size: 11.5pt; text-align: center;">Thời gian: ${headerInfo.thoiGian ? (headerInfo.thoiGian.includes('không kể') ? headerInfo.thoiGian : headerInfo.thoiGian + ' (không kể thời gian giao đề)') : '45 phút (không kể thời gian giao đề)'}</p>
-                    <p style="margin:0; font-style: italic; font-size: 11pt; text-align: center;">(Đề có <!--[if supportFields]><span style='mso-element:field-begin'></span>SECTIONPAGES<span style='mso-element:field-separator'></span><![endif]-->04<!--[if supportFields]><span style='mso-element:field-end'></span><![endif]--> trang)</p>
-                    <p style="margin:0; text-align: center; font-weight: bold; font-size: 12.5pt; margin-top: 4pt;">Mã đề: ${headerInfo.maDe || '101'}</p>
+                    <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 13pt; text-align: center;">${tenKyThiFull}</p>
+                    <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 13pt; text-align: center;">${monHocFormatted}</p>
+                    <p style="margin:0; font-style: italic; font-size: 13pt; text-align: center;">Thời gian: ${headerInfo.thoiGian ? (headerInfo.thoiGian.includes('không kể') ? headerInfo.thoiGian : headerInfo.thoiGian + ' (không kể thời gian giao đề)') : '45 phút (không kể thời gian giao đề)'}</p>
+                    <p style="margin:0; font-style: italic; font-size: 13pt; text-align: center;">(Đề có <!--[if supportFields]><span style='mso-element:field-begin'></span>SECTIONPAGES<span style='mso-element:field-separator'></span><![endif]-->04<!--[if supportFields]><span style='mso-element:field-end'></span><![endif]--> trang)</p>
+                    <p style="margin:0; text-align: center; font-weight: bold; font-size: 13pt; margin-top: 4pt;">Mã đề: ${headerInfo.maDe || '101'}</p>
                 </td>
             </tr>
         </table>
@@ -228,11 +228,16 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
     // Exam Content (MC + Essay)
     let examBodyHtml = '';
 
-    // Student info line
+    // Student info line - formatted with a borderless table so it always stays on exactly 1 line
     examBodyHtml += `
-        <p style="margin-top: 15pt; margin-bottom: 10pt; font-size: 13pt; font-weight: bold;">
-            Họ và tên học sinh : .................................................................................... Lớp: .............................
-        </p>
+        <table border="0" cellpadding="0" cellspacing="0" style="width: 100%; border: none; margin-top: 10pt; margin-bottom: 10pt; font-family: 'Times New Roman', serif; font-size: 13pt; font-weight: bold;">
+            <tr>
+                <td style="white-space: nowrap; width: 1%; padding-right: 4pt;">Họ và tên học sinh:</td>
+                <td style="border-bottom: 1pt dotted black; width: 70%;">&nbsp;</td>
+                <td style="white-space: nowrap; width: 1%; padding-left: 15pt; padding-right: 4pt;">Lớp:</td>
+                <td style="border-bottom: 1pt dotted black; width: 25%;">&nbsp;</td>
+            </tr>
+        </table>
         <table style="width: 100%; border-collapse: collapse; margin-bottom: 15pt; font-family: 'Times New Roman', serif; font-size: 13pt;">
             <tr>
                 <td style="border: 1px solid black; width: 30%; height: 2.5cm; vertical-align: top; padding: 5px; font-weight: bold;">
