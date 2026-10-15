@@ -57,12 +57,13 @@ const ExamGenerator: React.FC = () => {
 
     const [headerInfo, setHeaderInfo] = useState({
         donVi: 'UBND PHƯỜNG HẢI CHÂU',
-        tenTruong: 'TRUNG HỌC CƠ SỞ LÊ HỒNG PHONG',
-        tenKyThi: 'KIỂM TRA GIỮA KÌ I NĂM HỌC 2026-2027',
-        monHoc: 'TIN HỌC 7',
-        thoiGian: '45 phút',
+        tenTruong: 'LÊ HỒNG PHONG',
+        tenKyThi: 'KIỂM TRA GIỮA KÌ I - NĂM HỌC 2026–2027',
+        monHoc: 'MON: TIN HỌC – LỚP 7',
+        thoiGian: '45 phút (không kể thời gian giao đề)',
         maDe: '101'
     });
+    const [customFileName, setCustomFileName] = useState<string>('GK1 TIN 7-26-27-THUONG');
     
     const [bulkPoints, setBulkPoints] = useState(0.25);
 
@@ -493,19 +494,21 @@ const ExamGenerator: React.FC = () => {
             });
         } else if (exportType === 'key_matrix') {
             const html = generateMultiCodeAnswerKeyMatrixHtml(variants, headerInfo);
-            const blob = new Blob([html], { type: 'application/msword' });
+            const blob = new Blob([html], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `Bang_Dap_An_Cac_Ma_De_${headerInfo.monHoc.replace(/\s/g, '_')}.doc`;
+            const baseName = (customFileName || 'GK1 TIN 7-26-27-THUONG').trim();
+            a.download = `Bang_Dap_An_${baseName}.docx`;
             a.click();
         } else if (exportType === 'full_dossier') {
             const html = generateFullDossierHtml(null, variants, headerInfo);
-            const blob = new Blob([html], { type: 'application/msword' });
+            const blob = new Blob([html], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `Ho_So_Khao_Thi_${headerInfo.monHoc.replace(/\s/g, '_')}.doc`;
+            const baseName = (customFileName || 'GK1 TIN 7-26-27-THUONG').trim();
+            a.download = `Ho_So_${baseName}.docx`;
             a.click();
         } else if (exportType === 'all') {
             let combinedStyles = '';
@@ -541,22 +544,24 @@ const ExamGenerator: React.FC = () => {
                 </html>
             `;
             
-            const blob = new Blob([finalAllHtml], { type: 'application/msword' });
+            const blob = new Blob([finalAllHtml], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `Bo_De_${variants.length}_Ma_De_${headerInfo.monHoc.replace(/\s/g, '_')}.doc`;
+            const baseName = (customFileName || 'GK1 TIN 7-26-27-THUONG').trim();
+            a.download = `Bo_De_${baseName}.docx`;
             a.click();
         } else {
             // Current active variant
             const currentV = variants.find(v => v.code === activeVariantCode);
             const vHeader = { ...headerInfo, maDe: activeVariantCode };
             const html = generateExamWordHtml(currentV ? currentV.questions : generatedTest, vHeader);
-            const blob = new Blob([html], { type: 'application/msword' });
+            const blob = new Blob([html], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `De_Thi_Ma_${activeVariantCode}_${headerInfo.monHoc.replace(/\s/g, '_')}.doc`;
+            const baseName = (customFileName || 'GK1 TIN 7-26-27-THUONG').trim();
+            a.download = `${baseName}.docx`;
             a.click();
         }
 
@@ -915,6 +920,26 @@ const ExamGenerator: React.FC = () => {
                                     Áp dụng
                                 </button>
                             </div>
+
+                            {/* Direct Fast Export Button */}
+                            <button
+                                onClick={() => {
+                                    const currentV = variants.find(v => v.code === activeVariantCode);
+                                    const vHeader = { ...headerInfo, maDe: activeVariantCode };
+                                    const html = generateExamWordHtml(currentV ? currentV.questions : generatedTest, vHeader);
+                                    const blob = new Blob([html], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+                                    const url = URL.createObjectURL(blob);
+                                    const a = document.createElement('a');
+                                    a.href = url;
+                                    const baseName = (customFileName || 'GK1 TIN 7-26-27-THUONG').trim();
+                                    a.download = `${baseName}.docx`;
+                                    a.click();
+                                }}
+                                className="px-4 py-2 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 flex items-center gap-2 font-bold text-sm shadow-md shadow-emerald-200 transition-all"
+                                title="Tải ngay file Word mã đề hiện tại với tên GK1 TIN 7-26-27-THUONG.docx"
+                            >
+                                <Download size={16} /> Tải file Word ({customFileName || 'GK1 TIN 7-26-27-THUONG'}.docx)
+                            </button>
                         </div>
                     </div>
 
@@ -939,6 +964,65 @@ const ExamGenerator: React.FC = () => {
                             ))}
                         </div>
                     )}
+
+                    {/* Official Exam Paper Preview Header */}
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-8 space-y-6 font-serif">
+                        {/* 2-Column Header */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border border-dotted border-gray-400 p-4 rounded text-center">
+                            {/* Col 1 */}
+                            <div className="flex flex-col items-center justify-start space-y-1 md:border-r md:border-dotted md:border-gray-400 pr-2">
+                                <span className="text-sm font-semibold uppercase text-gray-800">{headerInfo.donVi}</span>
+                                <span className="text-sm font-bold uppercase text-gray-900">TRƯỜNG TRUNG HỌC CƠ SỞ</span>
+                                <span className="text-base font-extrabold uppercase text-gray-950 underline underline-offset-4">
+                                    {headerInfo.tenTruong.replace(/^(TRƯỜNG\s+)?(TRUNG\s+HỌC\s+CƠ\s+SỞ\s+|THCS\s+)/i, '') || 'LÊ HỒNG PHONG'}
+                                </span>
+                                <span className="text-xs font-bold text-gray-700 mt-2 bg-gray-100 px-3 py-0.5 rounded border border-gray-300">ĐỀ CHÍNH THỨC</span>
+                            </div>
+                            {/* Col 2 */}
+                            <div className="flex flex-col items-center justify-start space-y-1 pl-2">
+                                <span className="text-sm font-bold uppercase text-gray-950">{headerInfo.tenKyThi}</span>
+                                <span className="text-sm font-extrabold uppercase text-gray-900">{headerInfo.monHoc}</span>
+                                <span className="text-xs italic text-gray-600">Thời gian: {headerInfo.thoiGian}</span>
+                                <span className="text-xs italic text-gray-500">(Đề có {Math.max(1, Math.ceil(activeQuestions.length / 8))} trang)</span>
+                                <span className="text-xs font-bold text-gray-800 mt-1">Mã đề: {activeVariantCode || headerInfo.maDe || '101'}</span>
+                            </div>
+                        </div>
+
+                        {/* Student Info & Score Box */}
+                        <div className="space-y-3 pt-2">
+                            <div className="flex items-center text-sm font-bold text-gray-900">
+                                <span>Họ và tên học sinh :</span>
+                                <span className="flex-1 mx-2 border-b border-dotted border-gray-500 h-4"></span>
+                                <span className="ml-2">Lớp:</span>
+                                <span className="w-24 border-b border-dotted border-gray-500 h-4 ml-2"></span>
+                            </div>
+
+                            <table className="w-full border-collapse border border-gray-700 text-sm">
+                                <thead>
+                                    <tr>
+                                        <th className="border border-gray-700 p-2 text-left font-bold w-1/3 bg-gray-50">Điểm</th>
+                                        <th className="border border-gray-700 p-2 text-left font-bold w-2/3 bg-gray-50">Nhận xét của giáo viên</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td className="border border-gray-700 h-20 align-top p-2 text-gray-300 italic text-xs">&nbsp;</td>
+                                        <td className="border border-gray-700 h-20 align-top p-2 text-gray-300 italic text-xs">&nbsp;</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        {/* Section 1 Header Banner */}
+                        <div className="pt-2 border-t border-gray-200">
+                            <h3 className="text-base font-extrabold text-gray-900 uppercase">
+                                PHẦN 1. TRẮC NGHIỆM ({activeQuestions.filter(q => q.category !== 'essay').reduce((s, q) => s + (q.points || 0.25), 0).toFixed(1).replace('.', ',')} điểm)
+                            </h3>
+                            <p className="text-xs italic text-gray-600 mt-0.5">
+                                Em hãy chọn hoặc điền đáp án đúng vào khung trả lời tương ứng: (mỗi câu đúng 0,25 điểm)
+                            </p>
+                        </div>
+                    </div>
 
                     {/* Question List Preview */}
                     <div className="space-y-4">
@@ -1243,6 +1327,16 @@ const ExamGenerator: React.FC = () => {
                                     <label className="block text-xs font-semibold text-gray-700 mb-1">Thời gian</label>
                                     <input type="text" className="w-full p-2 border rounded-lg text-sm" value={headerInfo.thoiGian} onChange={e=>setHeaderInfo({...headerInfo, thoiGian:e.target.value})} />
                                 </div>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-blue-700 mb-1">Tên file Word tải về (không cần gõ .docx)</label>
+                                <input 
+                                    type="text" 
+                                    className="w-full p-2 border-2 border-blue-400 bg-blue-50/30 rounded-lg text-sm font-semibold text-gray-800" 
+                                    value={customFileName} 
+                                    onChange={e => setCustomFileName(e.target.value)} 
+                                    placeholder="GK1 TIN 7-26-27-THUONG"
+                                />
                             </div>
                         </div>
                         </div>

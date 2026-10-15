@@ -85,13 +85,64 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
     const currentYear = new Date().getFullYear();
     const nextYear = currentYear + 1;
     
-    // Check if tenKyThi already has year info, if not append it
-    let tenKyThiFull = headerInfo.tenKyThi.toUpperCase();
+    // Format tenKyThi
+    let tenKyThiFull = (headerInfo.tenKyThi || '').toUpperCase().trim();
     if (tenKyThiFull.startsWith("LỚP")) {
         tenKyThiFull = tenKyThiFull.replace(/LỚP\s*\d+\s*-\s*/, "KIỂM TRA ");
     }
+    // Replace "NĂM HỌC 2026 2027" or "NĂM HỌC 2026 - 2027" with standard dash " - " or append if missing
     if (!tenKyThiFull.includes("NĂM HỌC")) {
-        tenKyThiFull += ` NĂM HỌC ${currentYear}-${nextYear}`;
+        tenKyThiFull += ` - NĂM HỌC ${currentYear}–${nextYear}`;
+    } else {
+        // Ensure " - NĂM HỌC" if it just had space
+        tenKyThiFull = tenKyThiFull.replace(/\s+NĂM HỌC/, ' - NĂM HỌC').replace(/(\d{4})\s*-\s*(\d{4})/, '$1–$2');
+    }
+
+    // Format school name for left header
+    // In Vietnam official header: Line 1: TRƯỜNG TRUNG HỌC CƠ SỞ (hoặc cấp học), Line 2 (Underlined): TÊN TRƯỜNG (e.g. LÊ HỒNG PHONG)
+    let schoolRaw = (headerInfo.tenTruong || '').trim();
+    let schoolTop = 'TRƯỜNG TRUNG HỌC CƠ SỞ';
+    let schoolNameUnderlined = schoolRaw;
+
+    const schoolUpper = schoolRaw.toUpperCase();
+    if (schoolUpper.includes('LÊ HỒNG PHONG')) {
+        schoolTop = 'TRƯỜNG TRUNG HỌC CƠ SỞ';
+        schoolNameUnderlined = 'LÊ HỒNG PHONG';
+    } else if (schoolUpper.startsWith('TRƯỜNG TRUNG HỌC CƠ SỞ ')) {
+        schoolTop = 'TRƯỜNG TRUNG HỌC CƠ SỞ';
+        schoolNameUnderlined = schoolRaw.substring('TRƯỜNG TRUNG HỌC CƠ SỞ '.length).trim();
+    } else if (schoolUpper.startsWith('TRƯỜNG THCS ')) {
+        schoolTop = 'TRƯỜNG TRUNG HỌC CƠ SỞ';
+        schoolNameUnderlined = schoolRaw.substring('TRƯỜNG THCS '.length).trim();
+    } else if (schoolUpper.startsWith('TRUNG HỌC CƠ SỞ ')) {
+        schoolTop = 'TRƯỜNG TRUNG HỌC CƠ SỞ';
+        schoolNameUnderlined = schoolRaw.substring('TRUNG HỌC CƠ SỞ '.length).trim();
+    } else if (schoolUpper.startsWith('THCS ')) {
+        schoolTop = 'TRƯỜNG TRUNG HỌC CƠ SỞ';
+        schoolNameUnderlined = schoolRaw.substring('THCS '.length).trim();
+    } else if (schoolUpper.startsWith('TRƯỜNG ')) {
+        schoolTop = 'TRƯỜNG';
+        schoolNameUnderlined = schoolRaw.substring('TRƯỜNG '.length).trim();
+    }
+
+    // Format môn học: "MÔN: TIN HỌC – LỚP 7" hoặc "MON: TIN HỌC – LỚP 7"
+    let monHocRaw = (headerInfo.monHoc || '').trim();
+    let monHocFormatted = monHocRaw.toUpperCase();
+    // Normalize "MÔN :" or "MON :" to "MÔN:"
+    monHocFormatted = monHocFormatted.replace(/^MON\s*:\s*/i, 'MÔN: ').replace(/^MÔN\s*:\s*/i, 'MÔN: ');
+    if (!monHocFormatted.startsWith('MÔN:')) {
+        const matchGrade = monHocFormatted.match(/^(.*?)\s*(\d+)$/);
+        if (matchGrade) {
+            monHocFormatted = `MÔN: ${matchGrade[1].trim()} – LỚP ${matchGrade[2].trim()}`;
+        } else {
+            monHocFormatted = `MÔN: ${monHocFormatted}`;
+        }
+    } else {
+        const pureName = monHocFormatted.replace(/^MÔN:\s*/i, '').trim();
+        const matchGrade = pureName.match(/^(.*?)\s*(\d+)$/);
+        if (matchGrade && !pureName.includes('LỚP')) {
+            monHocFormatted = `MÔN: ${matchGrade[1].trim()} – LỚP ${matchGrade[2].trim()}`;
+        }
     }
 
     // CSS Definitions
@@ -150,35 +201,34 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
         <table border="0" cellpadding="0" cellspacing="0" style="width:100%; border: 1px dotted black; border-collapse: collapse; font-family: 'Times New Roman', serif; font-size: 13pt; margin-bottom: 15pt;">
             <tr>
                 <!-- Column 1: Left -->
-                <td style="border: 1px dotted black; width: 40%; text-align: center; vertical-align: top; padding: 5px;">
-                    <p style="margin:0; text-transform: uppercase; font-size: 13pt; text-align: center;">${headerInfo.donVi}</p>
-                    <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 13pt; margin-bottom: 5pt; text-align: center;">TRƯỜNG ${headerInfo.tenTruong}</p>
-                    <div style="margin-top: 5px; text-align: center;">
-                        <span style="font-weight: bold; font-size: 13pt;">ĐỀ CHÍNH THỨC</span>
+                <td style="border: 1px dotted black; width: 40%; text-align: center; vertical-align: top; padding: 6px;">
+                    <p style="margin:0; text-transform: uppercase; font-size: 12.5pt; text-align: center;">${headerInfo.donVi || 'UBND PHƯỜNG HẢI CHÂU'}</p>
+                    <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 12.5pt; text-align: center;">${schoolTop}</p>
+                    <p style="margin:0; text-align: center; margin-bottom: 4pt;"><b style="font-weight: bold; text-transform: uppercase; font-size: 13pt;"><u style="text-decoration: underline; mso-text-underline: single;">${schoolNameUnderlined}</u></b></p>
+                    <div style="margin-top: 4px; text-align: center;">
+                        <b style="font-weight: bold; font-size: 12pt;">ĐỀ CHÍNH THỨC</b>
                     </div>
                 </td>
                 
                 <!-- Column 2: Right -->
-                <td style="border: 1px dotted black; width: 60%; text-align: center; vertical-align: top; padding: 5px;">
-                    <p style="margin:0; font-weight: bold; text-transform: uppercase; text-align: center;">${tenKyThiFull}</p>
-                    <p style="margin:0; font-weight: bold; text-transform: uppercase; text-align: center;">MÔN: ${headerInfo.monHoc}</p>
-                    <p style="margin:0; font-style: italic; text-align: center;">Thời gian: ${headerInfo.thoiGian} (không kể thời gian giao đề)</p>
-                    <p style="margin:0; font-style: italic; text-align: center;">(Đề có ${SECTION_PAGES} trang)</p>
-                    <p style="margin:0; text-align: center; font-weight: bold; margin-top: 5pt;">Mã đề: ${headerInfo.maDe || '...........'}</p>
+                <td style="border: 1px dotted black; width: 60%; text-align: center; vertical-align: top; padding: 6px;">
+                    <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 12.5pt; text-align: center;">${tenKyThiFull}</p>
+                    <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 12.5pt; text-align: center;">${monHocFormatted}</p>
+                    <p style="margin:0; font-style: italic; font-size: 11.5pt; text-align: center;">Thời gian: ${headerInfo.thoiGian ? (headerInfo.thoiGian.includes('không kể') ? headerInfo.thoiGian : headerInfo.thoiGian + ' (không kể thời gian giao đề)') : '45 phút (không kể thời gian giao đề)'}</p>
+                    <p style="margin:0; font-style: italic; font-size: 11pt; text-align: center;">(Đề có <!--[if supportFields]><span style='mso-element:field-begin'></span>SECTIONPAGES<span style='mso-element:field-separator'></span><![endif]-->04<!--[if supportFields]><span style='mso-element:field-end'></span><![endif]--> trang)</p>
+                    <p style="margin:0; text-align: center; font-weight: bold; font-size: 12.5pt; margin-top: 4pt;">Mã đề: ${headerInfo.maDe || '101'}</p>
                 </td>
             </tr>
         </table>
-
     `;
 
-    // Exam Content (MC + Essay)
     // Exam Content (MC + Essay)
     let examBodyHtml = '';
 
     // Student info line
     examBodyHtml += `
         <p style="margin-top: 15pt; margin-bottom: 10pt; font-size: 13pt; font-weight: bold;">
-            Họ và tên: .................................................................................... Lớp: .............................
+            Họ và tên học sinh : .................................................................................... Lớp: .............................
         </p>
         <table style="width: 100%; border-collapse: collapse; margin-bottom: 15pt; font-family: 'Times New Roman', serif; font-size: 13pt;">
             <tr>
@@ -197,7 +247,7 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
         // Answer Grid
         let answerGridHtml = `
             <div style="margin-top:5pt; margin-bottom:5pt;">
-                <h3 style="font-size: 13pt; font-weight: bold; margin: 0;">Phần 1. Trắc nghiệm (${totalTracNghiemPoints.toFixed(1).replace('.',',')} điểm)</h3>
+                <h3 style="font-size: 13pt; font-weight: bold; margin: 0; text-transform: uppercase;">PHẦN 1. TRẮC NGHIỆM (${totalTracNghiemPoints.toFixed(1).replace('.',',')} điểm)</h3>
                 <p style="font-size: 13pt; font-style: italic; margin: 3pt 0 5pt 0;">- Em hãy điền đáp án vào khung bên dưới cho câu trả lời đúng: (mỗi câu đúng 0,25 điểm)</p>
             </div>
             <table style="border-collapse: collapse; margin: 0 auto; width: 100%; table-layout: fixed;">`;
@@ -309,7 +359,7 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
         }).join('');
 
         examBodyHtml += `
-            <h3 style="font-size: 13.5pt; text-align:left; font-weight:bold; margin-top: 15pt;">Phần 2. Tự luận (${totalTuLuanPoints.toFixed(1).replace('.',',')} điểm)</h3>
+            <h3 style="font-size: 13pt; text-align:left; font-weight:bold; margin-top: 15pt; text-transform: uppercase;">PHẦN 2. TỰ LUẬN (${totalTuLuanPoints.toFixed(1).replace('.',',')} điểm)</h3>
             ${questionContent}
         `;
     }
@@ -324,13 +374,13 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
         <table style="width:100%; border: none; font-family: 'Times New Roman', serif; font-size: 13pt; margin-bottom: 15pt;">
             <tr>
                 <td style="text-align: center; width: 45%; vertical-align: top;">
-                    <p style="margin:0; text-transform: uppercase; font-size: 13pt; text-align: center;">${headerInfo.donVi}</p>
-                    <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 13pt; text-align: center;">TRƯỜNG ${headerInfo.tenTruong}</p>
+                    <p style="margin:0; text-transform: uppercase; font-size: 13pt; text-align: center;">${headerInfo.donVi || 'UBND PHƯỜNG HẢI CHÂU'}</p>
+                    <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 13pt; text-align: center;">TRƯỜNG TRUNG HỌC CƠ SỞ LÊ HỒNG PHONG</p>
                 </td>
                 <td style="text-align: center; width: 55%; vertical-align: top;">
-                    <p style="margin:0; font-weight: bold; text-transform: uppercase; text-align: center;">HƯỚNG DẪN CHẤM ${headerInfo.tenKyThi.toUpperCase().replace(/LỚP\s*\d+\s*-\s*/, "KIỂM TRA ")}</p>
-                    <p style="margin:0; font-weight: bold; text-transform: uppercase; text-align: center;">MÔN: ${headerInfo.monHoc}</p>
-                    <p style="margin:0; font-style: italic; text-align: center;">(Hướng dẫn chấm gồm có ${SECTION_PAGES} trang)</p>
+                    <p style="margin:0; font-weight: bold; text-transform: uppercase; text-align: center;">HƯỚNG DẪN CHẤM ${tenKyThiFull.replace(/LỚP\s*\d+\s*-\s*/, "KIỂM TRA ")}</p>
+                    <p style="margin:0; font-weight: bold; text-transform: uppercase; text-align: center;">${monHocFormatted}</p>
+                    <p style="margin:0; font-style: italic; text-align: center;">(Hướng dẫn chấm gồm có <!--[if supportFields]><span style='mso-element:field-begin'></span>SECTIONPAGES<span style='mso-element:field-separator'></span><![endif]-->02<!--[if supportFields]><span style='mso-element:field-end'></span><![endif]--> trang)</p>
                 </td>
             </tr>
         </table>
@@ -357,7 +407,10 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
             if (saved) {
                 const parsed = JSON.parse(saved);
                 for (const [key, isChecked] of Object.entries(parsed)) {
-                    if (isChecked) hsktCodes.add(key.split(' ')[0]);
+                    if (isChecked) {
+                        hsktCodes.add(key.trim());
+                        hsktCodes.add(key.split(' ')[0].trim());
+                    }
                 }
             }
         }
@@ -366,7 +419,9 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
     const isHskt = (q: any) => {
         if (hsktCodes.size === 0) return true; // Default show all if nothing configured
         if (!q.criteria) return false;
-        return hsktCodes.has(q.criteria.split(' ')[0]);
+        const cTrimmed = q.criteria.trim();
+        const cCode = cTrimmed.split(' ')[0].trim();
+        return hsktCodes.has(cTrimmed) || hsktCodes.has(cCode);
     };
 
     let hsktTotalPointsRaw = 0;
