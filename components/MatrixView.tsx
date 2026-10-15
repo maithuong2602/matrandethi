@@ -12,10 +12,18 @@ interface MatrixViewProps {
 }
 
 const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteRow, examName }) => {
-    const pointsTNKQ = 0.25;
-    const pointsTL = 1.0;
+    const pointsTNKQ = data.pointsConfig?.pointsTNKQ ?? 0.25;
+    const pointsTL = data.pointsConfig?.pointsTL ?? 1.0;
     const [editingCell, setEditingCell] = useState<{row: number, col: number} | null>(null);
     const [draggedGroupIndex, setDraggedGroupIndex] = useState<number | null>(null);
+
+    const handleUpdatePointsTL = (newVal: number) => {
+        const val = isNaN(newVal) || newVal <= 0 ? 1.0 : newVal;
+        const newData = JSON.parse(JSON.stringify(data));
+        if (!newData.pointsConfig) newData.pointsConfig = {};
+        newData.pointsConfig.pointsTL = val;
+        onUpdateMatrix(newData);
+    };
 
     // Determine if it is a Final Exam
     const isFinalExam = /cuối\s+k[ìỳ]/i.test(examName);
@@ -374,7 +382,26 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
         <div className="space-y-8 animate-fade-in-up">
             <div className="overflow-x-auto rounded-lg border border-slate-300 shadow-sm">
                 <table className="w-full border-collapse matrix-table text-sm bg-white">
-                    <caption className="text-lg font-bold text-slate-800 p-4 bg-gray-50 text-left border-b border-gray-200">KHUNG MA TRẬN ĐỀ KIỂM TRA</caption>
+                    <caption className="p-4 bg-gray-50 border-b border-gray-200">
+                        <div className="flex flex-wrap items-center justify-between gap-4">
+                            <span className="text-lg font-bold text-slate-800">KHUNG MA TRẬN ĐỀ KIỂM TRA</span>
+                            <div className="flex items-center gap-3 bg-white px-3 py-1.5 rounded-lg border border-slate-300 shadow-sm text-xs">
+                                <span className="font-semibold text-slate-700">Điểm mỗi câu Tự luận (Vận dụng):</span>
+                                <input
+                                    type="number"
+                                    step="0.25"
+                                    min="0.25"
+                                    max="5.0"
+                                    className="w-16 p-1 border border-indigo-400 rounded text-center font-bold text-indigo-700 outline-none focus:ring-1 focus:ring-indigo-500"
+                                    value={pointsTL}
+                                    onChange={(e) => handleUpdatePointsTL(parseFloat(e.target.value))}
+                                />
+                                <span className="text-slate-500 font-medium">điểm/câu</span>
+                                <span className="text-slate-300">|</span>
+                                <span className="text-slate-500">TNKQ: <b>{pointsTNKQ}đ</b></span>
+                            </div>
+                        </div>
+                    </caption>
                     <thead>
                         <tr className="bg-gray-100 text-gray-700">
                             <th rowSpan={2} className="border border-slate-300 p-2">TT</th>
@@ -389,9 +416,12 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                             <th rowSpan={2} className="border border-slate-300 p-2">Tổng % điểm</th>
                         </tr>
                         <tr className="bg-gray-100 text-gray-700 text-xs">
-                            <th className="border border-slate-300 p-2 bg-green-50">TNKQ</th><th className="border border-slate-300 p-2 bg-green-50">TL</th>
-                            <th className="border border-slate-300 p-2 bg-blue-50">TNKQ</th><th className="border border-slate-300 p-2 bg-blue-50">TL</th>
-                            <th className="border border-slate-300 p-2 bg-yellow-50">TNKQ</th><th className="border border-slate-300 p-2 bg-yellow-50">TL</th>
+                            <th className="border border-slate-300 p-2 bg-green-50">TNKQ<br/><span className="text-[10px] text-gray-400 font-normal">({pointsTNKQ}đ)</span></th>
+                            <th className="border border-slate-300 p-2 bg-green-50">TL<br/><span className="text-[10px] text-gray-400 font-normal">({pointsTL}đ)</span></th>
+                            <th className="border border-slate-300 p-2 bg-blue-50">TNKQ<br/><span className="text-[10px] text-gray-400 font-normal">({pointsTNKQ}đ)</span></th>
+                            <th className="border border-slate-300 p-2 bg-blue-50">TL<br/><span className="text-[10px] text-gray-400 font-normal">({pointsTL}đ)</span></th>
+                            <th className="border border-slate-300 p-2 bg-yellow-50">TNKQ<br/><span className="text-[10px] text-gray-400 font-normal">({pointsTNKQ}đ)</span></th>
+                            <th className="border border-slate-300 p-2 bg-yellow-50 font-bold text-indigo-700">TL<br/><span className="text-[10px] text-indigo-500 font-semibold">({pointsTL}đ)</span></th>
                         </tr>
                     </thead>
                     <tbody>
@@ -479,9 +509,31 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                                             </td>
                                                             {[5,6,7,8,9,10].map(ci => {
                                                                  const cau = parseInt(String(row[ci]) || '0');
-                                                                 const isTNKQ = ci % 2 !== 0; // 5(TN), 6(TL), 7(TN)...
-                                                                 const diem = cau * (isTNKQ ? pointsTNKQ : pointsTL);
-                                                                 return <td key={ci} className={`bg-white border border-slate-300 p-2 text-center ${cau>0?'text-gray-900 font-medium':'text-gray-300'}`}>{cau > 0 ? `${cau} Câu` : ''}</td>
+                                                                 const isEditing = editingCell?.row === item.index && editingCell?.col === ci;
+                                                                 return (
+                                                                     <td 
+                                                                         key={ci} 
+                                                                         className={`bg-white border border-slate-300 p-2 text-center cursor-pointer hover:bg-sky-50 ${cau>0?'text-gray-900 font-medium':'text-gray-300'}`}
+                                                                         onClick={() => setEditingCell({row: item.index, col: ci})}
+                                                                     >
+                                                                         {isEditing ? (
+                                                                             <input
+                                                                                 autoFocus
+                                                                                 type="number"
+                                                                                 min="0"
+                                                                                 className="w-16 text-center border border-sky-400 rounded p-1 outline-none text-sm font-bold bg-white"
+                                                                                 defaultValue={cau || ''}
+                                                                                 onBlur={(e) => handleCellChange(item.index, ci, e.target.value)}
+                                                                                 onKeyDown={(e) => {
+                                                                                     if (e.key === 'Enter') handleCellChange(item.index, ci, e.currentTarget.value);
+                                                                                     if (e.key === 'Escape') setEditingCell(null);
+                                                                                 }}
+                                                                             />
+                                                                         ) : (
+                                                                             <span>{cau > 0 ? `${cau} Câu` : '-'}</span>
+                                                                         )}
+                                                                     </td>
+                                                                 );
                                                             })}
                                                             
                                                             {/* Total % Score Column */}

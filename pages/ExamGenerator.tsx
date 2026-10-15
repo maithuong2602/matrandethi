@@ -66,6 +66,7 @@ const ExamGenerator: React.FC = () => {
     const [customFileName, setCustomFileName] = useState<string>('GK1 TIN 7-26-27-THUONG');
     
     const [bulkPoints, setBulkPoints] = useState(0.25);
+    const [bulkPointsTL, setBulkPointsTL] = useState(1.0);
 
     // Helper: Normalize Level
     const normalizeLevel = (lvl: string) => {
@@ -453,7 +454,11 @@ const ExamGenerator: React.FC = () => {
     };
 
     const applyBulkPoints = () => {
-        setGeneratedTest(prev => prev.map(q => ({ ...q, points: bulkPoints })));
+        setGeneratedTest(prev => prev.map(q => q.category !== 'essay' ? { ...q, points: bulkPoints } : q));
+    };
+
+    const applyBulkPointsTL = () => {
+        setGeneratedTest(prev => prev.map(q => q.category === 'essay' ? { ...q, points: bulkPointsTL } : q));
     };
 
     const updatePoint = (uniqueId: number | undefined, val: number) => {
@@ -914,10 +919,22 @@ const ExamGenerator: React.FC = () => {
                                     step="0.25" 
                                     value={bulkPoints} 
                                     onChange={(e) => setBulkPoints(parseFloat(e.target.value))}
-                                    className="w-16 p-1 border rounded text-center text-xs font-bold bg-white"
+                                    className="w-14 p-1 border rounded text-center text-xs font-bold bg-white"
                                 />
-                                <button onClick={applyBulkPoints} className="px-2.5 py-1 bg-primary text-white rounded text-xs font-semibold hover:bg-primary-dark">
-                                    Áp dụng
+                                <button onClick={applyBulkPoints} className="px-2 py-1 bg-primary text-white rounded text-xs font-semibold hover:bg-primary-dark">
+                                    TN
+                                </button>
+                                <div className="h-4 w-[1px] bg-gray-300 mx-0.5"></div>
+                                <span className="text-xs font-semibold text-gray-600 pl-1">Điểm TL:</span>
+                                <input 
+                                    type="number" 
+                                    step="0.25" 
+                                    value={bulkPointsTL} 
+                                    onChange={(e) => setBulkPointsTL(parseFloat(e.target.value))}
+                                    className="w-14 p-1 border rounded text-center text-xs font-bold bg-white"
+                                />
+                                <button onClick={applyBulkPointsTL} className="px-2 py-1 bg-indigo-600 text-white rounded text-xs font-semibold hover:bg-indigo-700">
+                                    TL
                                 </button>
                             </div>
 

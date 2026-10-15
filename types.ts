@@ -118,6 +118,10 @@ export interface MatrixData {
     availableCounts: AvailableCounts[];
     normalizedPercentages: Record<string, number>;
     subTopicPercentages: Record<string, number>;
+    pointsConfig?: {
+        pointsTNKQ?: number;
+        pointsTL?: number;
+    };
 }
 
 // --- IMPORTED MATRIX JSON TYPES ---

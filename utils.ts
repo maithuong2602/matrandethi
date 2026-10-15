@@ -736,8 +736,8 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
     const cleanExamName = examName.toUpperCase().replace(new RegExp(`^LỚP\\s*${gradeStr}\\s*-\\s*`, 'i'), '');
     const matrixTitle = `KHUNG MA TRẬN ĐỀ KIỂM TRA MÔN TIN LỚP ${gradeStr} - ${cleanExamName} NĂM HỌC ${currentYear}-${nextYear}`;
     const specTitle = `BẢNG ĐẶC TẢ ĐỀ KIỂM TRA MÔN TIN LỚP ${gradeStr} - ${cleanExamName} NĂM HỌC ${currentYear}-${nextYear}`;
-    const pointsTNKQ = 0.25;
-    const pointsTL = 1.0;
+    const pointsTNKQ = data.pointsConfig?.pointsTNKQ ?? 0.25;
+    const pointsTL = data.pointsConfig?.pointsTL ?? 1.0;
 
     // Helper to format percentages: 40.0 -> "40", 40.5 -> "40,5"
     const formatPercent = (val: number): string => {
