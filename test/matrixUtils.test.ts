@@ -52,4 +52,23 @@ describe('Test Group D: Critical Existing Domain Utilities', () => {
       expect(htmlFromNumber).toContain('Phân biệt được thông tin với vật mang tin');
     });
   });
+
+  describe('generateExamWordHtml formatting', () => {
+    it('generates header with 13pt font, shortened rule and single line student info', async () => {
+      const { generateExamWordHtml } = await import('../utils');
+      const html = generateExamWordHtml([], {
+        donVi: 'UBND PHƯỜNG HẢI CHÂU',
+        tenTruong: 'TRƯỜNG TRUNG HỌC CƠ SỞ LÊ HỒNG PHONG',
+        tenKyThi: 'KIỂM TRA GIỮA KÌ I - NĂM HỌC 2026–2027',
+        monHoc: 'MÔN: TIN HỌC – LỚP 7',
+        thoiGian: '45 phút (không kể thời gian giao đề)',
+        maDe: '101'
+      });
+      expect(html).toContain('width: 35%');
+      expect(html).toContain('font-size: 13pt');
+      expect(html).toContain('Họ và tên học sinh:');
+      expect(html).toContain('Lớp:');
+    });
+  });
 });
+
