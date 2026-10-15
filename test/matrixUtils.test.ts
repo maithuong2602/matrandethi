@@ -64,7 +64,8 @@ describe('Test Group D: Critical Existing Domain Utilities', () => {
         thoiGian: '45 phút (không kể thời gian giao đề)',
         maDe: '101'
       });
-      expect(html).toContain('width: 35%');
+      expect(html).toContain('0.67pt');
+      expect(html).toContain('v:line');
       expect(html).toContain('font-size: 13pt');
       expect(html).toContain('Họ và tên học sinh:');
       expect(html).toContain('Lớp:');

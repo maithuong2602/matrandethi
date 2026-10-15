@@ -977,7 +977,7 @@ const ExamGenerator: React.FC = () => {
                                     <span className="text-base font-extrabold uppercase text-gray-950">
                                         {headerInfo.tenTruong.replace(/^(TRƯỜNG\s+)?(TRUNG\s+HỌC\s+CƠ\s+SỞ\s+|THCS\s+)/i, '') || 'LÊ HỒNG PHONG'}
                                     </span>
-                                    <div className="w-[35%] h-[1.5px] bg-black mt-1"></div>
+                                    <div className="w-[90px] h-[1px] bg-black mt-1"></div>
                                 </div>
                                 <span className="text-xs font-bold text-gray-700 mt-2 bg-gray-100 px-3 py-0.5 rounded border border-gray-300">ĐỀ CHÍNH THỨC</span>
                             </div>

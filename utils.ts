@@ -189,6 +189,7 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                 text-align: right;
                 font-style: italic;
             }
+            v\\:* { behavior: url(#default#VML); display: inline-block; }
         </style>
     `;
 
@@ -205,9 +206,14 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                     <p style="margin:0; text-transform: uppercase; font-size: 13pt; text-align: center;">${headerInfo.donVi || 'UBND PHƯỜNG HẢI CHÂU'}</p>
                     <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 13pt; text-align: center;">${schoolTop}</p>
                     <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 13pt; text-align: center;">${schoolNameUnderlined}</p>
-                    <table align="center" border="0" cellpadding="0" cellspacing="0" style="margin: 2pt auto 4pt auto; width: 35%; border-collapse: collapse;">
-                        <tr><td style="border-bottom: 1.5pt solid black; font-size: 1pt; height: 1pt; line-height: 1pt;">&nbsp;</td></tr>
-                    </table>
+                    <div style="text-align: center; margin: 2pt 0 4pt 0; line-height: 1pt;">
+                        <!--[if vml]>
+                        <v:line from="0,0" to="90pt,0" strokeweight="0.67pt" strokecolor="black" style="position:relative;display:inline-block;"></v:line>
+                        <![endif]-->
+                        <!--[if !vml]-->
+                        <span style="display: inline-block; width: 90pt; border-bottom: 0.67pt solid black; height: 1pt; vertical-align: middle;"></span>
+                        <!--<![endif]-->
+                    </div>
                     <div style="margin-top: 4px; text-align: center;">
                         <b style="font-weight: bold; font-size: 13pt;">ĐỀ CHÍNH THỨC</b>
                     </div>
@@ -671,7 +677,7 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
 
     // 3. Document Structure
     return `
-        <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+        <html xmlns:v='urn:schemas-microsoft-com:vml' xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
         <head>
             <meta charset="utf-8">
             <title>De Thi</title>
