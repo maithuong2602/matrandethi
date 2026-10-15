@@ -973,9 +973,12 @@ const ExamGenerator: React.FC = () => {
                             <div className="flex flex-col items-center justify-start space-y-1 md:border-r md:border-dotted md:border-gray-400 pr-2">
                                 <span className="text-sm font-semibold uppercase text-gray-800">{headerInfo.donVi}</span>
                                 <span className="text-sm font-bold uppercase text-gray-900">TRƯỜNG TRUNG HỌC CƠ SỞ</span>
-                                <span className="text-base font-extrabold uppercase text-gray-950 underline underline-offset-4">
-                                    {headerInfo.tenTruong.replace(/^(TRƯỜNG\s+)?(TRUNG\s+HỌC\s+CƠ\s+SỞ\s+|THCS\s+)/i, '') || 'LÊ HỒNG PHONG'}
-                                </span>
+                                <div className="flex flex-col items-center">
+                                    <span className="text-base font-extrabold uppercase text-gray-950">
+                                        {headerInfo.tenTruong.replace(/^(TRƯỜNG\s+)?(TRUNG\s+HỌC\s+CƠ\s+SỞ\s+|THCS\s+)/i, '') || 'LÊ HỒNG PHONG'}
+                                    </span>
+                                    <div className="w-2/3 h-[1.5px] bg-black mt-1"></div>
+                                </div>
                                 <span className="text-xs font-bold text-gray-700 mt-2 bg-gray-100 px-3 py-0.5 rounded border border-gray-300">ĐỀ CHÍNH THỨC</span>
                             </div>
                             {/* Col 2 */}

@@ -204,7 +204,10 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                 <td style="border: 1px dotted black; width: 40%; text-align: center; vertical-align: top; padding: 6px;">
                     <p style="margin:0; text-transform: uppercase; font-size: 12.5pt; text-align: center;">${headerInfo.donVi || 'UBND PHƯỜNG HẢI CHÂU'}</p>
                     <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 12.5pt; text-align: center;">${schoolTop}</p>
-                    <p style="margin:0; text-align: center; margin-bottom: 4pt;"><b style="font-weight: bold; text-transform: uppercase; font-size: 13pt;"><u style="text-decoration: underline; mso-text-underline: single;">${schoolNameUnderlined}</u></b></p>
+                    <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 13pt; text-align: center;">${schoolNameUnderlined}</p>
+                    <table align="center" border="0" cellpadding="0" cellspacing="0" style="margin: 2pt auto 4pt auto; width: 65%; border-collapse: collapse;">
+                        <tr><td style="border-bottom: 1.5pt solid black; font-size: 1pt; height: 1pt; line-height: 1pt;">&nbsp;</td></tr>
+                    </table>
                     <div style="margin-top: 4px; text-align: center;">
                         <b style="font-weight: bold; font-size: 12pt;">ĐỀ CHÍNH THỨC</b>
                     </div>
