@@ -234,16 +234,11 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
     // Exam Content (MC + Essay)
     let examBodyHtml = '';
 
-    // Student info line - formatted with a borderless table so it always stays on exactly 1 line
+    // Student info line - 1 single line with dot characters, no table
     examBodyHtml += `
-        <table border="0" cellpadding="0" cellspacing="0" style="width: 100%; border: none; margin-top: 10pt; margin-bottom: 10pt; font-family: 'Times New Roman', serif; font-size: 13pt; font-weight: bold;">
-            <tr>
-                <td style="white-space: nowrap; width: 1%; padding-right: 4pt;">Họ và tên học sinh:</td>
-                <td style="border-bottom: 1pt dotted black; width: 70%;">&nbsp;</td>
-                <td style="white-space: nowrap; width: 1%; padding-left: 15pt; padding-right: 4pt;">Lớp:</td>
-                <td style="border-bottom: 1pt dotted black; width: 25%;">&nbsp;</td>
-            </tr>
-        </table>
+        <p style="margin-top: 12pt; margin-bottom: 10pt; font-family: 'Times New Roman', serif; font-size: 13pt; font-weight: bold; white-space: nowrap;">
+            Họ và tên học sinh: ............................................................................................ Lớp: .........................
+        </p>
         <table style="width: 100%; border-collapse: collapse; margin-bottom: 15pt; font-family: 'Times New Roman', serif; font-size: 13pt;">
             <tr>
                 <td style="border: 1px solid black; width: 30%; height: 2.5cm; vertical-align: top; padding: 5px; font-weight: bold;">
