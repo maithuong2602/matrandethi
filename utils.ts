@@ -202,16 +202,16 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
         <table border="0" cellpadding="0" cellspacing="0" style="width:100%; border: 1px dotted black; border-collapse: collapse; font-family: 'Times New Roman', serif; font-size: 13pt; margin-bottom: 15pt;">
             <tr>
                 <!-- Column 1: Left -->
-                <td style="border: 1px dotted black; width: 40%; text-align: center; vertical-align: top; padding: 6px;">
+                <td style="border: 1px dotted black; width: 45%; text-align: center; vertical-align: top; padding: 6px;">
                     <p style="margin:0; text-transform: uppercase; font-size: 13pt; text-align: center;">${headerInfo.donVi || 'UBND PHƯỜNG HẢI CHÂU'}</p>
-                    <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 13pt; text-align: center;">${schoolTop}</p>
+                    <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 13pt; text-align: center; white-space: nowrap;">${schoolTop}</p>
                     <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 13pt; text-align: center;">${schoolNameUnderlined}</p>
                     <div style="text-align: center; margin: 2pt 0 4pt 0; line-height: 1pt;">
                         <!--[if vml]>
-                        <v:line from="0,0" to="90pt,0" strokeweight="0.67pt" strokecolor="black" style="position:relative;display:inline-block;"></v:line>
+                        <v:line from="0,0" to="70pt,0" strokeweight="0.67pt" strokecolor="black" style="position:relative;display:inline-block;"></v:line>
                         <![endif]-->
                         <!--[if !vml]-->
-                        <span style="display: inline-block; width: 90pt; border-bottom: 0.67pt solid black; height: 1pt; vertical-align: middle;"></span>
+                        <span style="display: inline-block; width: 70pt; border-bottom: 0.67pt solid black; height: 1pt; vertical-align: middle;"></span>
                         <!--<![endif]-->
                     </div>
                     <div style="margin-top: 4px; text-align: center;">
@@ -220,7 +220,7 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                 </td>
                 
                 <!-- Column 2: Right -->
-                <td style="border: 1px dotted black; width: 60%; text-align: center; vertical-align: top; padding: 6px;">
+                <td style="border: 1px dotted black; width: 55%; text-align: center; vertical-align: top; padding: 6px;">
                     <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 13pt; text-align: center;">${tenKyThiFull}</p>
                     <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 13pt; text-align: center;">${monHocFormatted}</p>
                     <p style="margin:0; font-style: italic; font-size: 13pt; text-align: center;">Thời gian: ${headerInfo.thoiGian ? (headerInfo.thoiGian.includes('không kể') ? headerInfo.thoiGian : headerInfo.thoiGian + ' (không kể thời gian giao đề)') : '45 phút (không kể thời gian giao đề)'}</p>
@@ -234,10 +234,10 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
     // Exam Content (MC + Essay)
     let examBodyHtml = '';
 
-    // Student info line - 1 single line with dot characters, no table
+    // Student info line - exactly 1 balanced line with dots
     examBodyHtml += `
-        <p style="margin-top: 12pt; margin-bottom: 10pt; font-family: 'Times New Roman', serif; font-size: 13pt; font-weight: bold; white-space: nowrap;">
-            Họ và tên học sinh: ............................................................................................ Lớp: .........................
+        <p style="margin-top: 12pt; margin-bottom: 10pt; font-family: 'Times New Roman', serif; font-size: 13pt; font-weight: bold;">
+            Họ và tên học sinh: ............................................................................ Lớp: .........................
         </p>
         <table style="width: 100%; border-collapse: collapse; margin-bottom: 15pt; font-family: 'Times New Roman', serif; font-size: 13pt;">
             <tr>
