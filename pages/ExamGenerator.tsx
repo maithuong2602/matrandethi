@@ -1046,9 +1046,29 @@ const ExamGenerator: React.FC = () => {
 
                     {/* Question List Preview */}
                     <div className="space-y-4">
-                        {activeQuestions.map((q, idx) => (
-                            <div key={q.uniqueId || idx} className="bg-white p-5 rounded-xl shadow-sm border border-gray-200 relative group hover:border-primary/50 transition-all">
-                                <div className="flex justify-between items-start gap-4">
+                        {activeQuestions.map((q, idx) => {
+                            const isFirstEssay = q.category === 'essay' && (idx === 0 || activeQuestions[idx - 1].category !== 'essay');
+                            const totalEssayPoints = activeQuestions.filter(item => item.category === 'essay').reduce((sum, item) => sum + (item.points ?? 1.0), 0);
+
+                            return (
+                                <React.Fragment key={q.uniqueId || idx}>
+                                    {isFirstEssay && (
+                                        <div className="pt-4 border-t-2 border-indigo-200 mt-6 mb-2">
+                                            <div className="flex items-center justify-between">
+                                                <h3 className="text-base font-extrabold text-indigo-950 uppercase">
+                                                    PHẦN 2. TỰ LUẬN ({totalEssayPoints.toFixed(1).replace('.', ',')} điểm)
+                                                </h3>
+                                                <span className="text-xs text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full font-semibold border border-indigo-200">
+                                                    Tùy chỉnh điểm riêng từng câu bên dưới
+                                                </span>
+                                            </div>
+                                            <p className="text-xs italic text-gray-600 mt-0.5">
+                                                Học sinh trình bày câu trả lời chi tiết vào giấy làm bài.
+                                            </p>
+                                        </div>
+                                    )}
+                                    <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200 relative group hover:border-primary/50 transition-all">
+                                        <div className="flex justify-between items-start gap-4">
                                     <div className="flex-1">
                                         <div className="flex items-center gap-2 mb-2 flex-wrap">
                                             <span className="font-extrabold text-blue-900 text-sm">Câu {idx + 1}</span>
@@ -1118,18 +1138,22 @@ const ExamGenerator: React.FC = () => {
                                         )}
                                     </div>
 
-                                    <div className="flex flex-col items-end gap-2 min-w-[120px]">
-                                        <div className="flex items-center gap-1.5">
-                                            <label className="text-xs text-gray-500 font-medium">Điểm:</label>
-                                            <select 
-                                                className="p-1 border rounded text-xs bg-gray-50 font-bold"
-                                                value={q.points}
-                                                onChange={(e) => updatePoint(q.uniqueId, parseFloat(e.target.value))}
-                                            >
-                                                {[0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0].map(p => (
-                                                    <option key={p} value={p}>{p}</option>
-                                                ))}
-                                            </select>
+                                    <div className="flex flex-col items-end gap-2 min-w-[130px]">
+                                        <div className="flex items-center gap-1.5 bg-gray-50 px-2 py-1 rounded-lg border border-gray-200">
+                                            <label className="text-xs text-gray-600 font-semibold">Điểm:</label>
+                                            <input 
+                                                type="number" 
+                                                step="0.25"
+                                                min="0.25"
+                                                max="10.0"
+                                                className="w-14 p-0.5 border border-gray-300 rounded text-center text-xs font-bold bg-white text-indigo-700 focus:outline-none focus:ring-1 focus:ring-primary"
+                                                value={q.points ?? (q.category === 'essay' ? 1.0 : 0.25)}
+                                                onChange={(e) => {
+                                                    const val = parseFloat(e.target.value);
+                                                    updatePoint(q.uniqueId, isNaN(val) ? 0 : val);
+                                                }}
+                                            />
+                                            <span className="text-[10px] text-gray-400 font-medium">đ</span>
                                         </div>
                                         <button 
                                             onClick={() => swapQuestion(q)}
@@ -1140,7 +1164,9 @@ const ExamGenerator: React.FC = () => {
                                     </div>
                                 </div>
                             </div>
-                        ))}
+                        </React.Fragment>
+                        );
+                    })}
                     </div>
 
                     {/* Bottom Sticky Action Bar */}

@@ -738,6 +738,8 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
     const specTitle = `BẢNG ĐẶC TẢ ĐỀ KIỂM TRA MÔN TIN LỚP ${gradeStr} - ${cleanExamName} NĂM HỌC ${currentYear}-${nextYear}`;
     const pointsTNKQ = data.pointsConfig?.pointsTNKQ ?? 0.25;
     const pointsTL = data.pointsConfig?.pointsTL ?? 1.0;
+    const rowEssayPoints = data.pointsConfig?.rowEssayPoints ?? {};
+    const getRowPointsTL = (rIdx: number) => rowEssayPoints[rIdx] ?? pointsTL;
 
     // Helper to format percentages: 40.0 -> "40", 40.5 -> "40,5"
     const formatPercent = (val: number): string => {
@@ -850,7 +852,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
     let sumSoTietChecked = 0;
     let sumSoTietUnchecked = 0;
 
-    data.matrix.rows.forEach(row => {
+    data.matrix.rows.forEach((row, rIdx) => {
          const st = parseFloat(String(row[4]) || '0');
          const examined = parseFloat(String(row[14]) || '0');
          const validExamined = Math.min(Math.max(examined, 0), st);
@@ -862,7 +864,8 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
 
          const tnkq = (parseInt(String(row[5])||'0') + parseInt(String(row[7])||'0') + parseInt(String(row[9])||'0') + parseInt(String(row[11])||'0'));
          const tl = (parseInt(String(row[6])||'0') + parseInt(String(row[8])||'0') + parseInt(String(row[10])||'0') + parseInt(String(row[12])||'0'));
-         totalExamPoints += (tnkq * pointsTNKQ) + (tl * pointsTL);
+         const rowPointsTL = getRowPointsTL(rIdx);
+         totalExamPoints += (tnkq * pointsTNKQ) + (tl * rowPointsTL);
     });
 
     // Dynamic Weight Logic for Column Calculations (Target %)
@@ -895,7 +898,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
     
     // NEW: Calculate REALIZED POINTS Percentages for the Note (Matches actual distribution)
     let realizedPointsOld = 0;
-    data.matrix.rows.forEach(row => {
+    data.matrix.rows.forEach((row, rIdx) => {
          const st = parseFloat(String(row[4]) || '0');
          const examined = parseFloat(String(row[14]) || '0');
          const validExamined = Math.min(Math.max(examined, 0), st);
@@ -903,7 +906,8 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
          
          const tnkq = (parseInt(String(row[5])||'0') + parseInt(String(row[7])||'0') + parseInt(String(row[9])||'0') + parseInt(String(row[11])||'0'));
          const tl = (parseInt(String(row[6])||'0') + parseInt(String(row[8])||'0') + parseInt(String(row[10])||'0') + parseInt(String(row[12])||'0'));
-         const rowPoints = (tnkq * pointsTNKQ) + (tl * pointsTL);
+         const rowPointsTL = getRowPointsTL(rIdx);
+         const rowPoints = (tnkq * pointsTNKQ) + (tl * rowPointsTL);
 
          // Determine if purely old lesson (Strict logic matching MatrixBuilder)
          if (validExamined > 0 && validNew === 0) {
@@ -954,9 +958,11 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
         let mainTopicWeightedPercent = 0;
 
         rows.forEach((row: any) => {
+            const originalIdx = data.matrix.rows.indexOf(row);
+            const rowPointsTL = getRowPointsTL(originalIdx);
             const tnkq = (parseInt(String(row[5])||'0') + parseInt(String(row[7])||'0') + parseInt(String(row[9])||'0') + parseInt(String(row[11])||'0'));
             const tl = (parseInt(String(row[6])||'0') + parseInt(String(row[8])||'0') + parseInt(String(row[10])||'0') + parseInt(String(row[12])||'0'));
-            mainTopicPoints += (tnkq * pointsTNKQ) + (tl * pointsTL);
+            mainTopicPoints += (tnkq * pointsTNKQ) + (tl * rowPointsTL);
             
             mainTopicSoTiet += parseFloat(String(row[4])||'0');
             mainTopicWeightedPercent += getRowTargetPercent(row);
@@ -987,6 +993,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             
             // SubTopic Stats
             const subCounts = Array(15).fill(0);
+            const subPoints = Array(15).fill(0);
             let subSoTiet = 0;
             let subWeightedPercent = 0;
             
@@ -999,11 +1006,15 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                  subSoTiet += parseFloat(String(r[4]) || '0');
                  subWeightedPercent += getRowTargetPercent(r);
 
+                 const originalIdx = data.matrix.rows.indexOf(r);
+                 const rowPointsTL = getRowPointsTL(originalIdx);
+
                  for (let k = 5; k <= 12; k++) { // NB, TH, VD, VDC
-                     subCounts[k] += parseInt(String(r[k]) || '0');
-                 }
-                 
-                 const originalIdx = data.matrix.rows.indexOf(r); 
+                     const c = parseInt(String(r[k]) || '0');
+                     subCounts[k] += c;
+                     const isTNKQ = k % 2 !== 0;
+                     subPoints[k] += c * (isTNKQ ? pointsTNKQ : rowPointsTL);
+                 } 
                  
                  const posNB_TN = positionMap[`${originalIdx}-5`]; if(posNB_TN) posGroups.NB.push(posNB_TN.replace('Câu ', ''));
                  const posNB_TL = positionMap[`${originalIdx}-6`]; if(posNB_TL) posGroups.NB.push(posNB_TL.replace('Câu ', ''));
@@ -1037,7 +1048,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             for(let k=5; k<=10; k++){
                 const val = subCounts[k];
                 const isTNKQ = k % 2 !== 0;
-                const pt = val * (isTNKQ ? pointsTNKQ : pointsTL);
+                const pt = subPoints[k];
                 
                 // Use Divs for Line Break
                 let cellContent = '';
@@ -1091,15 +1102,14 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             // specBodyHtml += `<td class="text-left align-top">${lessonName}</td>`;
             specBodyHtml += `<td class="text-left align-top">${formattedReq}</td>`;
             
-            const renderCountPoints = (count: number, type: 'TN'|'TL') => {
-                 const pt = count * (type === 'TN' ? pointsTNKQ : pointsTL);
+            const renderCountPoints = (count: number, pt: number) => {
                  return `<div>${count}</div><div>/ ${formatDiem(pt)}đ</div>`;
             };
 
             // NB(TN), TH(TN), VD(TL)
-            specBodyHtml += `<td>${renderCountPoints(subCounts[5], 'TN')}</td>`;
-            specBodyHtml += `<td>${renderCountPoints(subCounts[7], 'TN')}</td>`;
-            specBodyHtml += `<td>${renderCountPoints(subCounts[10], 'TL')}</td>`;
+            specBodyHtml += `<td>${renderCountPoints(subCounts[5], subPoints[5])}</td>`;
+            specBodyHtml += `<td>${renderCountPoints(subCounts[7], subPoints[7])}</td>`;
+            specBodyHtml += `<td>${renderCountPoints(subCounts[10], subPoints[10])}</td>`;
             
             specBodyHtml += '</tr>';
 

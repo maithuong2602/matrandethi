@@ -121,6 +121,7 @@ export interface MatrixData {
     pointsConfig?: {
         pointsTNKQ?: number;
         pointsTL?: number;
+        rowEssayPoints?: Record<number, number>; // Custom points per matrix row for essay questions
     };
 }
 

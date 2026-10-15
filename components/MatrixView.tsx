@@ -14,14 +14,28 @@ interface MatrixViewProps {
 const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteRow, examName }) => {
     const pointsTNKQ = data.pointsConfig?.pointsTNKQ ?? 0.25;
     const pointsTL = data.pointsConfig?.pointsTL ?? 1.0;
+    const rowEssayPoints = data.pointsConfig?.rowEssayPoints ?? {};
     const [editingCell, setEditingCell] = useState<{row: number, col: number} | null>(null);
     const [draggedGroupIndex, setDraggedGroupIndex] = useState<number | null>(null);
+
+    const getRowPointsTL = (rIdx: number) => {
+        return rowEssayPoints[rIdx] ?? pointsTL;
+    };
 
     const handleUpdatePointsTL = (newVal: number) => {
         const val = isNaN(newVal) || newVal <= 0 ? 1.0 : newVal;
         const newData = JSON.parse(JSON.stringify(data));
         if (!newData.pointsConfig) newData.pointsConfig = {};
         newData.pointsConfig.pointsTL = val;
+        onUpdateMatrix(newData);
+    };
+
+    const handleUpdateRowEssayPoints = (rIdx: number, newVal: number) => {
+        const val = isNaN(newVal) || newVal <= 0 ? pointsTL : newVal;
+        const newData = JSON.parse(JSON.stringify(data));
+        if (!newData.pointsConfig) newData.pointsConfig = {};
+        if (!newData.pointsConfig.rowEssayPoints) newData.pointsConfig.rowEssayPoints = {};
+        newData.pointsConfig.rowEssayPoints[rIdx] = val;
         onUpdateMatrix(newData);
     };
 
@@ -119,10 +133,18 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
     });
 
     // Indices: 5:NB_TN, 6:NB_TL, 7:TH_TN, 8:TH_TL, 9:VD_TN, 10:VD_TL, 11:VDC_TN, 12:VDC_TL
-    const nbPoints = (matrixTotals[5] * pointsTNKQ) + (matrixTotals[6] * pointsTL);
-    const thPoints = (matrixTotals[7] * pointsTNKQ) + (matrixTotals[8] * pointsTL);
-    const vdPoints = (matrixTotals[9] * pointsTNKQ) + (matrixTotals[10] * pointsTL);
-    const vdcPoints = (matrixTotals[11] * pointsTNKQ) + (matrixTotals[12] * pointsTL);
+    let nbPoints = 0;
+    let thPoints = 0;
+    let vdPoints = 0;
+    let vdcPoints = 0;
+
+    data.matrix.rows.forEach((row, rIdx) => {
+        const rowPointsTL = getRowPointsTL(rIdx);
+        nbPoints += (parseInt(String(row[5]) || '0') * pointsTNKQ) + (parseInt(String(row[6]) || '0') * rowPointsTL);
+        thPoints += (parseInt(String(row[7]) || '0') * pointsTNKQ) + (parseInt(String(row[8]) || '0') * rowPointsTL);
+        vdPoints += (parseInt(String(row[9]) || '0') * pointsTNKQ) + (parseInt(String(row[10]) || '0') * rowPointsTL);
+        vdcPoints += (parseInt(String(row[11]) || '0') * pointsTNKQ) + (parseInt(String(row[12]) || '0') * rowPointsTL);
+    });
     
     const totalTestPoints = nbPoints + thPoints + vdPoints + vdcPoints; 
 
@@ -679,7 +701,8 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                                     // Calculate Actual Score Percent
                                                     const rowTnkq = (parseInt(String(row[5])||'0') + parseInt(String(row[7])||'0') + parseInt(String(row[9])||'0') + parseInt(String(row[11])||'0'));
                                                     const rowTl = (parseInt(String(row[6])||'0') + parseInt(String(row[8])||'0') + parseInt(String(row[10])||'0') + parseInt(String(row[12])||'0'));
-                                                    const rowPoints = (rowTnkq * pointsTNKQ) + (rowTl * pointsTL);
+                                                    const rowPointTL = getRowPointsTL(item.index);
+                                                    const rowPoints = (rowTnkq * pointsTNKQ) + (rowTl * rowPointTL);
                                                     const rowScorePercent = calculatePercentage(rowPoints);
 
                                                     // Calculate Weighted Target Percent based on Pool logic
