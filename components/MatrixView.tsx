@@ -451,6 +451,8 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
     };
 
     // --- YCCĐ (Mức độ đánh giá) Checkbox & Dynamic Item Handlers ---
+    const STANDARD_LEVELS = ['Nhận biết', 'Thông hiểu', 'Vận dụng', 'Vận dụng cao'];
+
     interface YccdSection {
         levelTitle: string;
         items: { id: string; text: string; checked: boolean }[];
@@ -459,7 +461,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
     const parseYccdHtml = (htmlContent: string): YccdSection[] => {
         if (!htmlContent) return [];
         // Match sections by <strong> tags
-        const regex = /<strong class="block font-semibold[^"]*">([\s\S]*?)<\/strong>([\s\S]*?)(?=(?:<strong class="block font-semibold[^"]*">|$))/gi;
+        const regex = /<strong\b[^>]*>([\s\S]*?)<\/strong>([\s\S]*?)(?=(?:<strong\b[^>]*>|$))/gi;
         const sections: YccdSection[] = [];
         let match;
 
@@ -507,6 +509,18 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
             }
             if (items.length > 0) {
                 sections.push({ levelTitle: '', items });
+            } else {
+                const lines = htmlContent.split('\n').map(l => l.trim()).filter(Boolean);
+                lines.forEach(line => {
+                    items.push({
+                        id: `default-${idx++}`,
+                        text: line,
+                        checked: true
+                    });
+                });
+                if (items.length > 0) {
+                    sections.push({ levelTitle: '', items });
+                }
             }
         }
 
@@ -571,8 +585,89 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
         }
     };
 
+    const handleAddLevel = (rowIndex: number, levelTitle: string) => {
+        const trimmed = levelTitle.trim();
+        if (!trimmed) return;
+        const currentReq = data.specifications?.rows?.[rowIndex]?.[4] || '';
+        const sections = parseYccdHtml(currentReq);
+
+        // Check if already exists (case-insensitive)
+        const existingIdx = sections.findIndex(s => s.levelTitle.trim().toLowerCase() === trimmed.toLowerCase());
+        if (existingIdx !== -1) {
+            setAddingLevelForRow(null);
+            setAddingYccdFor({ rowIndex, sectionIdx: existingIdx });
+            return;
+        }
+
+        const newSection: YccdSection = {
+            levelTitle: trimmed,
+            items: []
+        };
+
+        // Standard level pedagogical order in Vietnamese curriculum
+        const standardOrder = ['nhận biết', 'thông hiểu', 'vận dụng', 'vận dụng cao'];
+        const levelKey = trimmed.toLowerCase();
+        const standardIdx = standardOrder.indexOf(levelKey);
+
+        let insertIdx = sections.length;
+        if (standardIdx !== -1) {
+            for (let i = 0; i < sections.length; i++) {
+                const secKey = sections[i].levelTitle.trim().toLowerCase();
+                const secStdIdx = standardOrder.indexOf(secKey);
+                if (secStdIdx !== -1 && secStdIdx > standardIdx) {
+                    insertIdx = i;
+                    break;
+                }
+            }
+        }
+
+        sections.splice(insertIdx, 0, newSection);
+        const newHtml = serializeYccdSections(sections);
+
+        const newData = JSON.parse(JSON.stringify(data));
+        if (!newData.specifications) newData.specifications = { rows: [] };
+        if (!newData.specifications.rows[rowIndex]) {
+            newData.specifications.rows[rowIndex] = [
+                (rowIndex + 1).toString(),
+                newData.matrix.rows[rowIndex]?.[1] || '',
+                newData.matrix.rows[rowIndex]?.[2] || '',
+                newData.matrix.rows[rowIndex]?.[3] || '',
+                '',
+                '0-0', '0-0', '0-0', '0-0'
+            ];
+        }
+        newData.specifications.rows[rowIndex][4] = newHtml;
+        onUpdateMatrix(newData);
+
+        setAddingLevelForRow(null);
+        setCustomLevelName('');
+        // Automatically focus inline input to add first YCCĐ for this level
+        setAddingYccdFor({ rowIndex, sectionIdx: insertIdx });
+        setNewYccdText('');
+    };
+
+    const handleDeleteLevel = (rowIndex: number, sectionIdx: number) => {
+        const currentReq = data.specifications?.rows?.[rowIndex]?.[4] || '';
+        const sections = parseYccdHtml(currentReq);
+        if (sections[sectionIdx]) {
+            sections.splice(sectionIdx, 1);
+            const newHtml = serializeYccdSections(sections);
+            const newData = JSON.parse(JSON.stringify(data));
+            if (newData.specifications?.rows?.[rowIndex]) {
+                newData.specifications.rows[rowIndex][4] = newHtml;
+                onUpdateMatrix(newData);
+            }
+        }
+        if (addingYccdFor?.rowIndex === rowIndex && addingYccdFor?.sectionIdx === sectionIdx) {
+            setAddingYccdFor(null);
+            setNewYccdText('');
+        }
+    };
+
     const [addingYccdFor, setAddingYccdFor] = useState<{ rowIndex: number; sectionIdx: number } | null>(null);
     const [newYccdText, setNewYccdText] = useState('');
+    const [addingLevelForRow, setAddingLevelForRow] = useState<number | null>(null);
+    const [customLevelName, setCustomLevelName] = useState('');
 
     const renderSpecRow = (row: string[], rowIndex: number, rowspanMain: number | null, rowspanSub: number | null) => {
         const [stt, main, sub, lesson, req, nb_raw, th_raw, vd_raw, vdc_raw] = row;
@@ -653,7 +748,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                 <td className="bg-white text-left align-middle border border-slate-300 p-2 text-sm">{lesson}</td>
                 <td className="bg-white text-left text-sm border border-slate-300 p-2 min-w-[360px]">
                     {yccdSections.length === 0 ? (
-                        <div className="text-slate-400 italic">Chưa có yêu cầu cần đạt</div>
+                        <div className="text-slate-400 italic mb-2">Chưa có mức độ đánh giá nào</div>
                     ) : (
                         <div className="space-y-2">
                             {yccdSections.map((section, sIdx) => (
@@ -661,18 +756,28 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                     {section.levelTitle && (
                                         <div className="flex items-center justify-between font-semibold text-slate-800 text-sm mt-1 mb-1 bg-slate-100/70 px-2 py-0.5 rounded">
                                             <span>{section.levelTitle}</span>
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    setAddingYccdFor({ rowIndex, sectionIdx: sIdx });
-                                                    setNewYccdText('');
-                                                }}
-                                                className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 font-normal py-0.5 px-1.5 rounded hover:bg-blue-50 transition-colors"
-                                                title={`Thêm yêu cầu cần đạt mới cho mục ${section.levelTitle}`}
-                                            >
-                                                <Plus size={13} />
-                                                <span>Thêm YCCĐ</span>
-                                            </button>
+                                            <div className="flex items-center gap-1">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setAddingYccdFor({ rowIndex, sectionIdx: sIdx });
+                                                        setNewYccdText('');
+                                                    }}
+                                                    className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 font-normal py-0.5 px-1.5 rounded hover:bg-blue-50 transition-colors cursor-pointer"
+                                                    title={`Thêm yêu cầu cần đạt mới cho mục ${section.levelTitle}`}
+                                                >
+                                                    <Plus size={13} />
+                                                    <span>Thêm YCCĐ</span>
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleDeleteLevel(rowIndex, sIdx)}
+                                                    className="text-slate-400 hover:text-red-500 p-1 rounded hover:bg-red-50 transition-colors cursor-pointer"
+                                                    title={`Xoá mức độ đánh giá "${section.levelTitle}"`}
+                                                >
+                                                    <Trash2 size={13} />
+                                                </button>
+                                            </div>
                                         </div>
                                     )}
 
@@ -704,13 +809,19 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                                 <button
                                                     type="button"
                                                     onClick={() => handleDeleteYccd(rowIndex, sIdx, iIdx)}
-                                                    className="opacity-0 group-hover/item:opacity-100 text-red-400 hover:text-red-600 p-0.5 rounded hover:bg-red-50 transition-opacity"
+                                                    className="opacity-0 group-hover/item:opacity-100 text-red-400 hover:text-red-600 p-0.5 rounded hover:bg-red-50 transition-opacity cursor-pointer"
                                                     title="Xoá yêu cầu cần đạt này"
                                                 >
                                                     <X size={13} />
                                                 </button>
                                             </div>
                                         ))}
+
+                                        {section.items.length === 0 && !(addingYccdFor?.rowIndex === rowIndex && addingYccdFor?.sectionIdx === sIdx) && (
+                                            <div className="text-xs text-slate-400 italic py-1 pl-1">
+                                                Chưa có YCCĐ. Nhấn "+ Thêm YCCĐ" để thêm.
+                                            </div>
+                                        )}
                                     </div>
 
                                     {/* Inline Add Input for this Section */}
@@ -731,7 +842,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                                         setNewYccdText('');
                                                     }
                                                 }}
-                                                placeholder="Nhập nội dung YCCĐ mới (nhấn Enter để lưu)..."
+                                                placeholder={`Nhập nội dung YCCĐ cho "${section.levelTitle || 'mục này'}" (nhấn Enter để lưu)...`}
                                                 className="flex-1 text-xs border border-blue-300 rounded px-2 py-1 outline-none focus:ring-1 focus:ring-blue-500 bg-white"
                                             />
                                             <button
@@ -741,7 +852,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                                     setAddingYccdFor(null);
                                                     setNewYccdText('');
                                                 }}
-                                                className="bg-blue-600 text-white text-xs px-2.5 py-1 rounded hover:bg-blue-700 font-medium"
+                                                className="bg-blue-600 text-white text-xs px-2.5 py-1 rounded hover:bg-blue-700 font-medium cursor-pointer"
                                             >
                                                 Lưu
                                             </button>
@@ -751,7 +862,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                                     setAddingYccdFor(null);
                                                     setNewYccdText('');
                                                 }}
-                                                className="text-slate-400 hover:text-slate-600 p-1"
+                                                className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
                                                 title="Hủy"
                                             >
                                                 <X size={14} />
@@ -760,6 +871,88 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                     )}
                                 </div>
                             ))}
+                        </div>
+                    )}
+
+                    {/* Inline Add Level (Mức độ đánh giá) Form / Trigger */}
+                    {addingLevelForRow === rowIndex ? (
+                        <div className="mt-2.5 p-2.5 bg-indigo-50/90 border border-indigo-200 rounded-lg text-xs space-y-2">
+                            <div className="flex items-center justify-between font-semibold text-indigo-900">
+                                <span>Chọn hoặc thêm mức độ đánh giá:</span>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setAddingLevelForRow(null);
+                                        setCustomLevelName('');
+                                    }}
+                                    className="text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                                    title="Đóng"
+                                >
+                                    <X size={14} />
+                                </button>
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                                {STANDARD_LEVELS.map(lvl => {
+                                    const isExisting = yccdSections.some(s => s.levelTitle.trim().toLowerCase() === lvl.toLowerCase());
+                                    return (
+                                        <button
+                                            key={lvl}
+                                            type="button"
+                                            disabled={isExisting}
+                                            onClick={() => handleAddLevel(rowIndex, lvl)}
+                                            className={`px-2.5 py-1 rounded text-xs font-medium transition-all ${
+                                                isExisting
+                                                    ? 'bg-slate-200/80 text-slate-400 cursor-not-allowed border border-slate-200'
+                                                    : 'bg-white hover:bg-indigo-600 hover:text-white text-indigo-700 border border-indigo-300 shadow-xs cursor-pointer'
+                                            }`}
+                                            title={isExisting ? `Mức độ "${lvl}" đã có trong bài này` : `Thêm mức độ "${lvl}"`}
+                                        >
+                                            + {lvl} {isExisting && <span className="text-[10px] opacity-75">(Đã có)</span>}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            <div className="flex items-center gap-1.5 pt-1.5 border-t border-indigo-100">
+                                <input
+                                    type="text"
+                                    placeholder="Hoặc nhập tên mức độ khác..."
+                                    value={customLevelName}
+                                    onChange={(e) => setCustomLevelName(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                            e.preventDefault();
+                                            handleAddLevel(rowIndex, customLevelName);
+                                        } else if (e.key === 'Escape') {
+                                            setAddingLevelForRow(null);
+                                            setCustomLevelName('');
+                                        }
+                                    }}
+                                    className="flex-1 bg-white border border-indigo-300 rounded px-2 py-1 outline-none text-xs focus:ring-1 focus:ring-indigo-500"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => handleAddLevel(rowIndex, customLevelName)}
+                                    disabled={!customLevelName.trim()}
+                                    className="bg-indigo-600 text-white px-2.5 py-1 rounded hover:bg-indigo-700 disabled:opacity-50 text-xs font-medium whitespace-nowrap cursor-pointer"
+                                >
+                                    Thêm
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="mt-2.5">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setAddingLevelForRow(rowIndex);
+                                    setCustomLevelName('');
+                                }}
+                                className="text-xs font-medium text-indigo-700 hover:text-indigo-900 bg-indigo-50/70 hover:bg-indigo-100 border border-dashed border-indigo-300 hover:border-indigo-400 px-2.5 py-1.5 rounded flex items-center justify-center gap-1.5 transition-colors w-full cursor-pointer group"
+                                title="Thêm mức độ đánh giá mới (Nhận biết, Thông hiểu, Vận dụng, Vận dụng cao...)"
+                            >
+                                <Plus size={13} className="text-indigo-500 group-hover:text-indigo-700" />
+                                <span>Thêm mức độ đánh giá</span>
+                            </button>
                         </div>
                     )}
 

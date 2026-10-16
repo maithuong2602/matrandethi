@@ -1205,8 +1205,12 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 activeReqHtml = activeReqHtml.replace(/<div[^>]*data-unchecked="true"[^>]*>[\s\S]*?<\/div>/gi, '');
             }
 
+            // Remove empty level headers that have no <div> items under them
+            activeReqHtml = activeReqHtml.replace(/<strong\b[^>]*>[\s\S]*?<\/strong>(?=\s*(?:<strong\b[^>]*>|$))/gi, '');
+
             let formattedReq = activeReqHtml
                 .replace(/<strong class="block font-semibold.*?"/g, '<p style="font-weight: bold; margin: 4px 0 2px 0;"')
+                .replace(/<strong\b[^>]*>/g, '<p style="font-weight: bold; margin: 4px 0 2px 0;">')
                 .replace(/<\/strong>/g, '</p>')
                 .replace(/<div class="pl-2"[^>]*>/g, '<p style="margin: 0 0 0 10px;">')
                 .replace(/<div[^>]*>/g, '<p style="margin: 0 0 0 10px;">')
