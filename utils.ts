@@ -1,5 +1,6 @@
 import { REQUIREMENTS_DATA } from './data/matrixConstants';
 import { MatrixData, ExerciseQuestion } from './types';
+import { CURRICULUM } from './data/curriculum';
 
 export const getRequirementsHtml = (grade: string, mainTopic: string, subTopic: string): string => {
     const gradeNumberMatch = grade.match(/\d+/);
@@ -41,25 +42,27 @@ export const formatDiem = (diem: number): string => {
 };
 
 // Helper to parse text into labelled parts (a, b, c, d...)
-const parseParts = (text: string) => {
+export const parseParts = (text: string) => {
     const parts: { label: string, content: string }[] = [];
-    const lines = text.split(/\n/);
+    const lines = (text || '').split(/\n/);
     let currentLabel = '';
     let currentContent = '';
     
-    // Regex to match start of lines like "a)", "a.", "1.", "Bước 1:", "-", "+", "a - 0.5đ:", "a -"
-    const labelRegex = /^\s*([a-z]\s*[-–](?:\s*\d+(?:[\.,]\d+)?[đd]?:?)?|[a-z][\)\.]|[0-9][\)\.]|-|\+|Bước \d+:?)(.*)/i;
+    // Regex to match start of lines like "a)", "a.", "1.", "1)", "Bước 1:", "-", "+", "*", "a - 0.5đ:", "a -"
+    const labelRegex = /^\s*([a-z]\s*[-–](?:\s*\d+(?:[\.,]\d+)?[đd]?:?)?|[a-z][\)\.]|[0-9]{1,2}[\)\.]|-|\+|\*|Bước \d+:?)(.*)/i;
     
     lines.forEach(line => {
-        const match = line.match(labelRegex);
+        const trimmed = line.trim();
+        if (!trimmed) return;
+        const match = trimmed.match(labelRegex);
         if (match) {
             if (currentLabel || currentContent) {
                 parts.push({ label: currentLabel, content: currentContent.trim() });
             }
-            currentLabel = match[1];
-            currentContent = match[2];
+            currentLabel = match[1].trim();
+            currentContent = match[2].trim();
         } else {
-            currentContent += (currentContent ? '\n' : '') + line;
+            currentContent += (currentContent ? '\n' : '') + trimmed;
         }
     });
     // Push the last accumulated part
@@ -73,6 +76,85 @@ const parseParts = (text: string) => {
     }
     
     return parts;
+};
+
+export const isQuestionForHskt = (
+    q: any,
+    hsktChecked: Record<string, boolean>,
+    defaultGrade?: string
+): boolean => {
+    if (!hsktChecked || typeof hsktChecked !== 'object') return false;
+    const hasAnyChecked = Object.values(hsktChecked).some(v => !!v);
+    if (!hasAnyChecked) return false;
+    if (!q) return false;
+
+    const qCriteria = (q.criteria || '').trim();
+    const qCode = qCriteria.split(' ')[0].replace(/[\.:]$/, '').trim();
+    const qLesson = (q.lesson || '').trim();
+    const qGrade = q.grade || defaultGrade || '6';
+    const qLevel = q.level;
+
+    // 1. Direct match if q.criteria itself was ticked (e.g. full text)
+    if (qCriteria && hsktChecked[qCriteria]) return true;
+
+    // 2. Composite key matches: `${lesson}:::${criteria}` or `${lesson}:::${code}`
+    if (qLesson) {
+        if (qCriteria && hsktChecked[`${qLesson}:::${qCriteria}`]) return true;
+        if (qCode && hsktChecked[`${qLesson}:::${qCode}`]) return true;
+
+        const normQLesson = qLesson.toLowerCase().replace(/[:.]/g, ' ').replace(/\s+/g, ' ').trim();
+        for (const [k, v] of Object.entries(hsktChecked)) {
+            if (!v) continue;
+            if (k.includes(':::')) {
+                const [kLesson, kCrit] = k.split(':::');
+                const normKLesson = kLesson.toLowerCase().replace(/[:.]/g, ' ').replace(/\s+/g, ' ').trim();
+                if (normKLesson === normQLesson || normKLesson.includes(normQLesson) || normQLesson.includes(normKLesson)) {
+                    const kCode = kCrit.split(' ')[0].replace(/[\.:]$/, '').trim();
+                    if (kCode === qCode || kCrit === qCriteria) return true;
+                }
+            }
+        }
+    }
+
+    // 3. Curriculum Criteria Lookup: match against lesson's specific YCCĐ in CURRICULUM.criteriaData
+    if (qCode && qLesson) {
+        const findCriteriaList = (g: string): string[] | null => {
+            const gData = CURRICULUM.criteriaData?.[g];
+            if (!gData) return null;
+            const normQLesson = qLesson.toLowerCase().replace(/[:.]/g, ' ').replace(/\s+/g, ' ').trim();
+            const lessonKey = Object.keys(gData).find(k => {
+                const normK = k.toLowerCase().replace(/[:.]/g, ' ').replace(/\s+/g, ' ').trim();
+                return normK === normQLesson || normK.includes(normQLesson) || normQLesson.includes(normK);
+            });
+            if (!lessonKey) return null;
+            const lessonObj = gData[lessonKey];
+            if (qLevel && lessonObj[qLevel]) return lessonObj[qLevel];
+            return Object.values(lessonObj).flat();
+        };
+
+        let criteriaList = findCriteriaList(qGrade);
+        if (!criteriaList) {
+            for (const g of ['6', '7', '8', '9']) {
+                if (g !== qGrade) {
+                    criteriaList = findCriteriaList(g);
+                    if (criteriaList) break;
+                }
+            }
+        }
+
+        if (criteriaList && criteriaList.length > 0) {
+            const matchedC = criteriaList.find((c: string) => {
+                const cCode = c.split(' ')[0].replace(/[\.:]$/, '').trim();
+                return cCode === qCode || c.startsWith(qCode);
+            });
+            if (matchedC) {
+                if (hsktChecked[matchedC]) return true;
+                if (qLesson && hsktChecked[`${qLesson}:::${matchedC}`]) return true;
+            }
+        }
+    }
+
+    return false;
 };
 
 export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
@@ -305,6 +387,12 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
         const questionContent = tracNghiemQuestions.map((q, index) => {
             const displayContent = (q.content || '').replace(/\n/g, '<br/>');
             let questionHtml = `<p style="margin-top: 6pt; margin-bottom: 0; font-size: 13pt; text-align: justify;"><strong>Câu ${index + 1}.</strong> ${displayContent}</p>`;
+            
+            // True/False questions: do NOT render options underneath
+            if (q.questionType === 'true-false') {
+                return questionHtml;
+            }
+
             if (q.options && q.options.length > 0) {
                 // Modified heuristic: If any option is > 25 chars, assume it might wrap in a 2-col table, so switch to vertical.
                 // This prevents the "rớt dòng" (orphan word) issue in table cells.
@@ -409,37 +497,35 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
     `;
 
     // ---------------- HSKT LOGIC ----------------
-    let hsktCodes = new Set<string>();
+    let hsktChecked: Record<string, boolean> = {};
+    let hasAnyHsktConfigured = false;
     try {
         if (typeof window !== 'undefined' && window.localStorage) {
             const saved = localStorage.getItem('hsktChecked');
             if (saved) {
-                const parsed = JSON.parse(saved);
-                for (const [key, isChecked] of Object.entries(parsed)) {
-                    if (isChecked) {
-                        hsktCodes.add(key.trim());
-                        hsktCodes.add(key.split(' ')[0].trim());
-                    }
-                }
+                hsktChecked = JSON.parse(saved);
+                hasAnyHsktConfigured = Object.values(hsktChecked).some(v => !!v);
             }
         }
     } catch { }
 
-    const isHskt = (q: any) => {
-        if (hsktCodes.size === 0) return true; // Default show all if nothing configured
-        if (!q.criteria) return false;
-        const cTrimmed = q.criteria.trim();
-        const cCode = cTrimmed.split(' ')[0].trim();
-        return hsktCodes.has(cTrimmed) || hsktCodes.has(cCode);
-    };
+    const gradeFromHeader = headerInfo?.monHoc?.match(/\d+/)?.[0] || '6';
+    const isHskt = (q: any) => isQuestionForHskt(q, hsktChecked, gradeFromHeader);
 
-    let hsktTotalPointsRaw = 0;
-    if (hsktCodes.size > 0) {
+    let hsktTracNghiemCount = 0;
+    let hsktTracNghiemPoints = 0;
+    let hsktTuLuanPoints = 0;
+    if (hasAnyHsktConfigured) {
         tracNghiemQuestions.forEach(q => {
-            if (isHskt(q)) hsktTotalPointsRaw += (q.points || 0.25);
+            if (isHskt(q)) {
+                hsktTracNghiemCount++;
+                hsktTracNghiemPoints += (q.points || 0.25);
+            }
         });
         tuLuanQuestions.forEach(q => {
-            if (isHskt(q)) hsktTotalPointsRaw += (q.points || 1.0);
+            if (isHskt(q)) {
+                hsktTuLuanPoints += (q.points || 1.0);
+            }
         });
     }
 
@@ -481,8 +567,13 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                 const idx = r * mcCols + c;
                 if (idx < tracNghiemQuestions.length) {
                     const q = tracNghiemQuestions[idx];
-                    const correctOpt = q.options?.find((o: any) => o.isCorrect);
-                    mcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / mcCols}%;">${correctOpt ? correctOpt.id : ''}</td>`;
+                    let correctOpt = '';
+                    if (q.questionType === 'true-false') {
+                        correctOpt = q.answer === 'Sai' || q.options?.find((o: any) => o.isCorrect)?.id === 'Sai' ? 'S' : 'Đ';
+                    } else {
+                        correctOpt = q.options?.filter((o: any) => o.isCorrect).map((o: any) => o.id).join(', ') || q.answer || '';
+                    }
+                    mcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / mcCols}%;">${correctOpt || ''}</td>`;
                 } else {
                     mcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / mcCols}%;">&nbsp;</td>`;
                 }
@@ -493,14 +584,18 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
 
         let middleColumnHtml = mcGrid;
 
-        if (hsktCodes.size > 0) {
+        if (hasAnyHsktConfigured) {
             let hsktMcGrid = `<table style="width: 100%; border-collapse: collapse; text-align: center; font-size: 11pt; margin: 0 auto; table-layout: fixed;">`;
             for (let r = 0; r < mcRows; r++) {
                 hsktMcGrid += `<tr>`;
                 for (let c = 0; c < mcCols; c++) {
                     const idx = r * mcCols + c;
                     if (idx < tracNghiemQuestions.length) {
-                        hsktMcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; font-weight: bold; padding: 2px; background-color: #f0f0f0; width: ${100 / mcCols}%;">${idx + 1}</td>`;
+                        const q = tracNghiemQuestions[idx];
+                        const isQHskt = isHskt(q);
+                        const headerBg = isQHskt ? '#f0f0f0' : '#fafafa';
+                        const headerColor = isQHskt ? '#000000' : '#888888';
+                        hsktMcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; font-weight: bold; padding: 2px; background-color: ${headerBg}; color: ${headerColor}; width: ${100 / mcCols}%;">${idx + 1}</td>`;
                     } else {
                         hsktMcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / mcCols}%;">&nbsp;</td>`;
                     }
@@ -511,10 +606,15 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                     if (idx < tracNghiemQuestions.length) {
                         const q = tracNghiemQuestions[idx];
                         if (isHskt(q)) {
-                            const correctOpt = q.options?.find((o: any) => o.isCorrect);
-                            hsktMcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / mcCols}%;">${correctOpt ? correctOpt.id : ''}</td>`;
+                            let correctOpt = '';
+                            if (q.questionType === 'true-false') {
+                                correctOpt = q.answer === 'Sai' || q.options?.find((o: any) => o.isCorrect)?.id === 'Sai' ? 'S' : 'Đ';
+                            } else {
+                                correctOpt = q.options?.filter((o: any) => o.isCorrect).map((o: any) => o.id).join(', ') || q.answer || '';
+                            }
+                            hsktMcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / mcCols}%; font-weight: bold; color: #000000;">${correctOpt || ''}</td>`;
                         } else {
-                            hsktMcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / mcCols}%; font-style: italic; color: #999; text-decoration: line-through;">Miễn</td>`;
+                            hsktMcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / mcCols}%; font-style: italic; color: #888888; background-color: #fcfcfc;">Miễn</td>`;
                         }
                     } else {
                         hsktMcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / mcCols}%;">&nbsp;</td>`;
@@ -525,7 +625,9 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
             hsktMcGrid += `</table>`;
 
             middleColumnHtml += `
-                <div style="color: red; font-size: 12pt; text-align: left; margin: 8px 0 4px 0;">Hướng dẫn chấm dành cho HSKT</div>
+                <div style="color: #b91c1c; font-size: 11pt; font-weight: bold; text-align: left; margin: 10px 0 4px 0;">
+                    Hướng dẫn chấm dành cho HSKT (${hsktTracNghiemCount}/${tracNghiemQuestions.length} câu - ${hsktTracNghiemPoints.toFixed(1).replace('.', ',')} điểm; các câu ghi "Miễn" không tính điểm):
+                </div>
                 ${hsktMcGrid}
             `;
         }
@@ -580,17 +682,27 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
             
             // Case 1: Detailed parts found in Answer (e.g. a)... b)...)
             if (answerParts.length > 1) {
+                const getPartKey = (lbl: string) => {
+                    const m = lbl.match(/([a-z]|[0-9]{1,2})/i);
+                    return m ? m[1].toLowerCase() : lbl.replace(/[^a-z0-9]/gi, '').toLowerCase();
+                };
+
                 answerParts.forEach((ansPart, idx) => {
-                    // Try to find matching question part label (e.g. "a)") to display in Col 1
-                    // If not found, just use the Answer label as the requirement key.
-                    // Normalize labels for matching (remove special chars)
-                    const normAnsLabel = ansPart.label.replace(/[^a-z0-9]/gi, '');
-                    const qPart = questionParts.find(qp => qp.label.replace(/[^a-z0-9]/gi, '') === normAnsLabel) || { content: '' };
+                    const ansKey = getPartKey(ansPart.label);
+                    const qPart = questionParts.find(qp => getPartKey(qp.label) === ansKey) || { content: '' };
                     
+                    // Format Clean Label (e.g. "a)" or "1)")
+                    let col1Label = ansPart.label.replace(/\s*[-–].*$/, '').trim();
+                    if (col1Label && !col1Label.endsWith(')') && !col1Label.endsWith('.')) {
+                        col1Label += ')';
+                    }
+
                     // Col 1 Content
-                    let col1Text = `<b>${ansPart.label}</b>`;
+                    let col1Text = col1Label ? `<b>${col1Label}</b>` : `<b>Ý ${idx + 1}:</b>`;
                     if (qPart.content) {
                         col1Text += ` ${qPart.content}`; 
+                    } else if (!col1Label || col1Label === '-' || col1Label === '+' || col1Label === '*') {
+                        col1Text = `<b>Ý ${idx + 1}</b>`;
                     }
                     
                     // Col 2 Content: Replace newlines with <br/> for correct display
@@ -618,7 +730,7 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
             }
 
             let hsktNote = '';
-            if (hsktCodes.size > 0 && !isHskt(q)) {
+            if (hasAnyHsktConfigured && !isHskt(q)) {
                 hsktNote = ` <span style="color: red; font-weight: normal; font-style: italic;">(Miễn đối với HSKT)</span>`;
             }
 
@@ -661,11 +773,23 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
 
     let gradingTableEnd = `</tbody></table>`;
     
+    let hsktSummaryText = '';
+    if (hasAnyHsktConfigured) {
+        const hsktTotalPts = hsktTracNghiemPoints + hsktTuLuanPoints;
+        const hsktTuLuanCount = tuLuanQuestions.filter(q => isHskt(q)).length;
+        hsktSummaryText = `
+            <div style="margin-top: 8px; color: #b91c1c; font-style: italic; font-size: 10.5pt; text-align: center; font-weight: bold;">
+                * Điểm tối đa dành cho Học sinh khuyết tật: ${hsktTotalPts.toFixed(1).replace('.', ',')} điểm (${hsktTracNghiemCount} câu TN + ${hsktTuLuanCount} câu TL đạt chuẩn YCCĐ; các câu khác được miễn).
+            </div>
+        `;
+    }
+
     let gradingFooterText = `
         <div style="text-align: center; margin-top: 15px; font-weight: bold;">---Hết---</div>
         <div style="margin-top: 10px; font-style: italic; font-size: 11pt; text-align: center;">
             Học sinh có thể trình bày theo cách khác, hợp lí, chính xác thì cho điểm tối đa.
         </div>
+        ${hsktSummaryText}
     `;
 
 
@@ -1280,9 +1404,9 @@ export const generateAzotaKeyHtml = (questions: any[]) => {
     questions.forEach((q, index) => {
         const num = index + 1;
         if (q.category !== 'essay' && q.options && q.options.length > 0) {
-            const correctOpt = q.options.find((opt: any) => opt.isCorrect);
+            const correctOpt = q.options.filter((opt: any) => opt.isCorrect).map((opt: any) => opt.id).join(', ');
             if (correctOpt) {
-                answers += `<p style="font-size: 13pt;">${num}. ${correctOpt.id}</p>`;
+                answers += `<p style="font-size: 13pt;">${num}. ${correctOpt}</p>`;
             }
         } else if (q.answer) {
             answers += `<p style="font-size: 13pt;">${num}. ${q.answer}</p>`;
@@ -1308,7 +1432,7 @@ export const generateExamVariants = (
     shuffleOptions: boolean = true
 ): any[] => {
     // Phân loại câu hỏi theo các phần theo quy định của Bộ GD&ĐT
-    const part1 = baseQuestions.filter(q => (q.questionType === 'multiple-choice' || (!q.questionType && q.category !== 'essay' && q.options && q.options.length === 4 && q.options[0]?.id?.toUpperCase() === 'A')));
+    const part1 = baseQuestions.filter(q => (q.questionType === 'multiple-choice' || q.questionType === 'multiple-answer' || (!q.questionType && q.category !== 'essay' && q.options && q.options.length === 4 && q.options[0]?.id?.toUpperCase() === 'A')));
     const part2 = baseQuestions.filter(q => q.questionType === 'true-false');
     const part3 = baseQuestions.filter(q => q.questionType === 'short-answer' || q.mcType === 'fill-blank');
     const part4 = baseQuestions.filter(q => q.category === 'essay' || q.questionType === 'essay' || (!q.questionType && q.category === 'essay'));
@@ -1355,10 +1479,14 @@ export const generateExamVariants = (
 
             if (q.questionType === 'true-false') {
                 qType = 'true-false';
-                if (q.options && q.options.length > 0) {
+                if (q.answer === 'Sai' || q.options?.find((o: any) => o.isCorrect)?.id === 'Sai') {
+                    ansStr = 'Sai';
+                } else if (q.answer === 'Đúng' || q.options?.find((o: any) => o.isCorrect)?.id === 'Đúng') {
+                    ansStr = 'Đúng';
+                } else if (q.options && q.options.length > 2) {
                     ansStr = q.options.map((o: any) => `${o.id || 'x'}-${o.isCorrect ? 'Đ' : 'S'}`).join('; ');
                 } else {
-                    ansStr = q.answer || '';
+                    ansStr = q.answer || 'Đúng';
                 }
             } else if (q.questionType === 'short-answer' || q.mcType === 'fill-blank') {
                 qType = 'short-answer';
@@ -1375,7 +1503,7 @@ export const generateExamVariants = (
             return {
                 number: num,
                 answer: ansStr,
-                points: q.points || (q.category === 'essay' ? 1.0 : (q.questionType === 'true-false' ? 1.0 : 0.25)),
+                points: q.points || (q.category === 'essay' ? 1.0 : 0.25),
                 type: qType,
                 details: q.answer
             };

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { MatrixData } from '../types';
 import { formatDiem } from '../utils';
 import { Trash2, GripVertical, Plus, CheckSquare, Square, X } from 'lucide-react';
@@ -11,11 +11,126 @@ interface MatrixViewProps {
     examName: string; // Added to check for Final Exam
 }
 
+type EditingCellState = {
+    table: 'matrix' | 'spec';
+    row: number;
+    col: number;
+} | null;
+
+interface QuestionCellEditorProps {
+    initialCount: number;
+    isTLColumn: boolean;
+    initialTLPoint: number;
+    onSave: (newCount: number, newPoint?: number) => void;
+    onCancel: () => void;
+}
+
+const QuestionCellEditor: React.FC<QuestionCellEditorProps> = ({
+    initialCount,
+    isTLColumn,
+    initialTLPoint,
+    onSave,
+    onCancel
+}) => {
+    const [count, setCount] = useState<string>(initialCount > 0 ? initialCount.toString() : '');
+    const [point, setPoint] = useState<string>(initialTLPoint.toString());
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    const handleSave = () => {
+        const parsedCount = parseInt(count, 10);
+        const finalCount = isNaN(parsedCount) || parsedCount < 0 ? 0 : parsedCount;
+        const parsedPoint = parseFloat(point);
+        const finalPoint = isNaN(parsedPoint) || parsedPoint <= 0 ? initialTLPoint : parsedPoint;
+        onSave(finalCount, isTLColumn ? finalPoint : undefined);
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            handleSave();
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            onCancel();
+        }
+    };
+
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+                handleSave();
+            }
+        };
+
+        const timer = setTimeout(() => {
+            document.addEventListener('mousedown', handleClickOutside);
+        }, 50);
+
+        return () => {
+            clearTimeout(timer);
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
+    }, [count, point]);
+
+    return (
+        <div
+            ref={containerRef}
+            className="flex flex-col items-center gap-1.5 p-1.5 bg-white shadow-xl rounded-lg border-2 border-indigo-400 z-30 min-w-[110px]"
+            onClick={(e) => e.stopPropagation()}
+        >
+            <div className="flex items-center justify-between w-full gap-1">
+                <span className="text-[11px] text-gray-600 font-semibold whitespace-nowrap">Số câu:</span>
+                <input
+                    autoFocus
+                    type="number"
+                    min="0"
+                    className="w-14 text-center border border-sky-400 rounded p-1 outline-none text-xs font-bold bg-white"
+                    value={count}
+                    onChange={(e) => setCount(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder="0"
+                />
+            </div>
+            {isTLColumn && (
+                <div className="flex items-center justify-between w-full gap-1 border-t border-indigo-100 pt-1">
+                    <span className="text-[11px] text-indigo-700 font-bold whitespace-nowrap">Điểm/câu:</span>
+                    <input
+                        type="number"
+                        step="0.25"
+                        min="0.25"
+                        max="10"
+                        className="w-14 text-center border border-indigo-400 rounded p-1 outline-none text-xs font-bold bg-indigo-50 text-indigo-800"
+                        value={point}
+                        onChange={(e) => setPoint(e.target.value)}
+                        onKeyDown={handleKeyDown}
+                    />
+                </div>
+            )}
+            <div className="flex items-center gap-1 w-full mt-0.5">
+                <button
+                    type="button"
+                    onClick={handleSave}
+                    className="flex-1 text-center text-xs text-white bg-indigo-600 hover:bg-indigo-700 font-semibold py-1 rounded shadow-sm transition-colors"
+                >
+                    Xong
+                </button>
+                <button
+                    type="button"
+                    onClick={onCancel}
+                    className="text-center text-xs text-slate-500 hover:text-slate-700 font-medium py-1 px-1.5 rounded hover:bg-slate-100 transition-colors"
+                    title="Hủy"
+                >
+                    Hủy
+                </button>
+            </div>
+        </div>
+    );
+};
+
 const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteRow, examName }) => {
     const pointsTNKQ = data.pointsConfig?.pointsTNKQ ?? 0.25;
     const pointsTL = data.pointsConfig?.pointsTL ?? 1.0;
     const rowEssayPoints = data.pointsConfig?.rowEssayPoints ?? {};
-    const [editingCell, setEditingCell] = useState<{row: number, col: number} | null>(null);
+    const [editingCell, setEditingCell] = useState<EditingCellState>(null);
     const [draggedGroupIndex, setDraggedGroupIndex] = useState<number | null>(null);
 
     const getRowPointsTL = (rIdx: number) => {
@@ -187,6 +302,57 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
     });
 
 
+    const handleQuestionCellSave = (
+        rowIndex: number,
+        colIndex: number,
+        newCount: number,
+        newTLPoint?: number
+    ) => {
+        const newData = JSON.parse(JSON.stringify(data));
+        const countStr = newCount > 0 ? newCount.toString() : '';
+
+        // Update Matrix Value
+        newData.matrix.rows[rowIndex][colIndex] = countStr;
+
+        // Sync Specifications string
+        if (newData.specifications?.rows?.[rowIndex]) {
+            const specRow = newData.specifications.rows[rowIndex];
+            const parsePart = (val: any) => {
+                const parts = (val ? String(val) : '0-0').split('-').map(n => parseInt(n.trim(), 10) || 0);
+                return [parts[0] || 0, parts[1] || 0];
+            };
+
+            let [nb_tn, nb_tl] = parsePart(specRow[5]);
+            let [th_tn, th_tl] = parsePart(specRow[6]);
+            let [vd_tn, vd_tl] = parsePart(specRow[7]);
+            let [vdc_tn, vdc_tl] = parsePart(specRow[8]);
+
+            if (colIndex === 5) nb_tn = newCount;
+            if (colIndex === 6) nb_tl = newCount;
+            if (colIndex === 7) th_tn = newCount;
+            if (colIndex === 8) th_tl = newCount;
+            if (colIndex === 9) vd_tn = newCount;
+            if (colIndex === 10) vd_tl = newCount;
+            if (colIndex === 11) vdc_tn = newCount;
+            if (colIndex === 12) vdc_tl = newCount;
+
+            specRow[5] = `${nb_tn}-${nb_tl}`;
+            specRow[6] = `${th_tn}-${th_tl}`;
+            specRow[7] = `${vd_tn}-${vd_tl}`;
+            specRow[8] = `${vdc_tn}-${vdc_tl}`;
+        }
+
+        // Update essay points if custom TL point was provided
+        if (newTLPoint !== undefined && !isNaN(newTLPoint) && newTLPoint > 0) {
+            if (!newData.pointsConfig) newData.pointsConfig = {};
+            if (!newData.pointsConfig.rowEssayPoints) newData.pointsConfig.rowEssayPoints = {};
+            newData.pointsConfig.rowEssayPoints[rowIndex] = newTLPoint;
+        }
+
+        onUpdateMatrix(newData);
+        setEditingCell(null);
+    };
+
     const handleCellChange = (rowIndex: number, colIndex: number, newValue: string) => {
         const newData = JSON.parse(JSON.stringify(data));
         
@@ -215,34 +381,8 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
              return;
         }
         
-        // Spec Counts Change
-        const specRow = newData.specifications.rows[rowIndex];
-        
-        let [nb_tn, nb_tl]   = (String(specRow[5]) || '0-0').split('-').map(n => n.trim());
-        let [th_tn, th_tl]   = (String(specRow[6]) || '0-0').split('-').map(n => n.trim());
-        let [vd_tn, vd_tl]   = (String(specRow[7]) || '0-0').split('-').map(n => n.trim());
-        let [vdc_tn, vdc_tl] = (String(specRow[8]) || '0-0').split('-').map(n => n.trim());
-
-        // Update Matrix Value first
-        newData.matrix.rows[rowIndex][colIndex] = newValue;
-
-        // Sync Specifications string
-        if (colIndex === 5) nb_tn = newValue;
-        if (colIndex === 6) nb_tl = newValue;
-        if (colIndex === 7) th_tn = newValue;
-        if (colIndex === 8) th_tl = newValue;
-        if (colIndex === 9) vd_tn = newValue;
-        if (colIndex === 10) vd_tl = newValue;
-        if (colIndex === 11) vdc_tn = newValue;
-        if (colIndex === 12) vdc_tl = newValue;
-
-        specRow[5] = `${nb_tn}-${nb_tl}`;
-        specRow[6] = `${th_tn}-${th_tl}`;
-        specRow[7] = `${vd_tn}-${vd_tl}`;
-        specRow[8] = `${vdc_tn}-${vdc_tl}`;
-
-        onUpdateMatrix(newData);
-        setEditingCell(null);
+        const count = parseInt(newValue, 10);
+        handleQuestionCellSave(rowIndex, colIndex, isNaN(count) ? 0 : Math.max(0, count));
     };
 
     // --- DRAG AND DROP HANDLERS ---
@@ -468,68 +608,24 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
 
         // Helper to render cell with count and MAX AVAILABLE
         const renderCell = (count: number, max: number, type: 'TN' | 'TL', colIndex: number) => {
-            const isEditing = editingCell?.row === rowIndex && editingCell?.col === colIndex;
+            const isEditing = editingCell?.table === 'spec' && editingCell.row === rowIndex && editingCell.col === colIndex;
             const isTLColumn = colIndex === 10;
             const currentTLPoint = isTLColumn ? getRowPointsTL(rowIndex) : pointsTL;
             
             return (
-                <td className="bg-white hover:bg-sky-50 p-2 border border-slate-300 text-center w-24 align-middle transition-colors">
+                <td className="bg-white hover:bg-sky-50 p-2 border border-slate-300 text-center w-24 align-middle transition-colors relative">
                     {isEditing ? (
-                        <div className="flex flex-col items-center gap-1.5 p-1.5 bg-white shadow-xl rounded-lg border-2 border-indigo-400 z-20 min-w-[110px]">
-                            <div className="flex items-center justify-between w-full gap-1">
-                                <span className="text-[11px] text-gray-600 font-semibold">Số câu:</span>
-                                <input 
-                                    autoFocus 
-                                    type="number" 
-                                    min="0"
-                                    className="w-12 text-center border border-sky-400 rounded p-1 outline-none text-xs font-bold bg-white" 
-                                    defaultValue={count} 
-                                    onBlur={(e) => {
-                                        if (!isTLColumn) handleCellChange(rowIndex, colIndex, e.target.value);
-                                    }} 
-                                    onKeyDown={(e) => {
-                                        if (e.key === 'Enter') handleCellChange(rowIndex, colIndex, e.currentTarget.value); 
-                                        if (e.key === 'Escape') setEditingCell(null);
-                                    }} 
-                                    onChange={(e) => {
-                                        if (isTLColumn) handleCellChange(rowIndex, colIndex, e.target.value);
-                                    }}
-                                />
-                            </div>
-                            {isTLColumn && (
-                                <div className="flex items-center justify-between w-full gap-1 border-t border-indigo-100 pt-1">
-                                    <span className="text-[11px] text-indigo-700 font-bold">Điểm/câu:</span>
-                                    <input
-                                        type="number"
-                                        step="0.25"
-                                        min="0.25"
-                                        max="10"
-                                        className="w-12 text-center border border-indigo-400 rounded p-0.5 outline-none text-xs font-bold bg-indigo-50 text-indigo-800"
-                                        defaultValue={currentTLPoint}
-                                        onChange={(e) => {
-                                            const p = parseFloat(e.target.value);
-                                            if (!isNaN(p) && p > 0) {
-                                                handleUpdateRowEssayPoints(rowIndex, p);
-                                            }
-                                        }}
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter' || e.key === 'Escape') setEditingCell(null);
-                                        }}
-                                    />
-                                </div>
-                            )}
-                            <button
-                                type="button"
-                                onClick={() => setEditingCell(null)}
-                                className="w-full text-center text-xs text-white bg-indigo-600 hover:bg-indigo-700 font-semibold py-0.5 rounded shadow-sm mt-0.5 transition-colors"
-                            >
-                                Xong
-                            </button>
-                        </div>
+                        <QuestionCellEditor
+                            initialCount={count}
+                            isTLColumn={isTLColumn}
+                            initialTLPoint={currentTLPoint}
+                            onSave={(newCount, newPoint) => handleQuestionCellSave(rowIndex, colIndex, newCount, newPoint)}
+                            onCancel={() => setEditingCell(null)}
+                        />
                     ) : (
                         <div 
                             className="cursor-pointer flex flex-col items-center justify-center group/cell py-0.5"
-                            onClick={() => setEditingCell({row: rowIndex, col: colIndex})}
+                            onClick={() => setEditingCell({ table: 'spec', row: rowIndex, col: colIndex })}
                             title={isTLColumn ? "Nhấn để điều chỉnh số câu và điểm tương ứng" : "Nhấn để sửa số câu"}
                         >
                             <span className={`font-semibold text-lg ${count > 0 ? 'text-gray-900' : 'text-gray-300'}`}>{count}</span>
@@ -797,13 +893,13 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                                                 <span>{row[3]}</span>
                                                                 <span className="ml-1 text-xs text-blue-600 font-semibold" title="Tỷ lệ % mục tiêu dựa trên phân bổ số tiết">({rowTargetPercent}%)</span>
                                                             </td>
-                                                            <td className="bg-white text-center cursor-pointer hover:bg-sky-50 border border-slate-300 p-2" onClick={() => setEditingCell({row: item.index, col: 4})}>
-                                                                {editingCell?.row === item.index && editingCell?.col === 4 ? (
+                                                            <td className="bg-white text-center cursor-pointer hover:bg-sky-50 border border-slate-300 p-2" onClick={() => setEditingCell({ table: 'matrix', row: item.index, col: 4 })}>
+                                                                {editingCell?.table === 'matrix' && editingCell.row === item.index && editingCell.col === 4 ? (
                                                                     <input autoFocus type="number" className="w-full text-center border border-sky-400 rounded p-1 outline-none" defaultValue={row[4]} onBlur={(e) => handleCellChange(item.index, 4, e.target.value)} onKeyDown={(e) => {if (e.key === 'Enter') handleCellChange(item.index, 4, e.currentTarget.value); if (e.key === 'Escape') setEditingCell(null);}} />
                                                                 ) : row[4]}
                                                             </td>
-                                                            <td className="bg-white text-center cursor-pointer hover:bg-sky-50 border border-slate-300 p-2" onClick={() => setEditingCell({row: item.index, col: 14})}>
-                                                                {editingCell?.row === item.index && editingCell?.col === 14 ? (
+                                                            <td className="bg-white text-center cursor-pointer hover:bg-sky-50 border border-slate-300 p-2" onClick={() => setEditingCell({ table: 'matrix', row: item.index, col: 14 })}>
+                                                                {editingCell?.table === 'matrix' && editingCell.row === item.index && editingCell.col === 14 ? (
                                                                     <input 
                                                                         autoFocus 
                                                                         type="number" 
@@ -819,70 +915,26 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                                             </td>
                                                              {[5,6,7,8,9,10].map(ci => {
                                                                   const cau = parseInt(String(row[ci]) || "0");
-                                                                  const isEditing = editingCell?.row === item.index && editingCell?.col === ci;
+                                                                  const isEditing = editingCell?.table === 'matrix' && editingCell.row === item.index && editingCell.col === ci;
                                                                   const isTLColumn = ci === 10;
                                                                   const currentTLPoint = isTLColumn ? getRowPointsTL(item.index) : pointsTL;
 
                                                                   return (
                                                                       <td 
                                                                           key={ci} 
-                                                                          className={`bg-white border border-slate-300 p-2 text-center hover:bg-sky-50 transition-colors ${cau>0?"text-gray-900 font-medium":"text-gray-300"}`} 
+                                                                          className={`bg-white border border-slate-300 p-2 text-center hover:bg-sky-50 transition-colors relative ${cau>0?"text-gray-900 font-medium":"text-gray-300"}`} 
                                                                       >
                                                                           {isEditing ? (
-                                                                              <div className="flex flex-col items-center gap-1.5 p-1.5 bg-white shadow-xl rounded-lg border-2 border-indigo-400 z-20 min-w-[110px]">
-                                                                                  <div className="flex items-center justify-between w-full gap-1">
-                                                                                      <span className="text-[11px] text-gray-600 font-semibold">Số câu:</span>
-                                                                                      <input
-                                                                                          autoFocus
-                                                                                          type="number"
-                                                                                          min="0"
-                                                                                          className="w-14 text-center border border-sky-400 rounded p-1 outline-none text-xs font-bold bg-white"
-                                                                                          defaultValue={cau || ""}
-                                                                                          onBlur={(e) => {
-                                                                                              if (!isTLColumn) handleCellChange(item.index, ci, e.target.value);
-                                                                                          }}
-                                                                                          onKeyDown={(e) => {
-                                                                                              if (e.key === "Enter") handleCellChange(item.index, ci, e.currentTarget.value);
-                                                                                              if (e.key === "Escape") setEditingCell(null);
-                                                                                          }}
-                                                                                          onChange={(e) => {
-                                                                                              if (isTLColumn) handleCellChange(item.index, ci, e.target.value);
-                                                                                          }}
-                                                                                      />
-                                                                                  </div>
-                                                                                  {isTLColumn && (
-                                                                                      <div className="flex items-center justify-between w-full gap-1 border-t border-indigo-100 pt-1">
-                                                                                          <span className="text-[11px] text-indigo-700 font-bold">Điểm/câu:</span>
-                                                                                          <input
-                                                                                              type="number"
-                                                                                              step="0.25"
-                                                                                              min="0.25"
-                                                                                              max="10"
-                                                                                              className="w-14 text-center border border-indigo-400 rounded p-1 outline-none text-xs font-bold bg-indigo-50 text-indigo-800"
-                                                                                              defaultValue={currentTLPoint}
-                                                                                              onChange={(e) => {
-                                                                                                  const p = parseFloat(e.target.value);
-                                                                                                  if (!isNaN(p) && p > 0) {
-                                                                                                      handleUpdateRowEssayPoints(item.index, p);
-                                                                                                  }
-                                                                                              }}
-                                                                                              onKeyDown={(e) => {
-                                                                                                  if (e.key === "Enter" || e.key === "Escape") setEditingCell(null);
-                                                                                              }}
-                                                                                          />
-                                                                                      </div>
-                                                                                  )}
-                                                                                  <button
-                                                                                      type="button"
-                                                                                      onClick={() => setEditingCell(null)}
-                                                                                      className="w-full text-center text-xs text-white bg-indigo-600 hover:bg-indigo-700 font-semibold py-1 rounded shadow-sm mt-0.5 transition-colors"
-                                                                                  >
-                                                                                      Xong
-                                                                                  </button>
-                                                                              </div>
+                                                                              <QuestionCellEditor
+                                                                                  initialCount={cau}
+                                                                                  isTLColumn={isTLColumn}
+                                                                                  initialTLPoint={currentTLPoint}
+                                                                                  onSave={(newCount, newPoint) => handleQuestionCellSave(item.index, ci, newCount, newPoint)}
+                                                                                  onCancel={() => setEditingCell(null)}
+                                                                              />
                                                                           ) : (
                                                                               <div 
-                                                                                  onClick={() => setEditingCell({row: item.index, col: ci})}
+                                                                                  onClick={() => setEditingCell({ table: 'matrix', row: item.index, col: ci })}
                                                                                   className="cursor-pointer flex flex-col items-center justify-center group/cell py-0.5"
                                                                                   title={isTLColumn ? "Nhấn để điều chỉnh số câu và điểm tương ứng" : "Nhấn để sửa số câu"}
                                                                               >

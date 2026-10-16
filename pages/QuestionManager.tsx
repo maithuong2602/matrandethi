@@ -22,13 +22,15 @@ import {
   AlertTriangle, 
   FileUp, 
   FileText, 
-  CheckCircle2
+  CheckCircle2,
+  CheckSquare
 } from 'lucide-react';
 import { ExerciseQuestion } from '../types';
 import { CURRICULUM } from '../data/curriculum';
 import { parseQuestionsWithAI, generateBulkQuestions, generateEssayRubric } from '../services/geminiService';
 import { loadQuestionBank, saveQuestionBank } from '../services/storage/questionBankStorage';
 import { CurriculumMappingReview } from '../components/CurriculumMappingReview';
+import { isQuestionForHskt } from '../utils';
 
 
 // Helper tự động gắn nhãn Khối & Bài cho dữ liệu cũ (legacy data) chưa có trường grade/lesson
@@ -115,6 +117,44 @@ export const autoTagQuestion = (q: ExerciseQuestion): ExerciseQuestion => {
   };
 };
 
+export const splitLegacyTrueFalseQuestions = (questions: ExerciseQuestion[]): ExerciseQuestion[] => {
+  const result: ExerciseQuestion[] = [];
+  questions.forEach(q => {
+    // If it's a legacy true-false question with 4 sub-options (a, b, c, d)
+    if (
+      q.questionType === 'true-false' &&
+      Array.isArray(q.options) &&
+      q.options.length >= 2 &&
+      q.options.some(opt => opt.id?.toLowerCase() === 'a' || opt.id?.toLowerCase() === 'b')
+    ) {
+      const baseStem = (q.content || '').trim().replace(/[:\.\s]+$/, '');
+      q.options.forEach((opt, idx) => {
+        const optText = (opt.text || '').trim();
+        let statement = optText;
+        if (baseStem && !optText.toLowerCase().startsWith(baseStem.toLowerCase())) {
+          statement = `${baseStem}: ${optText}`;
+        }
+        result.push({
+          ...q,
+          id: `${q.id}_tf_${opt.id || idx}`,
+          content: statement,
+          questionType: 'true-false',
+          category: 'mc',
+          answer: opt.isCorrect ? 'Đúng' : 'Sai',
+          options: [
+            { id: 'Đúng', text: 'Đúng', isCorrect: !!opt.isCorrect },
+            { id: 'Sai', text: 'Sai', isCorrect: !opt.isCorrect }
+          ],
+          points: 0.25
+        });
+      });
+    } else {
+      result.push(q);
+    }
+  });
+  return result;
+};
+
 const QuestionManager: React.FC = () => {
   const [grade, setGrade] = useState('');
   const [lesson, setLesson] = useState('');
@@ -126,7 +166,7 @@ const QuestionManager: React.FC = () => {
   useEffect(() => {
     const result = loadQuestionBank();
     if (result.success) {
-      const taggedData = result.data.map(autoTagQuestion);
+      const taggedData = splitLegacyTrueFalseQuestions(result.data.map(autoTagQuestion));
       setQuestions(taggedData);
       canAutoSaveRef.current = true;
     } else {
@@ -313,7 +353,16 @@ const QuestionManager: React.FC = () => {
     setQuestions(prev => prev.map(q => {
       if (q.id !== qId) return q;
       const newOptions = q.options?.map(opt => opt.id === optId ? { ...opt, [field]: value } : opt);
-      return { ...q, options: newOptions };
+      let updatedAnswer = q.answer;
+      if (field === 'isCorrect') {
+        const correctIds = newOptions?.filter(o => o.isCorrect).map(o => o.id) || [];
+        if (q.questionType === 'multiple-answer' || q.mcType === 'multiple-answer') {
+          updatedAnswer = correctIds.join(', ');
+        } else if (q.questionType === 'multiple-choice' || !q.questionType) {
+          updatedAnswer = correctIds[0] || '';
+        }
+      }
+      return { ...q, options: newOptions, answer: updatedAnswer };
     }));
   };
 
@@ -374,12 +423,15 @@ const QuestionManager: React.FC = () => {
 
             const correctCount = parsedOptions.filter(o => o.isCorrect).length;
             const mcType = correctCount > 1 ? 'multiple-answer' : 'multiple-choice';
+            const correctAnswers = parsedOptions.filter(o => o.isCorrect).map(o => o.id).join(', ');
 
             setQuestions(prev => prev.map(q => q.id === id ? { 
                 ...q, 
                 content: questionText, 
                 options: parsedOptions,
-                mcType
+                mcType,
+                questionType: mcType,
+                answer: correctAnswers || (parsedOptions.find(o => o.isCorrect)?.id ?? '')
             } : q));
             return;
         }
@@ -406,7 +458,7 @@ const QuestionManager: React.FC = () => {
       
       setLoadingRubricId(q.id);
       try {
-          const rubric = await generateEssayRubric(q.content);
+          const rubric = await generateEssayRubric(q.content, q.points || 1.0);
           handleUpdateQuestion(q.id, 'answer', rubric);
       } catch (error) {
           setAlertMessage("Lỗi khi tạo hướng dẫn chấm.");
@@ -557,17 +609,9 @@ const QuestionManager: React.FC = () => {
             return;
         }
 
-        const newQuestions: ExerciseQuestion[] = aiQuestions.map((q: any) => ({
-            id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-            category: q.category || 'mc',
-            questionType: q.questionType || (q.category === 'essay' ? 'essay' : 'multiple-choice'),
-            level: q.level || 'NB',
-            criteria: q.criteria || '',
-            content: q.content || '',
-            grade: grade || '',
-            lesson: lesson || '',
-            mcType: q.mcType || 'multiple-choice',
-            options: Array.isArray(q.options) && q.options.length > 0 ? q.options.map((opt: any, idx: number) => ({
+        const newQuestions: ExerciseQuestion[] = aiQuestions.map((q: any) => {
+            const isMulti = q.questionType === 'multiple-answer' || q.mcType === 'multiple-answer';
+            const options = Array.isArray(q.options) && q.options.length > 0 ? q.options.map((opt: any, idx: number) => ({
                 id: ['A', 'B', 'C', 'D'][idx] || idx.toString(),
                 text: opt.text || '',
                 isCorrect: opt.isCorrect || false
@@ -576,11 +620,25 @@ const QuestionManager: React.FC = () => {
                 { id: 'B', text: '', isCorrect: false },
                 { id: 'C', text: '', isCorrect: false },
                 { id: 'D', text: '', isCorrect: false },
-            ],
-            answer: q.answer || '',
-            essayType: 'explanation',
-            originalNumber: q.criteria ? `${q.criteria}` : undefined
-        }));
+            ];
+            const correctAnswers = options.filter(o => o.isCorrect).map(o => o.id).join(', ');
+
+            return {
+                id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+                category: q.category || 'mc',
+                questionType: q.questionType || (isMulti ? 'multiple-answer' : (q.category === 'essay' ? 'essay' : 'multiple-choice')),
+                level: q.level || 'NB',
+                criteria: q.criteria || '',
+                content: q.content || '',
+                grade: grade || '',
+                lesson: lesson || '',
+                mcType: isMulti ? 'multiple-answer' : (q.mcType || 'multiple-choice'),
+                options: options,
+                answer: q.answer || correctAnswers || '',
+                essayType: 'explanation',
+                originalNumber: q.criteria ? `${q.criteria}` : undefined
+            };
+        });
 
         let skippedCount = 0;
         const uniqueQuestions = newQuestions.filter(nq => {
@@ -638,10 +696,17 @@ const QuestionManager: React.FC = () => {
                   const category = (q.category === 'essay' || genType === 'essay') ? 'essay' : 'mc';
                   let mcType: any = 'multiple-choice';
                   if (genType === 'fill-blank') mcType = 'fill-blank';
-                  else if (genType === 'true-false') mcType = 'multiple-answer';
+                  else if (genType === 'multiple-answer') mcType = 'multiple-answer';
+                  else if (genType === 'true-false') mcType = 'multiple-choice';
                   
                   let options = q.options;
-                  if (category === 'mc' && (!options || options.length === 0)) {
+                  if (genType === 'true-false') {
+                      const isCorrect = q.answer === 'Sai' ? false : true;
+                      options = [
+                          { id: 'Đúng', text: 'Đúng', isCorrect: isCorrect },
+                          { id: 'Sai', text: 'Sai', isCorrect: !isCorrect }
+                      ];
+                  } else if (category === 'mc' && (!options || options.length === 0)) {
                        options = [
                         { id: 'A', text: '', isCorrect: false },
                         { id: 'B', text: '', isCorrect: false },
@@ -655,6 +720,10 @@ const QuestionManager: React.FC = () => {
                       }));
                   }
 
+                  const correctAnswers = genType === 'true-false'
+                      ? (q.answer === 'Sai' ? 'Sai' : 'Đúng')
+                      : options?.filter((o: any) => o.isCorrect).map((o: any) => o.id).join(', ');
+
                   return {
                     id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
                     category: category,
@@ -663,10 +732,12 @@ const QuestionManager: React.FC = () => {
                     content: q.content || 'Câu hỏi tự động',
                     grade: grade || '',
                     lesson: lesson || '',
+                    questionType: genType === 'essay' ? 'essay' : genType as any,
                     mcType: mcType,
                     options: options,
-                    answer: q.answer || '',
-                    essayType: 'explanation'
+                    answer: genType === 'true-false' ? (q.answer === 'Sai' ? 'Sai' : 'Đúng') : (q.answer || correctAnswers || ''),
+                    essayType: 'explanation',
+                    points: genType === 'essay' ? 1.0 : 0.25
                   };
               });
 
@@ -1012,7 +1083,14 @@ const QuestionManager: React.FC = () => {
                             >
                                 <Trash2 size={18} />
                             </button>
-                            <h3 className="font-medium text-gray-800 mb-3 text-sm">Câu hỏi {idx + 1}</h3>
+                            <div className="flex items-center gap-2 mb-3">
+                                <h3 className="font-medium text-gray-800 text-sm">Câu hỏi {idx + 1}</h3>
+                                {isQuestionForHskt(q, hsktChecked, grade) && (
+                                    <span className="text-[10px] bg-red-50 text-red-600 border border-red-200 px-1.5 py-0.5 rounded font-bold" title="Câu hỏi này thuộc YCCĐ dành cho HSKT">
+                                        HSKT
+                                    </span>
+                                )}
+                            </div>
                             
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
                                 <select 
@@ -1046,33 +1124,54 @@ const QuestionManager: React.FC = () => {
                                 </div>
                                 <select 
                                     className="p-2 text-sm border rounded font-medium text-gray-700 bg-white"
-                                    value={q.questionType || (q.mcType === 'fill-blank' ? 'fill-blank' : (q.mcType === 'multiple-answer' ? 'multiple-choice' : 'multiple-choice'))}
+                                    value={q.questionType || (q.mcType === 'fill-blank' ? 'fill-blank' : (q.mcType === 'multiple-answer' ? 'multiple-answer' : 'multiple-choice'))}
                                     onChange={(e) => {
                                         const newType = e.target.value as any;
                                         handleUpdateQuestion(q.id, 'questionType', newType);
-                                        if (newType === 'true-false') {
-                                            const subIds = ['a', 'b', 'c', 'd'];
-                                            const currentOpts = q.options || [];
-                                            const newOpts = subIds.map((id, i) => ({
-                                                id,
-                                                text: currentOpts[i]?.text || '',
-                                                isCorrect: currentOpts[i]?.isCorrect ?? true
-                                            }));
-                                            handleUpdateQuestion(q.id, 'options', newOpts);
-                                        } else if (newType === 'multiple-choice') {
+                                        if (newType === 'multiple-answer') {
+                                            handleUpdateQuestion(q.id, 'mcType', 'multiple-answer');
                                             const subIds = ['A', 'B', 'C', 'D'];
                                             const currentOpts = q.options || [];
+                                            const hasMultiple = currentOpts.filter(o => o.isCorrect).length >= 2;
                                             const newOpts = subIds.map((id, i) => ({
                                                 id,
                                                 text: currentOpts[i]?.text || '',
-                                                isCorrect: i === 0
+                                                isCorrect: hasMultiple ? (currentOpts[i]?.isCorrect ?? false) : (i === 0 || i === 1)
                                             }));
                                             handleUpdateQuestion(q.id, 'options', newOpts);
+                                            const correctAnswers = newOpts.filter(o => o.isCorrect).map(o => o.id).join(', ');
+                                            handleUpdateQuestion(q.id, 'answer', correctAnswers);
+                                        } else if (newType === 'true-false') {
+                                            handleUpdateQuestion(q.id, 'mcType', 'multiple-choice');
+                                            const isCorrect = q.answer === 'Sai' ? false : true;
+                                            handleUpdateQuestion(q.id, 'options', [
+                                                { id: 'Đúng', text: 'Đúng', isCorrect },
+                                                { id: 'Sai', text: 'Sai', isCorrect: !isCorrect }
+                                            ]);
+                                            handleUpdateQuestion(q.id, 'answer', isCorrect ? 'Đúng' : 'Sai');
+                                        } else if (newType === 'multiple-choice') {
+                                            handleUpdateQuestion(q.id, 'mcType', 'multiple-choice');
+                                            const subIds = ['A', 'B', 'C', 'D'];
+                                            const currentOpts = q.options || [];
+                                            const firstCorrectIndex = currentOpts.findIndex(o => o.isCorrect);
+                                            const targetIndex = firstCorrectIndex >= 0 ? firstCorrectIndex : 0;
+                                            const newOpts = subIds.map((id, i) => ({
+                                                id,
+                                                text: currentOpts[i]?.text || '',
+                                                isCorrect: i === targetIndex
+                                            }));
+                                            handleUpdateQuestion(q.id, 'options', newOpts);
+                                            handleUpdateQuestion(q.id, 'answer', subIds[targetIndex]);
+                                        } else if (newType === 'fill-blank') {
+                                            handleUpdateQuestion(q.id, 'mcType', 'fill-blank');
+                                        } else {
+                                            handleUpdateQuestion(q.id, 'mcType', 'multiple-choice');
                                         }
                                     }}
                                 >
                                     <option value="multiple-choice">Trắc nghiệm 4 chọn 1 (Phần I)</option>
-                                    <option value="true-false">Trắc nghiệm Đúng / Sai (Phần II - 2025)</option>
+                                    <option value="multiple-answer">Trắc nghiệm nhiều đáp án</option>
+                                    <option value="true-false">Trắc nghiệm Đúng / Sai (1 nhận định độc lập)</option>
                                     <option value="short-answer">Trắc nghiệm Trả lời ngắn (Phần III - 2025)</option>
                                     <option value="fill-blank">Điền khuyết từ</option>
                                 </select>
@@ -1082,7 +1181,7 @@ const QuestionManager: React.FC = () => {
                                 <textarea 
                                     className="w-full p-3 border rounded-lg text-sm mb-2 focus:border-primary outline-none"
                                     rows={2}
-                                    placeholder={q.questionType === 'true-false' ? "Nhập ngữ cảnh / đoạn thông tin dẫn đề cho 4 ý Đúng/Sai..." : "Nhập nội dung câu hỏi..."}
+                                    placeholder={q.questionType === 'true-false' ? "Nhập một nhận định hoàn chỉnh để học sinh xác định Đúng hoặc Sai..." : "Nhập nội dung câu hỏi..."}
                                     value={q.content}
                                     onChange={(e) => handleContentChange(q.id, e.target.value)}
                                 />
@@ -1116,33 +1215,49 @@ const QuestionManager: React.FC = () => {
 
                             {/* Question Options / Inputs based on format */}
                             {q.questionType === 'true-false' ? (
-                                <div className="space-y-2.5 bg-blue-50/50 p-3 rounded-lg border border-blue-100">
-                                    <p className="text-xs font-semibold text-blue-800 mb-1">4 ý đánh giá Đúng / Sai (Mỗi ý chọn Đúng hoặc Sai):</p>
-                                    {q.options?.map((opt) => (
-                                        <div key={opt.id} className="flex items-center gap-2">
-                                            <div className="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-blue-100 rounded text-xs font-bold text-blue-700 uppercase">
-                                                {opt.id})
-                                            </div>
-                                            <input 
-                                                type="text" 
-                                                className="flex-1 p-2 border border-gray-300 rounded text-sm bg-white"
-                                                placeholder={`Nội dung nhận định ${opt.id}...`}
-                                                value={opt.text}
-                                                onChange={(e) => handleUpdateOption(q.id, opt.id, 'text', e.target.value)}
-                                            />
-                                            <button
-                                                type="button"
-                                                onClick={() => handleUpdateOption(q.id, opt.id, 'isCorrect', !opt.isCorrect)}
-                                                className={`px-3 py-1.5 rounded text-xs font-bold transition-all shadow-sm ${
-                                                    opt.isCorrect 
-                                                        ? 'bg-emerald-600 text-white hover:bg-emerald-700' 
-                                                        : 'bg-rose-600 text-white hover:bg-rose-700'
-                                                }`}
-                                            >
-                                                {opt.isCorrect ? '✓ ĐÚNG' : '✗ SAI'}
-                                            </button>
-                                        </div>
-                                    ))}
+                                <div className="p-3 bg-blue-50/60 rounded-lg border border-blue-200">
+                                    <label className="block text-xs font-bold text-blue-900 mb-2">
+                                        Xác định đáp án cho nhận định trên:
+                                    </label>
+                                    <div className="flex items-center gap-3">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                handleUpdateQuestion(q.id, 'answer', 'Đúng');
+                                                handleUpdateQuestion(q.id, 'options', [
+                                                    { id: 'Đúng', text: 'Đúng', isCorrect: true },
+                                                    { id: 'Sai', text: 'Sai', isCorrect: false }
+                                                ]);
+                                            }}
+                                            className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-all shadow-sm ${
+                                                q.answer !== 'Sai'
+                                                    ? 'bg-emerald-600 text-white ring-2 ring-emerald-400'
+                                                    : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                                            }`}
+                                        >
+                                            ✓ ĐÚNG
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                handleUpdateQuestion(q.id, 'answer', 'Sai');
+                                                handleUpdateQuestion(q.id, 'options', [
+                                                    { id: 'Đúng', text: 'Đúng', isCorrect: false },
+                                                    { id: 'Sai', text: 'Sai', isCorrect: true }
+                                                ]);
+                                            }}
+                                            className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-all shadow-sm ${
+                                                q.answer === 'Sai'
+                                                    ? 'bg-rose-600 text-white ring-2 ring-rose-400'
+                                                    : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                                            }`}
+                                        >
+                                            ✗ SAI
+                                        </button>
+                                        <span className="text-xs text-blue-700 font-medium">
+                                            (Đáp án: <strong>{q.answer === 'Sai' ? 'Sai' : 'Đúng'}</strong>)
+                                        </span>
+                                    </div>
                                 </div>
                             ) : q.questionType === 'short-answer' ? (
                                 <div className="bg-amber-50 p-3 rounded-lg border border-amber-200">
@@ -1155,38 +1270,68 @@ const QuestionManager: React.FC = () => {
                                         onChange={(e) => handleUpdateQuestion(q.id, 'answer', e.target.value)}
                                     />
                                 </div>
-                            ) : q.mcType !== 'fill-blank' ? (
+                            ) : q.mcType !== 'fill-blank' && q.questionType !== 'fill-blank' ? (
                                 <div className="space-y-2">
-                                    {q.options?.map((opt) => (
-                                        <div key={opt.id} className="flex items-center gap-2">
-                                            <input 
-                                                type="radio" 
-                                                name={`correct_${q.id}`}
-                                                checked={opt.isCorrect}
-                                                onChange={() => {
-                                                    // Set only this option to true
-                                                    const updated = q.options?.map(o => ({
-                                                        ...o,
-                                                        isCorrect: o.id === opt.id
-                                                    }));
-                                                    handleUpdateQuestion(q.id, 'options', updated);
-                                                    handleUpdateQuestion(q.id, 'answer', opt.id);
-                                                }}
-                                                className="w-4 h-4 text-primary accent-primary cursor-pointer"
-                                                title="Đánh dấu đáp án đúng"
-                                            />
-                                            <div className="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-gray-100 rounded text-xs font-bold text-gray-600">
-                                                {opt.id}
-                                            </div>
-                                            <input 
-                                                type="text" 
-                                                className="flex-1 p-2 border rounded text-sm"
-                                                placeholder={`Lựa chọn ${opt.id}`}
-                                                value={opt.text}
-                                                onChange={(e) => handleUpdateOption(q.id, opt.id, 'text', e.target.value)}
-                                            />
+                                    {(q.questionType === 'multiple-answer' || q.mcType === 'multiple-answer') && (
+                                        <div className="flex items-center justify-between text-xs bg-indigo-50 border border-indigo-200 text-indigo-700 px-3 py-1.5 rounded-lg mb-2">
+                                            <span className="font-semibold flex items-center gap-1.5">
+                                                <CheckSquare size={14} /> Dạng nhiều đáp án đúng (Đánh dấu các đáp án đúng bằng ô checkbox)
+                                            </span>
+                                            <span className="font-bold text-indigo-900 bg-white px-2 py-0.5 rounded border border-indigo-200">
+                                                Đã chọn: {q.options?.filter(o => o.isCorrect).map(o => o.id).join(', ') || 'Chưa chọn'}
+                                            </span>
                                         </div>
-                                    ))}
+                                    )}
+                                    {q.options?.map((opt) => {
+                                        const isMulti = q.questionType === 'multiple-answer' || q.mcType === 'multiple-answer';
+                                        return (
+                                            <div key={opt.id} className="flex items-center gap-2">
+                                                {isMulti ? (
+                                                    <input 
+                                                        type="checkbox" 
+                                                        checked={!!opt.isCorrect}
+                                                        onChange={() => {
+                                                            const updated = q.options?.map(o => o.id === opt.id ? { ...o, isCorrect: !o.isCorrect } : o);
+                                                            const correctAnswers = updated?.filter(o => o.isCorrect).map(o => o.id).join(', ') || '';
+                                                            handleUpdateQuestion(q.id, 'options', updated);
+                                                            handleUpdateQuestion(q.id, 'answer', correctAnswers);
+                                                        }}
+                                                        className="w-4 h-4 text-indigo-600 accent-indigo-600 rounded cursor-pointer"
+                                                        title="Chọn làm một trong các đáp án đúng"
+                                                    />
+                                                ) : (
+                                                    <input 
+                                                        type="radio" 
+                                                        name={`correct_${q.id}`}
+                                                        checked={!!opt.isCorrect}
+                                                        onChange={() => {
+                                                            // Set only this option to true
+                                                            const updated = q.options?.map(o => ({
+                                                                ...o,
+                                                                isCorrect: o.id === opt.id
+                                                            }));
+                                                            handleUpdateQuestion(q.id, 'options', updated);
+                                                            handleUpdateQuestion(q.id, 'answer', opt.id);
+                                                        }}
+                                                        className="w-4 h-4 text-primary accent-primary cursor-pointer"
+                                                        title="Đánh dấu đáp án đúng duy nhất"
+                                                    />
+                                                )}
+                                                <div className={`flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-xs font-bold ${
+                                                    opt.isCorrect ? 'bg-indigo-100 text-indigo-700 border border-indigo-300' : 'bg-gray-100 text-gray-600'
+                                                }`}>
+                                                    {opt.id}
+                                                </div>
+                                                <input 
+                                                    type="text" 
+                                                    className={`flex-1 p-2 border rounded text-sm ${opt.isCorrect ? 'border-indigo-300 bg-indigo-50/20' : ''}`}
+                                                    placeholder={`Lựa chọn ${opt.id}`}
+                                                    value={opt.text}
+                                                    onChange={(e) => handleUpdateOption(q.id, opt.id, 'text', e.target.value)}
+                                                />
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             ) : (
                                 <div>
@@ -1260,7 +1405,14 @@ const QuestionManager: React.FC = () => {
                             >
                                 <Trash2 size={18} />
                             </button>
-                            <h3 className="font-medium text-gray-800 mb-3 text-sm">Câu tự luận {idx + 1}</h3>
+                             <div className="flex items-center gap-2 mb-3">
+                                 <h3 className="font-medium text-gray-800 text-sm">Câu tự luận {idx + 1}</h3>
+                                 {isQuestionForHskt(q, hsktChecked, grade) && (
+                                     <span className="text-[10px] bg-red-50 text-red-600 border border-red-200 px-1.5 py-0.5 rounded font-bold" title="Câu hỏi này thuộc YCCĐ dành cho HSKT">
+                                         HSKT
+                                     </span>
+                                 )}
+                             </div>
                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
                                 <select 
                                     className="p-2 text-sm border rounded"
@@ -1427,16 +1579,28 @@ const QuestionManager: React.FC = () => {
                                             <ul className="text-xs text-gray-700 space-y-2 list-none leading-relaxed">
                                                 {criteriaList.map((c, i) => {
                                                     const cleanText = c.replace(/^\d+\.\d+\s/, '');
+                                                    const code = c.split(' ')[0].trim();
+                                                    const lessonKey = lesson ? `${lesson}:::${code}` : '';
+                                                    const fullLessonKey = lesson ? `${lesson}:::${c}` : '';
+                                                    const isChecked = !!(hsktChecked[c] || (fullLessonKey && hsktChecked[fullLessonKey]) || (lessonKey && hsktChecked[lessonKey]));
                                                     return (
                                                     <li key={i} className="flex gap-2 items-start">
                                                         <input 
                                                             type="checkbox" 
                                                             className="mt-0.5 cursor-pointer accent-red-500 flex-shrink-0" 
                                                             title="Đánh dấu YCCĐ này dành cho HSKT"
-                                                            checked={!!hsktChecked[c]}
-                                                            onChange={() => setHsktChecked(prev => ({...prev, [c]: !prev[c]}))}
+                                                            checked={isChecked}
+                                                            onChange={() => {
+                                                                const nextVal = !isChecked;
+                                                                setHsktChecked(prev => {
+                                                                    const updated = { ...prev, [c]: nextVal };
+                                                                    if (lessonKey) updated[lessonKey] = nextVal;
+                                                                    if (fullLessonKey) updated[fullLessonKey] = nextVal;
+                                                                    return updated;
+                                                                });
+                                                            }}
                                                         />
-                                                        <span className={hsktChecked[c] ? "font-semibold text-red-600" : ""}>{cleanText}</span>
+                                                        <span className={isChecked ? "font-semibold text-red-600" : ""}>{cleanText}</span>
                                                     </li>
                                                 )})}
                                             </ul>
@@ -1501,7 +1665,8 @@ const QuestionManager: React.FC = () => {
                             {activeSection === 'mc' ? (
                                 <>
                                     <option value="multiple-choice">Trắc nghiệm nhiều lựa chọn (Phần I - 4 chọn 1)</option>
-                                    <option value="true-false">Trắc nghiệm Đúng / Sai (Phần II - 4 ý a,b,c,d - Chuẩn 2025)</option>
+                                    <option value="multiple-answer">Trắc nghiệm nhiều đáp án (Chọn từ 2 đáp án đúng trở lên)</option>
+                                    <option value="true-false">Trắc nghiệm Đúng / Sai (1 nhận định độc lập)</option>
                                     <option value="short-answer">Trắc nghiệm Trả lời ngắn (Phần III - Chuẩn 2025)</option>
                                     <option value="fill-blank">Điền khuyết / Khuyết từ</option>
                                 </>

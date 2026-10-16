@@ -45,7 +45,7 @@ export interface ExerciseQuestion {
   lesson?: string; // Tên bài học (e.g. 'Bài 1: Lược sử công cụ tính toán')
   image?: string; // Base64 string for image
   // Question Format Type (MoET 2025 Standard)
-  questionType?: 'multiple-choice' | 'true-false' | 'short-answer' | 'essay';
+  questionType?: 'multiple-choice' | 'multiple-answer' | 'true-false' | 'short-answer' | 'essay';
   // Multiple Choice / True-False specific
   mcType?: 'multiple-choice' | 'multiple-answer' | 'fill-blank';
   options?: { id: string; text: string; isCorrect: boolean }[];

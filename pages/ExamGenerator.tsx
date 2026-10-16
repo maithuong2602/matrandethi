@@ -15,6 +15,79 @@ import {
     extractHtmlParts
 } from '../utils';
 import { reviewExamWithAI, autoFillMissingQuestions } from '../services/geminiService';
+import { splitLegacyTrueFalseQuestions } from './QuestionManager';
+import { CURRICULUM } from '../data/curriculum';
+
+export const detectGradeFromContext = (questions: any[], headerInfo?: any, importedMatrix?: any): string => {
+    // 1. From questions
+    if (Array.isArray(questions)) {
+        for (const q of questions) {
+            if (q.grade && ['6', '7', '8', '9', '10', '11', '12'].includes(String(q.grade))) {
+                return String(q.grade);
+            }
+        }
+        for (const q of questions) {
+            if (q.lesson) {
+                for (const [g, lessons] of Object.entries(CURRICULUM.criteriaData)) {
+                    if (lessons[q.lesson]) return g;
+                }
+            }
+        }
+    }
+    // 2. From matrix name
+    const matrixName = importedMatrix?.thongTinChung?.tenDe || '';
+    const matrixMatch = matrixName.match(/L[ớo]p\s*(\d+)|Kh[ốo]i\s*(\d+)|\b(6|7|8|9|10|11|12)\b/i);
+    if (matrixMatch) {
+        const g = matrixMatch[1] || matrixMatch[2] || matrixMatch[3];
+        if (g && ['6', '7', '8', '9', '10', '11', '12'].includes(g)) return g;
+    }
+    // 3. From headerInfo.monHoc
+    if (headerInfo?.monHoc) {
+        const m = headerInfo.monHoc.match(/L[ỚO]P\s*(\d+)/i);
+        if (m && m[1]) return m[1];
+    }
+    // 4. From headerInfo.tenKyThi
+    if (headerInfo?.tenKyThi) {
+        const m = headerInfo.tenKyThi.match(/L[ỚO]P\s*(\d+)/i);
+        if (m && m[1]) return m[1];
+    }
+    return '7';
+};
+
+export const buildDefaultFileName = (
+    questions: any[],
+    headerInfo: any,
+    teacherName?: string,
+    importedMatrix?: any
+): string => {
+    const grade = detectGradeFromContext(questions, headerInfo, importedMatrix);
+    const examTitle = (headerInfo?.tenKyThi || importedMatrix?.thongTinChung?.tenDe || '').toUpperCase();
+    
+    let examCode = 'GK1';
+    if (examTitle.includes('CUỐI KÌ 1') || examTitle.includes('CUỐI KÌ I') || examTitle.includes('CK1') || examTitle.includes('CK 1') || examTitle.includes('HỌC KÌ 1') || examTitle.includes('HỌC KÌ I')) {
+        examCode = 'CK1';
+    } else if (examTitle.includes('GIỮA KÌ 2') || examTitle.includes('GIỮA KÌ II') || examTitle.includes('GK2') || examTitle.includes('GK 2')) {
+        examCode = 'GK2';
+    } else if (examTitle.includes('CUỐI KÌ 2') || examTitle.includes('CUỐI KÌ II') || examTitle.includes('CK2') || examTitle.includes('CK 2') || examTitle.includes('HỌC KÌ 2') || examTitle.includes('HỌC KÌ II')) {
+        examCode = 'CK2';
+    } else if (examTitle.includes('GIỮA KÌ 1') || examTitle.includes('GIỮA KÌ I') || examTitle.includes('GK1') || examTitle.includes('GK 1')) {
+        examCode = 'GK1';
+    }
+
+    let yearCode = '';
+    const yearMatch = examTitle.match(/(\d{4})\s*[\-–]\s*(\d{4})/);
+    if (yearMatch) {
+        yearCode = `${yearMatch[1].slice(-2)}-${yearMatch[2].slice(-2)}`;
+    } else {
+        const now = new Date();
+        const y = now.getFullYear();
+        const startY = now.getMonth() >= 8 ? y : y - 1;
+        yearCode = `${String(startY).slice(-2)}-${String(startY + 1).slice(-2)}`;
+    }
+
+    const teacher = (teacherName || '').trim().replace(/[^a-zA-Z0-9_\u00C0-\u024F\u1EA0-\u1EF9]/g, '');
+    return teacher ? `${examCode} TIN ${grade}-${yearCode}-${teacher}` : `${examCode} TIN ${grade}-${yearCode}`;
+};
 
 // Extended type for internal state
 interface BankQuestion extends ExerciseQuestion {
@@ -59,11 +132,26 @@ const ExamGenerator: React.FC = () => {
         donVi: 'UBND PHƯỜNG HẢI CHÂU',
         tenTruong: 'LÊ HỒNG PHONG',
         tenKyThi: 'KIỂM TRA GIỮA KÌ I - NĂM HỌC 2026–2027',
-        monHoc: 'MON: TIN HỌC – LỚP 7',
+        monHoc: 'MÔN: TIN HỌC – LỚP 7',
         thoiGian: '45 phút (không kể thời gian giao đề)',
         maDe: '101'
     });
-    const [customFileName, setCustomFileName] = useState<string>('GK1 TIN 7-26-27-THUONG');
+    const [teacherName, setTeacherName] = useState<string>(() => {
+        try { return localStorage.getItem('teacherName') || ''; } catch { return ''; }
+    });
+    const [customFileName, setCustomFileName] = useState<string>('');
+    const [isFileNameManuallyEdited, setIsFileNameManuallyEdited] = useState<boolean>(false);
+
+    useEffect(() => {
+        try { localStorage.setItem('teacherName', teacherName); } catch {}
+    }, [teacherName]);
+
+    useEffect(() => {
+        if (!isFileNameManuallyEdited) {
+            const autoName = buildDefaultFileName(generatedTest, headerInfo, teacherName, importedMatrix);
+            setCustomFileName(autoName);
+        }
+    }, [generatedTest, headerInfo, teacherName, importedMatrix, isFileNameManuallyEdited]);
     
     const [bulkPoints, setBulkPoints] = useState(0.25);
     const [bulkPointsTL, setBulkPointsTL] = useState(1.0);
@@ -167,8 +255,15 @@ const ExamGenerator: React.FC = () => {
                 if (!uniqueMap.has(key)) uniqueMap.set(key, q);
             });
 
-            setBank(Array.from(uniqueMap.values()));
-            if (newQuestions.length > 0) setStep('config');
+            const rawQuestions = Array.from(uniqueMap.values());
+            const migrated = splitLegacyTrueFalseQuestions(rawQuestions as any);
+            setBank(migrated as any);
+            const detectedG = detectGradeFromContext(migrated, headerInfo);
+            setHeaderInfo(prev => ({
+                ...prev,
+                monHoc: `MÔN: TIN HỌC – LỚP ${detectedG}`
+            }));
+            if (migrated.length > 0) setStep('config');
         });
     };
 
@@ -204,7 +299,12 @@ const ExamGenerator: React.FC = () => {
                 if (data.chiTiet && Array.isArray(data.chiTiet)) {
                     setImportedMatrix(data);
                     if (data.thongTinChung?.tenDe) {
-                        setHeaderInfo(prev => ({ ...prev, tenKyThi: data.thongTinChung.tenDe }));
+                        const detectedG = detectGradeFromContext([], null, data);
+                        setHeaderInfo(prev => ({ 
+                            ...prev, 
+                            tenKyThi: data.thongTinChung.tenDe,
+                            monHoc: `MÔN: TIN HỌC – LỚP ${detectedG}`
+                        }));
                     }
                 } else {
                     alert("File JSON không đúng cấu trúc Ma trận.");
@@ -242,7 +342,7 @@ const ExamGenerator: React.FC = () => {
             
             return shuffled.slice(0, count).map(q => ({
                 ...q,
-                points: category === 'essay' ? 1.0 : (q.questionType === 'true-false' ? 1.0 : 0.25),
+                points: category === 'essay' ? 1.0 : 0.25,
                 uniqueId: Math.random()
             }));
         };
@@ -503,7 +603,7 @@ const ExamGenerator: React.FC = () => {
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            const baseName = (customFileName || 'GK1 TIN 7-26-27-THUONG').trim();
+            const baseName = (customFileName || buildDefaultFileName(activeQuestions, headerInfo, teacherName, importedMatrix)).trim();
             a.download = `Bang_Dap_An_${baseName}.doc`;
             a.click();
         } else if (exportType === 'full_dossier') {
@@ -512,7 +612,7 @@ const ExamGenerator: React.FC = () => {
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            const baseName = (customFileName || 'GK1 TIN 7-26-27-THUONG').trim();
+            const baseName = (customFileName || buildDefaultFileName(activeQuestions, headerInfo, teacherName, importedMatrix)).trim();
             a.download = `Ho_So_${baseName}.doc`;
             a.click();
         } else if (exportType === 'all') {
@@ -553,7 +653,7 @@ const ExamGenerator: React.FC = () => {
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            const baseName = (customFileName || 'GK1 TIN 7-26-27-THUONG').trim();
+            const baseName = (customFileName || buildDefaultFileName(activeQuestions, headerInfo, teacherName, importedMatrix)).trim();
             a.download = `Bo_De_${baseName}.doc`;
             a.click();
         } else {
@@ -565,7 +665,7 @@ const ExamGenerator: React.FC = () => {
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            const baseName = (customFileName || 'GK1 TIN 7-26-27-THUONG').trim();
+            const baseName = (customFileName || buildDefaultFileName(activeQuestions, headerInfo, teacherName, importedMatrix)).trim();
             a.download = `${baseName}.doc`;
             a.click();
         }
@@ -948,14 +1048,14 @@ const ExamGenerator: React.FC = () => {
                                     const url = URL.createObjectURL(blob);
                                     const a = document.createElement('a');
                                     a.href = url;
-                                    const baseName = (customFileName || 'GK1 TIN 7-26-27-THUONG').trim();
+                                    const baseName = (customFileName || buildDefaultFileName(activeQuestions, headerInfo, teacherName, importedMatrix)).trim();
                                     a.download = `${baseName}.doc`;
                                     a.click();
                                 }}
                                 className="px-4 py-2 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 flex items-center gap-2 font-bold text-sm shadow-md shadow-emerald-200 transition-all"
-                                title="Tải ngay file Word mã đề hiện tại với tên GK1 TIN 7-26-27-THUONG.doc"
+                                title={`Tải ngay file Word mã đề hiện tại (${customFileName || buildDefaultFileName(activeQuestions, headerInfo, teacherName, importedMatrix)}.doc)`}
                             >
-                                <Download size={16} /> Tải file Word ({customFileName || 'GK1 TIN 7-26-27-THUONG'}.doc)
+                                <Download size={16} /> Tải file Word ({customFileName || buildDefaultFileName(activeQuestions, headerInfo, teacherName, importedMatrix)}.doc)
                             </button>
                         </div>
                     </div>
@@ -1069,50 +1169,50 @@ const ExamGenerator: React.FC = () => {
                                     )}
                                     <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200 relative group hover:border-primary/50 transition-all">
                                         <div className="flex justify-between items-start gap-4">
-                                    <div className="flex-1">
-                                        <div className="flex items-center gap-2 mb-2 flex-wrap">
-                                            <span className="font-extrabold text-blue-900 text-sm">Câu {idx + 1}</span>
-                                            <span className={`text-[10px] px-2 py-0.5 rounded font-bold border ${q.level==='NB'?'bg-green-50 border-green-200 text-green-700':q.level==='TH'?'bg-blue-50 border-blue-200 text-blue-700':q.level==='VD'?'bg-yellow-50 border-yellow-200 text-yellow-700':'bg-red-50 border-red-200 text-red-700'}`}>
-                                                {q.level} {q.criteria ? `- ${q.criteria}` : ''}
-                                            </span>
-                                            <span className="text-[10px] font-bold text-purple-700 border border-purple-200 bg-purple-50 px-2 py-0.5 rounded">
-                                                {q.questionType === 'true-false' 
-                                                    ? 'Đúng / Sai (Phần II)' 
-                                                    : q.questionType === 'short-answer' 
-                                                    ? 'Trả lời ngắn (Phần III)' 
-                                                    : q.category === 'essay' 
-                                                    ? 'Tự luận' 
-                                                    : 'Trắc nghiệm (Phần I)'}
-                                            </span>
-                                            <span className="text-xs text-gray-400">({q.lesson})</span>
-                                        </div>
-                                        <p className="text-gray-800 text-sm font-medium whitespace-pre-wrap">{q.content}</p>
-                                        
-                                        {/* Image Preview */}
-                                        {q.image && (
-                                            <div className="mt-3">
-                                                <img src={q.image} alt="Question illustration" className="max-h-40 w-auto rounded-lg border border-gray-200" />
-                                            </div>
-                                        )}
-                                        
-                                        {/* Options Preview for True/False */}
-                                        {q.questionType === 'true-false' && q.options && (
-                                            <div className="mt-3 bg-blue-50/60 p-3 rounded-lg space-y-1.5 border border-blue-100">
-                                                {q.options.map((opt, i) => (
-                                                    <div key={i} className="flex items-center justify-between text-xs py-1 px-2 bg-white rounded border border-gray-200">
-                                                        <span className="text-gray-800">
-                                                            <strong>{opt.id || String.fromCharCode(97 + i)})</strong> {opt.text}
-                                                        </span>
-                                                        <span className={`px-2 py-0.5 rounded font-extrabold ${opt.isCorrect ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
-                                                            {opt.isCorrect ? 'ĐÚNG' : 'SAI'}
+                                            <div className="flex-1">
+                                                <div className="flex items-center gap-2 mb-2 flex-wrap">
+                                                    <span className="font-extrabold text-blue-900 text-sm">Câu {idx + 1}</span>
+                                                    <span className={`text-[10px] px-2 py-0.5 rounded font-bold border ${q.level==='NB'?'bg-green-50 border-green-200 text-green-700':q.level==='TH'?'bg-blue-50 border-blue-200 text-blue-700':q.level==='VD'?'bg-yellow-50 border-yellow-200 text-yellow-700':'bg-red-50 border-red-200 text-red-700'}`}>
+                                                        {q.level} {q.criteria ? `- ${q.criteria}` : ''}
+                                                    </span>
+                                                    <span className="text-[10px] font-bold text-purple-700 border border-purple-200 bg-purple-50 px-2 py-0.5 rounded">
+                                                        {q.questionType === 'true-false' 
+                                                            ? 'Đúng / Sai' 
+                                                            : q.questionType === 'short-answer' 
+                                                            ? 'Trả lời ngắn (Phần III)' 
+                                                            : q.questionType === 'multiple-answer' || q.mcType === 'multiple-answer'
+                                                            ? 'Nhiều đáp án (Phần I)'
+                                                            : q.category === 'essay' 
+                                                            ? 'Tự luận' 
+                                                            : 'Trắc nghiệm (Phần I)'}
+                                                    </span>
+                                                    <span className="text-xs text-gray-400">({q.lesson})</span>
+                                                </div>
+                                                <p className="text-gray-800 text-sm font-medium whitespace-pre-wrap">{q.content}</p>
+                                                
+                                                {/* Image Preview */}
+                                                {q.image && (
+                                                    <div className="mt-3">
+                                                        <img src={q.image} alt="Question illustration" className="max-h-40 w-auto rounded-lg border border-gray-200" />
+                                                    </div>
+                                                )}
+                                                
+                                                {/* Answer Preview for True/False */}
+                                                {q.questionType === 'true-false' && (
+                                                    <div className="mt-2.5 flex items-center gap-2">
+                                                        <span className="text-xs font-semibold text-gray-500">Đáp án chuẩn:</span>
+                                                        <span className={`px-3 py-1 rounded text-xs font-extrabold shadow-sm ${
+                                                            q.answer === 'Sai' || q.options?.find(o => o.isCorrect)?.id === 'Sai'
+                                                                ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                                                                : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                                        }`}>
+                                                            {q.answer === 'Sai' || q.options?.find(o => o.isCorrect)?.id === 'Sai' ? '✗ SAI' : '✓ ĐÚNG'}
                                                         </span>
                                                     </div>
-                                                ))}
-                                            </div>
-                                        )}
+                                                )}
 
-                                        {/* Options Preview for MCQ */}
-                                        {q.questionType !== 'true-false' && q.category !== 'essay' && q.options && q.options.length > 0 && (
+                                                {/* Options Preview for MCQ */}
+                                                {q.questionType !== 'true-false' && q.category !== 'essay' && q.options && q.options.length > 0 && (
                                             <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
                                                 {q.options.map((opt, i) => (
                                                     <div key={i} className={`text-xs p-2.5 rounded-lg border ${opt.isCorrect ? 'bg-emerald-50 border-emerald-300 text-emerald-900 font-semibold' : 'bg-gray-50 border-gray-200 text-gray-700'}`}>
@@ -1375,13 +1475,29 @@ const ExamGenerator: React.FC = () => {
                                 </div>
                             </div>
                             <div>
+                                <label className="block text-xs font-semibold text-gray-700 mb-1">Giáo viên ra đề (Tùy chọn, sẽ tự động lưu)</label>
+                                <input 
+                                    type="text" 
+                                    className="w-full p-2 border rounded-lg text-sm" 
+                                    value={teacherName} 
+                                    onChange={e => {
+                                        setTeacherName(e.target.value);
+                                        setIsFileNameManuallyEdited(false);
+                                    }} 
+                                    placeholder="Ví dụ: THUONG, LAN (để trống nếu không cần)"
+                                />
+                            </div>
+                            <div>
                                 <label className="block text-xs font-bold text-blue-700 mb-1">Tên file Word tải về (không cần gõ .doc)</label>
                                 <input 
                                     type="text" 
                                     className="w-full p-2 border-2 border-blue-400 bg-blue-50/30 rounded-lg text-sm font-semibold text-gray-800" 
                                     value={customFileName} 
-                                    onChange={e => setCustomFileName(e.target.value)} 
-                                    placeholder="GK1 TIN 7-26-27-THUONG"
+                                    onChange={e => {
+                                        setCustomFileName(e.target.value);
+                                        setIsFileNameManuallyEdited(true);
+                                    }} 
+                                    placeholder={buildDefaultFileName(activeQuestions, headerInfo, teacherName, importedMatrix)}
                                 />
                             </div>
                         </div>

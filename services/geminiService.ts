@@ -104,7 +104,7 @@ export const parseQuestionsWithAI = async (
         
         Return a JSON array where each object has the following properties:
         - "category": "mc" or "essay".
-        - "questionType": "multiple-choice" | "true-false" | "short-answer" | "essay".
+        - "questionType": "multiple-choice" | "multiple-answer" | "true-false" | "short-answer" | "essay".
         - "content": The main question text/stem.
         - "level": "NB" (Nhận biết), "TH" (Thông hiểu), "VD" (Vận dụng), or "VDC" (Vận dụng cao).
         - "criteria": The criteria code (e.g. "1.1", "2.3") if present at the start of the question numbering, otherwise empty string "".
@@ -225,17 +225,23 @@ export const generateBulkQuestions = async (
 
         switch (questionType) {
             case 'true-false':
-                typeInstruction = "câu hỏi trắc nghiệm Đúng/Sai (Định dạng Phần II mới của Bộ GD&ĐT)";
-                jsonSchemaNote = `Định dạng Đúng/Sai chuẩn: 'category'='mc', 'questionType'='true-false'. 
-                'content' là tình huống hoặc bài toán dẫn đề. 
-                'options' có đúng 4 phần tử tương ứng với 4 nhận định độc lập a, b, c, d (id lần lượt là 'a', 'b', 'c', 'd').
-                Trong mỗi phát biểu con, nếu phát biểu Đúng thì 'isCorrect'=true, nếu phát biểu Sai thì 'isCorrect'=false.
-                Tất cả văn bản trong options PHẢI kết thúc bằng dấu chấm (.).`;
+                typeInstruction = "câu hỏi trắc nghiệm Đúng/Sai đơn lẻ (mỗi câu hỏi là MỘT nhận định hoàn chỉnh độc lập để học sinh xác định Đúng hoặc Sai)";
+                jsonSchemaNote = `Định dạng Đúng/Sai: 'category'='mc', 'questionType'='true-false', 'mcType'='multiple-choice'. 
+                'content': Là DUY NHẤT MỘT nhận định/phát biểu hoàn chỉnh, ngắn gọn, rõ nghĩa để học sinh chọn Đúng hoặc Sai (ví dụ: "Khi máy tính đang xử lí dữ liệu, việc ngắt nguồn điện đột ngột có thể gây lỗi tệp tin hệ thống."). TUYỆT ĐỐI KHÔNG chia thành các ý con a, b, c, d. TUYỆT ĐỐI KHÔNG có các lựa chọn A, B, C, D.
+                'options': [
+                    {"id": "Đúng", "text": "Đúng", "isCorrect": true},
+                    {"id": "Sai", "text": "Sai", "isCorrect": false}
+                ] (trong đó đúng 1 lựa chọn có 'isCorrect'=true).
+                'answer': 'Đúng' hoặc 'Sai' (trùng khớp với lựa chọn có isCorrect=true).`;
                 extraConstraints = `
-                QUY ĐỊNH CÂU HỎI ĐÚNG / SAI (PHẦN II):
-                - Câu hỏi nêu ra một ngữ cảnh/bối cảnh/đoạn mã/bảng số liệu cụ thể.
-                - 4 ý a), b), c), d) là 4 khẳng định liên quan trực tiếp đến ngữ cảnh đó.
-                - Không được có ý nào mập mờ hoặc nửa đúng nửa sai.
+                QUY ĐỊNH CÂU HỎI ĐÚNG / SAI:
+                - KHÔNG tạo một câu gồm 4 mệnh đề a, b, c, d.
+                - Mỗi mệnh đề phải được tách thành MỘT CÂU HỎI ĐỘC LẬP.
+                - Mỗi câu chỉ có DUY NHẤT MỘT nhận định hoàn chỉnh để học sinh xác định Đúng hoặc Sai.
+                - Không có các phương án A, B, C, D hoặc a, b, c, d.
+                - Giữ nguyên nội dung kiến thức, mức độ nhận thức chuẩn mực.
+                - Câu hỏi phải ngắn gọn, rõ nghĩa, không để lộ đáp án.
+                - 'answer' là "Đúng" hoặc "Sai".
                 `;
                 break;
 
@@ -263,6 +269,16 @@ export const generateBulkQuestions = async (
                 2. Cấu trúc: Câu hỏi BẮT BUỘC chia thành 4 ý nhỏ (a, b, c, d) hoặc 4 bước thực hiện rõ ràng.
                 3. Trường 'content': Ghi nội dung câu hỏi và các ý a, b, c, d xuống dòng rõ ràng.
                 4. Trường 'answer': HƯỚNG DẪN CHẤM chi tiết tương ứng cho từng ý kèm điểm cụ thể (ví dụ: a - 0.25đ: nội dung...; b - 0.25đ: nội dung...).
+                `;
+                break;
+
+            case 'multiple-answer':
+                typeInstruction = "câu hỏi trắc nghiệm có nhiều đáp án đúng (từ 2 đáp án đúng trở lên trong 4 lựa chọn A, B, C, D)";
+                jsonSchemaNote = `Trắc nghiệm nhiều đáp án: 'category'='mc', 'questionType'='multiple-answer', 'mcType'='multiple-answer'. 'options' có đúng 4 phần tử với id là 'A', 'B', 'C', 'D'. BẮT BUỘC có từ 2 phương án trở lên có 'isCorrect'=true. 'answer' là chuỗi các đáp án đúng cách nhau bởi dấu phẩy (ví dụ: 'A, C' hoặc 'B, D'). Mọi text trong options PHẢI kết thúc bằng dấu chấm (.).`;
+                extraConstraints = `
+                QUY ĐỊNH CÂU HỎI TRẮC NGHIỆM NHIỀU ĐÁP ÁN:
+                - Câu hỏi yêu cầu học sinh lựa chọn các phương án đúng (ví dụ: "Những thiết bị nào sau đây là thiết bị vào?", "Các phát biểu nào sau đây đúng?").
+                - Có 4 lựa chọn A, B, C, D. Phải có từ 2 đến 3 đáp án đúng ('isCorrect'=true) và ít nhất 1 đáp án sai để phân loại.
                 `;
                 break;
 
@@ -325,7 +341,7 @@ export const generateBulkQuestions = async (
                         properties: {
                             content: { type: Type.STRING },
                             category: { type: Type.STRING, description: "mc or essay" },
-                            questionType: { type: Type.STRING, description: "multiple-choice, true-false, short-answer, essay" },
+                            questionType: { type: Type.STRING, description: "multiple-choice, multiple-answer, true-false, short-answer, essay" },
                             answer: { type: Type.STRING },
                             options: {
                                 type: Type.ARRAY,
@@ -352,18 +368,25 @@ export const generateBulkQuestions = async (
     }
 };
 
-export const generateEssayRubric = async (questionContent: string): Promise<string> => {
+export const generateEssayRubric = async (questionContent: string, maxPoints: number = 1.0): Promise<string> => {
     try {
         const ai = getGenAIClient();
-        const prompt = `Bạn là giáo viên Tin học. Hãy tạo "Hướng dẫn chấm" (Đáp án và thang điểm) cho câu hỏi tự luận sau.
+        const ptsStr = maxPoints.toFixed(1).replace('.', ',');
+        const prompt = `Bạn là giáo viên Tin học. Hãy tạo "Hướng dẫn chấm" (Đáp án và thang điểm) chi tiết chuẩn hóa theo dạng bảng cho câu hỏi tự luận sau:
         
         Câu hỏi: "${questionContent}"
+        Tổng điểm câu hỏi: ${ptsStr} điểm.
         
-        Yêu cầu:
-        - Chia đáp án thành các ý nhỏ rõ ràng (gạch đầu dòng hoặc a, b, c, d).
-        - Gán điểm thành phần cho từng ý (Ví dụ: 0.25 điểm, 0.5 điểm). Tổng điểm khoảng 1.0 đến 2.0 điểm.
-        - Ngôn ngữ ngắn gọn, sư phạm, chính xác.
-        - Không cần tiêu đề, chỉ cần nội dung hướng dẫn chấm.
+        Yêu cầu định dạng bắt buộc (để hệ thống hiển thị bảng hướng dẫn chấm 2 cột: Yêu cầu / Ý hỏi | Hướng dẫn chấm & Điểm):
+        1. Phân tích cấu trúc câu hỏi:
+           - Nếu câu hỏi đã có sẵn các ý hỏi/bước con (ví dụ a, b, c, d hoặc 1, 2, 3): BẮT BUỘC biên soạn hướng dẫn chấm theo đúng các ý tương ứng (a), b), c), d)).
+           - Nếu câu hỏi là một câu hỏi mở đơn lẻ: BẮT BUỘC chia đáp án thành 2 đến 4 tiêu chí/bước giải cụ thể đánh dấu lần lượt là a), b), c), d).
+        2. Mỗi ý PHẢI nằm trên 1 dòng riêng biệt theo định dạng chuẩn:
+           a) [Nội dung yêu cầu / đáp án cụ thể] - [điểm thành phần, ví dụ 0,25 hoặc 0,5] điểm.
+           b) [Nội dung yêu cầu / đáp án cụ thể] - [điểm thành phần, ví dụ 0,25 hoặc 0,5] điểm.
+        3. Tổng điểm các ý thành phần BẮT BUỘC cộng lại đúng bằng tổng điểm của câu hỏi (${ptsStr} điểm).
+        4. Ngôn ngữ ngắn gọn, chuẩn xác, sư phạm, đi thẳng vào đáp án và thang điểm.
+        5. TUYỆT ĐỐI KHÔNG thêm lời chào, không tiêu đề ("Hướng dẫn chấm:"), không dùng dấu hoa thị markdown (***). Chỉ xuất danh sách các dòng a), b), c)...
         `;
 
         const response = await ai.models.generateContent({
@@ -484,7 +507,7 @@ export const autoFillMissingQuestions = async (
                     lesson: item.lesson,
                     level: item.level,
                     criteria: item.criteriaText ? item.criteriaText.slice(0, 3) : '',
-                    points: q.category === 'essay' ? 1.0 : (item.questionType === 'true-false' ? 1.0 : 0.25),
+                    points: q.category === 'essay' ? 1.0 : 0.25,
                     uniqueId: Math.random()
                 });
             });
