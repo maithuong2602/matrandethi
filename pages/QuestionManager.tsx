@@ -31,6 +31,12 @@ import { parseQuestionsWithAI, generateBulkQuestions, generateEssayRubric } from
 import { loadQuestionBank, saveQuestionBank } from '../services/storage/questionBankStorage';
 import { CurriculumMappingReview } from '../components/CurriculumMappingReview';
 import { isQuestionForHskt } from '../utils';
+import { 
+  getMergedCriteria, 
+  addCustomCriterion, 
+  loadCustomCriteriaStore, 
+  CUSTOM_CRITERIA_STORAGE_KEY 
+} from '../services/criteriaService';
 
 
 // Helper tự động gắn nhãn Khối & Bài cho dữ liệu cũ (legacy data) chưa có trường grade/lesson
@@ -238,9 +244,50 @@ const QuestionManager: React.FC = () => {
   const [genType, setGenType] = useState('multiple-choice');
   const [genPdf, setGenPdf] = useState<{ name: string; size: string; base64: string } | null>(null);
 
-  // Derived state for available lessons and criteria
+  // Custom criteria store synced with Matrix & Specification tables
+  const [customCriteriaStore, setCustomCriteriaStore] = useState(() => loadCustomCriteriaStore());
+  const [isAddingCustomCriterion, setIsAddingCustomCriterion] = useState(false);
+  const [newCriterionLevel, setNewCriterionLevel] = useState('NB');
+  const [newCriterionText, setNewCriterionText] = useState('');
+
+  // Reload custom criteria whenever grade or lesson changes
+  useEffect(() => {
+    setCustomCriteriaStore(loadCustomCriteriaStore());
+  }, [grade, lesson]);
+
+  // Listen to storage events from MatrixView or other tabs
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === CUSTOM_CRITERIA_STORAGE_KEY || e.key === 'matrixFileSystem') {
+        setCustomCriteriaStore(loadCustomCriteriaStore());
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
+
+  // Derived state for available lessons and merged criteria (curriculum + matrix custom levels)
   const availableLessons = grade ? CURRICULUM.lessonData[grade] : [];
-  const currentCriteriaData = (grade && lesson) ? CURRICULUM.criteriaData[grade]?.[lesson] : null;
+  const currentCriteriaData = useMemo(() => {
+    if (!grade || !lesson) return null;
+    return getMergedCriteria(grade, lesson, customCriteriaStore);
+  }, [grade, lesson, customCriteriaStore]);
+
+  const handleAddCustomCriterion = () => {
+    if (!grade || !lesson) {
+      setAlertMessage("Vui lòng chọn Khối và Bài học trước khi bổ sung YCCĐ.");
+      return;
+    }
+    if (!newCriterionText.trim()) {
+      setAlertMessage("Vui lòng nhập nội dung yêu cầu cần đạt.");
+      return;
+    }
+    addCustomCriterion(grade, lesson, newCriterionLevel, newCriterionText);
+    setCustomCriteriaStore(loadCustomCriteriaStore());
+    setNewCriterionText('');
+    setIsAddingCustomCriterion(false);
+    setAlertMessage(`Đã bổ sung YCCĐ cho mức độ ${newCriterionLevel === 'NB' ? 'Nhận biết' : newCriterionLevel === 'TH' ? 'Thông hiểu' : newCriterionLevel === 'VD' ? 'Vận dụng' : 'Vận dụng cao'}.`);
+  };
 
   // --- FUZZY MATCHING HELPERS ---
 
@@ -1015,8 +1062,9 @@ const QuestionManager: React.FC = () => {
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Khối</label>
+                        <label htmlFor="grade-select" className="block text-sm font-medium text-gray-700 mb-1">Khối</label>
                         <select 
+                            id="grade-select"
                             className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary outline-none"
                             value={grade}
                             onChange={(e) => { setGrade(e.target.value); setLesson(''); }}
@@ -1029,8 +1077,9 @@ const QuestionManager: React.FC = () => {
                         </select>
                     </div>
                     <div>
-                         <label className="block text-sm font-medium text-gray-700 mb-1">Bài</label>
+                         <label htmlFor="lesson-select" className="block text-sm font-medium text-gray-700 mb-1">Bài</label>
                         <select 
+                            id="lesson-select"
                             className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary outline-none disabled:bg-gray-100"
                             value={lesson}
                             onChange={(e) => setLesson(e.target.value)}
@@ -1569,10 +1618,10 @@ const QuestionManager: React.FC = () => {
                     ) : (
                         currentCriteriaData ? (
                             <div className="space-y-6">
-                                {['NB', 'TH', 'VD', 'VDC'].map(level => {
+                                {['NB', 'TH', 'VD', 'VDC', ...Object.keys(currentCriteriaData).filter(l => !['NB', 'TH', 'VD', 'VDC'].includes(l))].map(level => {
                                     const criteriaList = currentCriteriaData[level];
                                     if (!criteriaList) return null;
-                                    const levelName = { NB: 'Nhận biết', TH: 'Thông hiểu', VD: 'Vận dụng', VDC: 'Vận dụng cao' }[level];
+                                    const levelName = { NB: 'Nhận biết', TH: 'Thông hiểu', VD: 'Vận dụng', VDC: 'Vận dụng cao' }[level] || level;
                                     return (
                                         <div key={level}>
                                             <h4 className="text-sm font-bold text-primary mb-2 bg-blue-50 p-1.5 rounded inline-block">{levelName}</h4>
@@ -1610,6 +1659,76 @@ const QuestionManager: React.FC = () => {
                             </div>
                         ) : (
                             <p className="text-gray-500 text-sm italic">Không có dữ liệu đặc tả cho bài này.</p>
+                        )
+                    )}
+
+                    {lesson && (
+                        isAddingCustomCriterion ? (
+                            <div className="mt-4 p-3 bg-indigo-50/80 border border-indigo-200 rounded-lg text-xs space-y-2">
+                                <div className="flex items-center justify-between font-semibold text-indigo-900">
+                                    <span>Bổ sung YCCĐ / Mức độ:</span>
+                                    <button 
+                                        type="button" 
+                                        onClick={() => setIsAddingCustomCriterion(false)}
+                                        className="text-slate-400 hover:text-slate-600 p-0.5"
+                                    >
+                                        <X size={14} />
+                                    </button>
+                                </div>
+                                <div>
+                                    <label className="block text-[11px] font-medium text-gray-700 mb-1">Mức độ nhận thức:</label>
+                                    <select
+                                        className="w-full p-1.5 border border-indigo-300 rounded bg-white text-xs outline-none"
+                                        value={newCriterionLevel}
+                                        onChange={(e) => setNewCriterionLevel(e.target.value)}
+                                    >
+                                        <option value="NB">NB - Nhận biết</option>
+                                        <option value="TH">TH - Thông hiểu</option>
+                                        <option value="VD">VD - Vận dụng</option>
+                                        <option value="VDC">VDC - Vận dụng cao</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-[11px] font-medium text-gray-700 mb-1">Nội dung YCCĐ:</label>
+                                    <textarea
+                                        rows={2}
+                                        className="w-full p-1.5 border border-indigo-300 rounded bg-white text-xs outline-none focus:ring-1 focus:ring-indigo-500"
+                                        placeholder="Nhập nội dung yêu cầu cần đạt..."
+                                        value={newCriterionText}
+                                        onChange={(e) => setNewCriterionText(e.target.value)}
+                                    />
+                                </div>
+                                <div className="flex items-center justify-end gap-2 pt-1">
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsAddingCustomCriterion(false)}
+                                        className="px-2 py-1 rounded text-slate-500 hover:bg-slate-100 font-medium"
+                                    >
+                                        Hủy
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={handleAddCustomCriterion}
+                                        disabled={!newCriterionText.trim()}
+                                        className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded font-semibold disabled:opacity-50 cursor-pointer"
+                                    >
+                                        Thêm YCCĐ
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setIsAddingCustomCriterion(true);
+                                    setNewCriterionText('');
+                                }}
+                                className="mt-4 text-xs font-semibold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 border border-dashed border-indigo-300 px-3 py-1.5 rounded-lg flex items-center justify-center gap-1.5 transition-colors w-full cursor-pointer"
+                                title="Thêm yêu cầu cần đạt hoặc bổ sung mức độ mới cho bài học này"
+                            >
+                                <Plus size={13} />
+                                <span>Bổ sung YCCĐ / Mức độ</span>
+                            </button>
                         )
                     )}
                 </div>

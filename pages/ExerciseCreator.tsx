@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { ExerciseQuestion } from '../types';
 import { CURRICULUM } from '../data/curriculum';
+import { getMergedCriteria } from '../services/criteriaService';
 
 const ExerciseCreator: React.FC = () => {
   const [grade, setGrade] = useState('');
@@ -34,7 +35,10 @@ const ExerciseCreator: React.FC = () => {
 
   // Derived state for available lessons and criteria
   const availableLessons = grade ? CURRICULUM.lessonData[grade] : [];
-  const currentCriteriaData = (grade && lesson) ? CURRICULUM.criteriaData[grade]?.[lesson] : null;
+  const currentCriteriaData = useMemo(() => {
+    if (!grade || !lesson) return null;
+    return getMergedCriteria(grade, lesson);
+  }, [grade, lesson]);
 
   // Stats
   const questionSummary = useMemo(() => {

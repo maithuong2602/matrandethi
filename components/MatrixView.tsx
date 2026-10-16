@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { MatrixData } from '../types';
 import { formatDiem } from '../utils';
 import { Trash2, GripVertical, Plus, CheckSquare, Square, X } from 'lucide-react';
+import { syncCriteriaFromMatrixData } from '../services/criteriaService';
 
 interface MatrixViewProps {
     data: MatrixData;
@@ -133,6 +134,25 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
     const [editingCell, setEditingCell] = useState<EditingCellState>(null);
     const [draggedGroupIndex, setDraggedGroupIndex] = useState<number | null>(null);
 
+    const handleUpdateMatrixWithSync = (newData: MatrixData) => {
+        try {
+            syncCriteriaFromMatrixData(newData, examName);
+        } catch (e) {
+            console.error('Failed to sync criteria from matrix:', e);
+        }
+        onUpdateMatrix(newData);
+    };
+
+    useEffect(() => {
+        if (data?.specifications?.rows) {
+            try {
+                syncCriteriaFromMatrixData(data, examName);
+            } catch (e) {
+                console.error('Failed initial criteria sync:', e);
+            }
+        }
+    }, [data, examName]);
+
     const getRowPointsTL = (rIdx: number) => {
         return rowEssayPoints[rIdx] ?? pointsTL;
     };
@@ -142,7 +162,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
         const newData = JSON.parse(JSON.stringify(data));
         if (!newData.pointsConfig) newData.pointsConfig = {};
         newData.pointsConfig.pointsTL = val;
-        onUpdateMatrix(newData);
+        handleUpdateMatrixWithSync(newData);
     };
 
     const handleUpdateRowEssayPoints = (rIdx: number, newVal: number) => {
@@ -151,7 +171,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
         if (!newData.pointsConfig) newData.pointsConfig = {};
         if (!newData.pointsConfig.rowEssayPoints) newData.pointsConfig.rowEssayPoints = {};
         newData.pointsConfig.rowEssayPoints[rIdx] = val;
-        onUpdateMatrix(newData);
+        handleUpdateMatrixWithSync(newData);
     };
 
     // Determine if it is a Final Exam
@@ -349,7 +369,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
             newData.pointsConfig.rowEssayPoints[rowIndex] = newTLPoint;
         }
 
-        onUpdateMatrix(newData);
+        handleUpdateMatrixWithSync(newData);
         setEditingCell(null);
     };
 
@@ -364,7 +384,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
             if (currentExamined > newSoTiet) {
                 newData.matrix.rows[rowIndex][14] = Math.floor(newSoTiet).toString();
             }
-            onUpdateMatrix(newData);
+            handleUpdateMatrixWithSync(newData);
             setEditingCell(null);
             return;
         }
@@ -376,7 +396,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
              if (examined > soTiet) examined = Math.floor(soTiet); // Cap at total (floored)
              
              newData.matrix.rows[rowIndex][14] = examined.toString();
-             onUpdateMatrix(newData);
+             handleUpdateMatrixWithSync(newData);
              setEditingCell(null); // Close input on blur/enter
              return;
         }
@@ -446,7 +466,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
             availableCounts: newAvailableCounts
         };
 
-        onUpdateMatrix(newData);
+        handleUpdateMatrixWithSync(newData);
         setDraggedGroupIndex(null);
     };
 
@@ -550,7 +570,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
             const newHtml = serializeYccdSections(sections);
             const newData = JSON.parse(JSON.stringify(data));
             newData.specifications.rows[rowIndex][4] = newHtml;
-            onUpdateMatrix(newData);
+            handleUpdateMatrixWithSync(newData);
         }
     };
 
@@ -569,7 +589,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
             const newHtml = serializeYccdSections(sections);
             const newData = JSON.parse(JSON.stringify(data));
             newData.specifications.rows[rowIndex][4] = newHtml;
-            onUpdateMatrix(newData);
+            handleUpdateMatrixWithSync(newData);
         }
     };
 
@@ -581,7 +601,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
             const newHtml = serializeYccdSections(sections);
             const newData = JSON.parse(JSON.stringify(data));
             newData.specifications.rows[rowIndex][4] = newHtml;
-            onUpdateMatrix(newData);
+            handleUpdateMatrixWithSync(newData);
         }
     };
 
@@ -637,7 +657,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
             ];
         }
         newData.specifications.rows[rowIndex][4] = newHtml;
-        onUpdateMatrix(newData);
+        handleUpdateMatrixWithSync(newData);
 
         setAddingLevelForRow(null);
         setCustomLevelName('');
@@ -655,7 +675,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
             const newData = JSON.parse(JSON.stringify(data));
             if (newData.specifications?.rows?.[rowIndex]) {
                 newData.specifications.rows[rowIndex][4] = newHtml;
-                onUpdateMatrix(newData);
+                handleUpdateMatrixWithSync(newData);
             }
         }
         if (addingYccdFor?.rowIndex === rowIndex && addingYccdFor?.sectionIdx === sectionIdx) {
