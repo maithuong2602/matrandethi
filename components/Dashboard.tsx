@@ -29,11 +29,15 @@ const Dashboard: React.FC = () => {
   return (
     <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6">
       <header className="text-center mb-12 max-w-2xl animate-fade-in-down">
+        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 text-primary rounded-full text-xs font-bold mb-4 shadow-sm">
+          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          Phiên Bản Chuyên Nghiệp 2025: Phân Quyền • Quy Trình Duyệt Đề • Zero-Failure AI
+        </div>
         <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4 tracking-tight">
           Công Cụ <span className="text-primary">Quản Lý Đề Thi</span>
         </h1>
         <p className="text-lg text-gray-500 leading-relaxed">
-          Hệ thống chuyên nghiệp giúp bạn quản lý ngân hàng câu hỏi, xây dựng ma trận kiến thức và tạo đề thi tự động chỉ trong vài bước.
+          Hệ thống chuyên nghiệp giúp bạn quản lý ngân hàng câu hỏi, xây dựng ma trận kiến thức, tạo đề thi tự động và thẩm định phê duyệt chuyên môn chỉ trong vài bước.
         </p>
       </header>
 

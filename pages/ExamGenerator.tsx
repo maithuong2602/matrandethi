@@ -3,9 +3,10 @@ import {
     Upload, FileText, Settings, Play, Check, X, Printer, Download, RefreshCw, 
     Layers, FileJson, Grid3X3, ChevronDown, AlertCircle, Info, Sparkles, 
     Wand2, ShieldCheck, CheckCircle2, AlertTriangle, FileSpreadsheet, Eye, 
-    Shuffle, Copy, BookOpenCheck, Loader2
+    Shuffle, Copy, BookOpenCheck, Loader2, Send, FolderCheck, CheckCircle, 
+    XCircle, Clock, FileCheck, Award, MessageSquareQuote, FileBox
 } from 'lucide-react';
-import { ExerciseQuestion, ImportedMatrixData, ExamVariant, ExamReviewResult } from '../types';
+import { ExerciseQuestion, ImportedMatrixData, ExamVariant, ExamReviewResult, SavedExamDossier, ExamApprovalStatus, UserProfile } from '../types';
 import { 
     generateExamWordHtml, 
     generateAzotaKeyHtml, 
@@ -17,6 +18,17 @@ import {
 import { reviewExamWithAI, autoFillMissingQuestions } from '../services/geminiService';
 import { splitLegacyTrueFalseQuestions } from './QuestionManager';
 import { CURRICULUM } from '../data/curriculum';
+import { getCurrentUser, subscribeUserChange, canApproveExam, getRoleDisplayName, getRoleBadgeColor } from '../services/authService';
+import { 
+    getSavedExams, 
+    saveExamDossier, 
+    submitExamForReview, 
+    approveExam, 
+    rejectExam, 
+    deleteExamDossier,
+    getStatusBadgeInfo,
+    subscribeExamChange
+} from '../services/examApprovalService';
 
 export const detectGradeFromContext = (questions: any[], headerInfo?: any, importedMatrix?: any): string => {
     // 1. From questions
@@ -128,6 +140,34 @@ const ExamGenerator: React.FC = () => {
     const [isSwapMenuOpen, setIsSwapMenuOpen] = useState<boolean>(false);
     const swapMenuRef = useRef<HTMLDivElement>(null);
 
+    // User & Approval Workflow State (Phân quyền & Duyệt đề)
+    const [currentUser, setCurrentUser] = useState<UserProfile>(getCurrentUser());
+    const [currentDossierId, setCurrentDossierId] = useState<string | null>(null);
+    const [dossierStatus, setDossierStatus] = useState<ExamApprovalStatus>('draft');
+    const [submissionNotes, setSubmissionNotes] = useState<string>('');
+    const [reviewerNotes, setReviewerNotes] = useState<string>('');
+    const [reviewedBy, setReviewedBy] = useState<string>('');
+    const [reviewedAt, setReviewedAt] = useState<string>('');
+    const [submittedAt, setSubmittedAt] = useState<string>('');
+    const [allSavedExams, setAllSavedExams] = useState<SavedExamDossier[]>(getSavedExams());
+
+    // Approval Modals State
+    const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
+    const [showApproveModal, setShowApproveModal] = useState<boolean>(false);
+    const [showRejectModal, setShowRejectModal] = useState<boolean>(false);
+    const [showDossierRepoModal, setShowDossierRepoModal] = useState<boolean>(false);
+    const [dossierFilter, setDossierFilter] = useState<'all' | 'pending_review' | 'approved' | 'rejected' | 'draft'>('all');
+    const [tempNotesInput, setTempNotesInput] = useState<string>('');
+
+    useEffect(() => {
+        const unsubUser = subscribeUserChange((u) => setCurrentUser(u));
+        const unsubExam = subscribeExamChange(() => setAllSavedExams(getSavedExams()));
+        return () => {
+            unsubUser();
+            unsubExam();
+        };
+    }, []);
+
     const [headerInfo, setHeaderInfo] = useState({
         donVi: 'UBND PHƯỜNG HẢI CHÂU',
         tenTruong: 'LÊ HỒNG PHONG',
@@ -152,6 +192,105 @@ const ExamGenerator: React.FC = () => {
             setCustomFileName(autoName);
         }
     }, [generatedTest, headerInfo, teacherName, importedMatrix, isFileNameManuallyEdited]);
+    
+    // --- APPROVAL WORKFLOW HANDLERS ---
+    const handleSaveToDossier = (overrideStatus?: ExamApprovalStatus) => {
+        const gradeVal = detectGradeFromContext(generatedTest, headerInfo, importedMatrix);
+        const titleVal = customFileName || headerInfo.tenKyThi;
+        const targetStatus = overrideStatus || dossierStatus;
+
+        const saved = saveExamDossier({
+            id: currentDossierId || undefined,
+            title: titleVal,
+            grade: gradeVal,
+            status: targetStatus,
+            questions: generatedTest,
+            variants: variants,
+            matrixData: importedMatrix,
+            headerInfo: headerInfo,
+            teacherName: teacherName || currentUser.name,
+            aiReviewScore: reviewResult?.overallScore,
+            aiReviewSummary: reviewResult?.verdict,
+            submissionNotes: submissionNotes,
+            reviewerNotes: reviewerNotes,
+            reviewedBy: reviewedBy,
+            reviewedAt: reviewedAt,
+            submittedAt: submittedAt
+        });
+
+        setCurrentDossierId(saved.id);
+        setDossierStatus(saved.status);
+        return saved;
+    };
+
+    const handleConfirmSubmitForReview = () => {
+        const saved = handleSaveToDossier('draft');
+        const res = submitExamForReview(saved.id, tempNotesInput || 'Kính gửi Tổ trưởng chuyên môn thẩm định & phê duyệt đề thi.', currentUser);
+        setDossierStatus(res.status);
+        setSubmissionNotes(res.submissionNotes || '');
+        setSubmittedAt(res.submittedAt || '');
+        setShowSubmitModal(false);
+        setTempNotesInput('');
+        alert('Đã gửi đề thi lên Tổ trưởng chuyên môn phê duyệt thành công!');
+    };
+
+    const handleConfirmApprove = () => {
+        const saved = handleSaveToDossier();
+        const res = approveExam(saved.id, tempNotesInput || 'Đề thi đã được thẩm định đạt chuẩn chất lượng sư phạm GDPT 2018.', currentUser);
+        setDossierStatus(res.status);
+        setReviewerNotes(res.reviewerNotes || '');
+        setReviewedBy(res.reviewedBy || currentUser.name);
+        setReviewedAt(res.reviewedAt || '');
+        setShowApproveModal(false);
+        setTempNotesInput('');
+        alert('Chúc mừng! Đã phê duyệt đề thi chính thức.');
+    };
+
+    const handleConfirmReject = () => {
+        const saved = handleSaveToDossier();
+        const res = rejectExam(saved.id, tempNotesInput || 'Cần rà soát và điều chỉnh lại câu hỏi theo ma trận.', currentUser);
+        setDossierStatus(res.status);
+        setReviewerNotes(res.reviewerNotes || '');
+        setReviewedBy(res.reviewedBy || currentUser.name);
+        setReviewedAt(res.reviewedAt || '');
+        setShowRejectModal(false);
+        setTempNotesInput('');
+        alert('Đã gửi phản hồi yêu cầu chỉnh sửa đề thi đến giáo viên.');
+    };
+
+    const handleLoadDossier = (dossier: SavedExamDossier) => {
+        setCurrentDossierId(dossier.id);
+        setDossierStatus(dossier.status);
+        setSubmissionNotes(dossier.submissionNotes || '');
+        setReviewerNotes(dossier.reviewerNotes || '');
+        setReviewedBy(dossier.reviewedBy || '');
+        setReviewedAt(dossier.reviewedAt || '');
+        setSubmittedAt(dossier.submittedAt || '');
+        if (dossier.teacherName) setTeacherName(dossier.teacherName);
+        if (dossier.headerInfo) setHeaderInfo(dossier.headerInfo);
+        if (dossier.title) {
+            setCustomFileName(dossier.title);
+            setIsFileNameManuallyEdited(true);
+        }
+        if (dossier.matrixData) setImportedMatrix(dossier.matrixData);
+        if (Array.isArray(dossier.questions) && dossier.questions.length > 0) {
+            setGeneratedTest(dossier.questions);
+            setStep('review');
+        }
+        setShowDossierRepoModal(false);
+    };
+
+    const handleDeleteDossier = (id: string, e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (window.confirm('Bạn có chắc muốn xóa đề thi này khỏi kho hồ sơ?')) {
+            deleteExamDossier(id);
+            if (currentDossierId === id) {
+                setCurrentDossierId(null);
+                setDossierStatus('draft');
+            }
+        }
+    };
+
     
     const [bulkPoints, setBulkPoints] = useState(0.25);
     const [bulkPointsTL, setBulkPointsTL] = useState(1.0);
@@ -964,6 +1103,123 @@ const ExamGenerator: React.FC = () => {
                         </div>
                     )}
 
+                    {/* APPROVAL WORKFLOW STATUS & ACTIONS BAR (QUY TRÌNH DUYỆT ĐỀ) */}
+                    <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 space-y-4">
+                        <div className="flex flex-wrap items-center justify-between gap-4">
+                            <div className="flex items-center gap-3">
+                                {(() => {
+                                    const badge = getStatusBadgeInfo(dossierStatus);
+                                    return (
+                                        <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border ${badge.bg} ${badge.text} ${badge.border}`}>
+                                            {dossierStatus === 'approved' && <ShieldCheck size={15} className="text-emerald-600" />}
+                                            {dossierStatus === 'pending_review' && <Clock size={15} className="text-amber-600 animate-pulse" />}
+                                            {dossierStatus === 'rejected' && <XCircle size={15} className="text-rose-600" />}
+                                            {dossierStatus === 'draft' && <FileText size={15} className="text-gray-500" />}
+                                            <span>Trạng thái: {badge.label}</span>
+                                        </div>
+                                    );
+                                })()}
+
+                                <div className="text-xs text-gray-500">
+                                    <span className="font-semibold text-gray-700">Tác giả:</span> {teacherName || currentUser.name}
+                                    {submittedAt && <span className="ml-2">• Gửi: {new Date(submittedAt).toLocaleTimeString('vi-VN')} {new Date(submittedAt).toLocaleDateString('vi-VN')}</span>}
+                                    {reviewedBy && <span className="ml-2 text-indigo-700 font-semibold">• Người duyệt: {reviewedBy}</span>}
+                                </div>
+                            </div>
+
+                            {/* Workflow Action Buttons based on User Role */}
+                            <div className="flex flex-wrap items-center gap-2">
+                                {/* Open Repository of All Exams */}
+                                <button
+                                    onClick={() => setShowDossierRepoModal(true)}
+                                    className="px-3.5 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border border-gray-200 shadow-sm"
+                                    title="Xem toàn bộ kho hồ sơ đề thi và danh sách chờ duyệt"
+                                >
+                                    <FileBox size={14} className="text-primary" />
+                                    Kho Đề & Duyệt Đề ({allSavedExams.length})
+                                </button>
+
+                                {/* Save Exam to Dossier */}
+                                <button
+                                    onClick={() => {
+                                        handleSaveToDossier();
+                                        alert('Đã lưu đề thi vào Kho hồ sơ thành công!');
+                                    }}
+                                    className="px-3.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border border-blue-200"
+                                >
+                                    <FolderCheck size={14} />
+                                    Lưu Hồ Sơ
+                                </button>
+
+                                {/* Teacher Action: Submit for Approval */}
+                                {(currentUser.role === 'teacher' || currentUser.role === 'admin') && dossierStatus !== 'approved' && (
+                                    <button
+                                        onClick={() => {
+                                            setTempNotesInput(submissionNotes || 'Kính gửi Tổ trưởng thẩm định và phê duyệt đề thi theo chuẩn GDPT 2018.');
+                                            setShowSubmitModal(true);
+                                        }}
+                                        className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm"
+                                    >
+                                        <Send size={14} />
+                                        {dossierStatus === 'pending_review' ? 'Cập Nhật Gửi Duyệt' : 'Gửi Phê Duyệt Đề'}
+                                    </button>
+                                )}
+
+                                {/* Reviewer / Admin Actions: Approve or Reject */}
+                                {(currentUser.role === 'reviewer' || currentUser.role === 'admin') && (
+                                    <>
+                                        <button
+                                            onClick={() => {
+                                                setTempNotesInput(reviewerNotes || 'Đề thi đạt chuẩn chất lượng sư phạm GDPT 2018, đồng ý phê duyệt tổ chức kiểm tra.');
+                                                setShowApproveModal(true);
+                                            }}
+                                            className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm"
+                                        >
+                                            <ShieldCheck size={14} />
+                                            Phê Duyệt Đề
+                                        </button>
+                                        <button
+                                            onClick={() => {
+                                                setTempNotesInput(reviewerNotes || 'Yêu cầu rà soát lại các câu mức Vận dụng và barem điểm chấm.');
+                                                setShowRejectModal(true);
+                                            }}
+                                            className="px-3.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border border-rose-200"
+                                        >
+                                            <XCircle size={14} />
+                                            Yêu Cầu Chỉnh Sửa
+                                        </button>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* If Rejected: Show Teacher Feedback Alert */}
+                        {dossierStatus === 'rejected' && reviewerNotes && (
+                            <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-900 flex items-start gap-2.5 animate-fade-in-up">
+                                <AlertCircle size={18} className="text-rose-600 flex-shrink-0 mt-0.5" />
+                                <div className="flex-1">
+                                    <span className="font-bold">Góp ý từ Tổ Trưởng Chuyên Môn ({reviewedBy || 'Hội đồng thẩm định'}):</span>
+                                    <p className="mt-1 text-rose-800 leading-relaxed italic font-serif">"{reviewerNotes}"</p>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* If Approved: Show Official Quality Seal */}
+                        {dossierStatus === 'approved' && (
+                            <div className="p-3 bg-emerald-50/80 border border-emerald-200 rounded-xl text-xs text-emerald-900 flex flex-wrap items-center justify-between gap-2 animate-fade-in-up">
+                                <div className="flex items-center gap-2">
+                                    <Award size={18} className="text-emerald-600 flex-shrink-0" />
+                                    <span>
+                                        <strong>ĐỀ THI ĐÃ ĐƯỢC PHÊ DUYỆT CHÍNH THỨC:</strong> Đủ điều kiện in sao và tổ chức kiểm tra. {reviewerNotes ? `(Ghi chú: ${reviewerNotes})` : ''}
+                                    </span>
+                                </div>
+                                <span className="text-[11px] font-mono text-emerald-700 bg-white/80 px-2 py-0.5 rounded border border-emerald-300 font-semibold">
+                                    Mã kiểm định: {currentDossierId || 'GDPT-2025'}
+                                </span>
+                            </div>
+                        )}
+                    </div>
+
                     {/* Top Action Bar */}
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 flex flex-wrap justify-between items-center gap-4">
                         <div>
@@ -1509,6 +1765,292 @@ const ExamGenerator: React.FC = () => {
                             </button>
                             <button onClick={handlePerformExport} className="px-6 py-2 bg-primary text-white rounded-xl font-bold text-sm hover:bg-primary-dark shadow-md flex items-center gap-2">
                                 <Printer size={16} /> Tải File
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* MODAL 1: GỬI PHÊ DUYỆT ĐỀ THI (SUBMIT FOR REVIEW) */}
+            {showSubmitModal && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-fade-in-up border border-gray-100">
+                        <div className="flex justify-between items-center mb-4 border-b pb-3">
+                            <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                                <Send className="text-indigo-600" size={20} /> Gửi Phê Duyệt Đề Thi
+                            </h3>
+                            <button onClick={() => setShowSubmitModal(false)} className="text-gray-400 hover:text-gray-600">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <div className="space-y-4">
+                            <div className="bg-indigo-50/70 p-3.5 rounded-xl border border-indigo-100 text-xs space-y-1">
+                                <p className="font-bold text-indigo-900">Thông tin đề thi gửi duyệt:</p>
+                                <p className="text-indigo-800">• <strong>Tên đề:</strong> {customFileName || headerInfo.tenKyThi}</p>
+                                <p className="text-indigo-800">• <strong>Khối:</strong> {detectGradeFromContext(generatedTest, headerInfo, importedMatrix)} • <strong>Tổng số câu:</strong> {generatedTest.length} câu • <strong>Mã đề:</strong> {variants.length} mã</p>
+                                <p className="text-indigo-800">• <strong>Người gửi:</strong> {currentUser.name} ({getRoleDisplayName(currentUser.role)})</p>
+                                {reviewResult && (
+                                    <p className="text-emerald-700 font-semibold">• <strong>Điểm thẩm định AI:</strong> {reviewResult.overallScore}/100</p>
+                                )}
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-gray-700 mb-1">
+                                    Ghi chú / Tin nhắn gửi Tổ trưởng chuyên môn:
+                                </label>
+                                <textarea
+                                    rows={3}
+                                    className="w-full p-2.5 border border-gray-300 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500 outline-none"
+                                    placeholder="Ví dụ: Đề thi kiểm tra giữa kì 1 khối 7, cấu trúc ma trận bám sát 100% YCCĐ GDPT 2018..."
+                                    value={tempNotesInput}
+                                    onChange={(e) => setTempNotesInput(e.target.value)}
+                                />
+                            </div>
+                        </div>
+
+                        <div className="mt-6 flex justify-end gap-3 border-t pt-4">
+                            <button
+                                onClick={() => setShowSubmitModal(false)}
+                                className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-xl text-xs font-semibold"
+                            >
+                                Hủy
+                            </button>
+                            <button
+                                onClick={handleConfirmSubmitForReview}
+                                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md flex items-center gap-1.5"
+                            >
+                                <Send size={14} /> Xác Nhận Gửi Duyệt
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* MODAL 2: PHÊ DUYỆT ĐỀ THI (APPROVE EXAM) */}
+            {showApproveModal && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-fade-in-up border border-gray-100">
+                        <div className="flex justify-between items-center mb-4 border-b pb-3">
+                            <h3 className="text-lg font-bold text-emerald-800 flex items-center gap-2">
+                                <ShieldCheck className="text-emerald-600" size={22} /> Phê Duyệt Đề Thi Chính Thức
+                            </h3>
+                            <button onClick={() => setShowApproveModal(false)} className="text-gray-400 hover:text-gray-600">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <div className="space-y-4">
+                            <div className="bg-emerald-50 p-3.5 rounded-xl border border-emerald-200 text-xs text-emerald-900 space-y-1">
+                                <p className="font-bold flex items-center gap-1.5">
+                                    <CheckCircle size={15} className="text-emerald-600" /> Xác nhận thẩm định chất lượng chuyên môn:
+                                </p>
+                                <p>• Người phê duyệt: <strong>{currentUser.name}</strong> ({getRoleDisplayName(currentUser.role)})</p>
+                                <p>• Đơn vị: {currentUser.department || 'Tổ chuyên môn Tin học'}</p>
+                                <p>• Ngày duyệt: {new Date().toLocaleDateString('vi-VN')}</p>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-gray-700 mb-1">
+                                    Ý kiến nhận xét & Quyết định phê duyệt:
+                                </label>
+                                <textarea
+                                    rows={3}
+                                    className="w-full p-2.5 border border-gray-300 rounded-xl text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
+                                    value={tempNotesInput}
+                                    onChange={(e) => setTempNotesInput(e.target.value)}
+                                    placeholder="Đề thi đạt chuẩn chất lượng sư phạm, ma trận và câu hỏi chuẩn hóa GDPT 2018. Đồng ý phê duyệt."
+                                />
+                            </div>
+                        </div>
+
+                        <div className="mt-6 flex justify-end gap-3 border-t pt-4">
+                            <button
+                                onClick={() => setShowApproveModal(false)}
+                                className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-xl text-xs font-semibold"
+                            >
+                                Hủy
+                            </button>
+                            <button
+                                onClick={handleConfirmApprove}
+                                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md flex items-center gap-1.5"
+                            >
+                                <ShieldCheck size={14} /> Xác Nhận Phê Duyệt Đề
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* MODAL 3: YÊU CẦU CHỈNH SỬA (REJECT EXAM) */}
+            {showRejectModal && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-fade-in-up border border-gray-100">
+                        <div className="flex justify-between items-center mb-4 border-b pb-3">
+                            <h3 className="text-lg font-bold text-rose-800 flex items-center gap-2">
+                                <XCircle className="text-rose-600" size={22} /> Yêu Cầu Chỉnh Sửa Đề Thi
+                            </h3>
+                            <button onClick={() => setShowRejectModal(false)} className="text-gray-400 hover:text-gray-600">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <div className="space-y-4">
+                            <p className="text-xs text-gray-600 leading-relaxed">
+                                Vui lòng ghi rõ các điểm cần bổ sung, chỉnh sửa (câu hỏi, phương án, barem điểm hoặc ma trận) để giáo viên hoàn thiện đề thi:
+                            </p>
+
+                            <div>
+                                <label className="block text-xs font-bold text-gray-700 mb-1">
+                                    Nội dung góp ý & Yêu cầu chỉnh sửa:
+                                </label>
+                                <textarea
+                                    rows={4}
+                                    className="w-full p-2.5 border border-rose-300 rounded-xl text-xs focus:ring-2 focus:ring-rose-500 outline-none"
+                                    value={tempNotesInput}
+                                    onChange={(e) => setTempNotesInput(e.target.value)}
+                                    placeholder="Ví dụ: Câu 12 mức VDC phương án nhiễu chưa thật sự sát bài học; Câu tự luận 1 cần chia rõ thang điểm từng ý a, b, c, d..."
+                                />
+                            </div>
+                        </div>
+
+                        <div className="mt-6 flex justify-end gap-3 border-t pt-4">
+                            <button
+                                onClick={() => setShowRejectModal(false)}
+                                className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-xl text-xs font-semibold"
+                            >
+                                Hủy
+                            </button>
+                            <button
+                                onClick={handleConfirmReject}
+                                className="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-md flex items-center gap-1.5"
+                            >
+                                <Send size={14} /> Gửi Phản Hồi Chỉnh Sửa
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* MODAL 4: KHO HỒ SƠ ĐỀ THI & QUẢN LÝ DUYỆT ĐỀ (DOSSIER REPOSITORY) */}
+            {showDossierRepoModal && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-fade-in-up border border-gray-100">
+                        {/* Header */}
+                        <div className="p-5 border-b flex justify-between items-center bg-gray-50/50">
+                            <div>
+                                <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+                                    <FileBox className="text-primary" size={24} /> Kho Hồ Sơ Đề Thi & Quản Lý Phê Duyệt
+                                </h3>
+                                <p className="text-xs text-gray-500 mt-0.5">
+                                    Theo dõi tiến độ biên soạn, nộp đề và xét duyệt của tổ chuyên môn
+                                </p>
+                            </div>
+                            <button onClick={() => setShowDossierRepoModal(false)} className="text-gray-400 hover:text-gray-600">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        {/* Filter Tabs */}
+                        <div className="px-5 py-3 border-b bg-white flex flex-wrap items-center gap-2">
+                            {[
+                                { id: 'all', label: 'Tất cả', count: allSavedExams.length },
+                                { id: 'pending_review', label: 'Chờ phê duyệt', count: allSavedExams.filter(e => e.status === 'pending_review').length },
+                                { id: 'approved', label: 'Đã phê duyệt', count: allSavedExams.filter(e => e.status === 'approved').length },
+                                { id: 'rejected', label: 'Cần sửa đổi', count: allSavedExams.filter(e => e.status === 'rejected').length },
+                                { id: 'draft', label: 'Bản nháp', count: allSavedExams.filter(e => e.status === 'draft').length },
+                            ].map(tab => (
+                                <button
+                                    key={tab.id}
+                                    onClick={() => setDossierFilter(tab.id as any)}
+                                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                                        dossierFilter === tab.id 
+                                            ? 'bg-primary text-white shadow-sm' 
+                                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                    }`}
+                                >
+                                    <span>{tab.label}</span>
+                                    <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${dossierFilter === tab.id ? 'bg-white/20' : 'bg-gray-200 text-gray-700'}`}>
+                                        {tab.count}
+                                    </span>
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* Content List */}
+                        <div className="flex-1 overflow-y-auto p-5 space-y-3">
+                            {allSavedExams
+                                .filter(e => dossierFilter === 'all' || e.status === dossierFilter)
+                                .map(dossier => {
+                                    const badge = getStatusBadgeInfo(dossier.status);
+                                    return (
+                                        <div
+                                            key={dossier.id}
+                                            className="p-4 bg-white border border-gray-200 rounded-xl hover:shadow-md transition-all flex flex-wrap items-center justify-between gap-4"
+                                        >
+                                            <div className="flex-1 min-w-[280px]">
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${badge.bg} ${badge.text} ${badge.border}`}>
+                                                        {badge.label}
+                                                    </span>
+                                                    <span className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded font-bold">
+                                                        Lớp {dossier.grade || '7'}
+                                                    </span>
+                                                    {dossier.aiReviewScore && (
+                                                        <span className="text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded font-semibold">
+                                                            AI: {dossier.aiReviewScore}đ
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <h4 className="text-sm font-bold text-gray-900">{dossier.title}</h4>
+                                                <div className="text-xs text-gray-500 mt-1 flex flex-wrap gap-x-4 gap-y-1">
+                                                    <span>Tác giả: <strong>{dossier.createdBy}</strong></span>
+                                                    <span>Số câu: <strong>{dossier.questions?.length || 0}</strong></span>
+                                                    <span>Ngày tạo: {new Date(dossier.createdAt).toLocaleDateString('vi-VN')}</span>
+                                                    {dossier.reviewedBy && (
+                                                        <span className="text-indigo-600 font-semibold">Người duyệt: {dossier.reviewedBy}</span>
+                                                    )}
+                                                </div>
+                                                {dossier.reviewerNotes && (
+                                                    <p className="text-xs text-gray-600 italic bg-gray-50 p-2 rounded-lg mt-2 border border-gray-100">
+                                                        "{dossier.reviewerNotes}"
+                                                    </p>
+                                                )}
+                                            </div>
+
+                                            <div className="flex items-center gap-2">
+                                                <button
+                                                    onClick={() => handleLoadDossier(dossier)}
+                                                    className="px-3.5 py-1.5 bg-primary text-white rounded-xl text-xs font-bold hover:bg-primary-dark shadow-sm transition-all"
+                                                >
+                                                    Nạp Vào Đề
+                                                </button>
+                                                <button
+                                                    onClick={(e) => handleDeleteDossier(dossier.id, e)}
+                                                    className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                                                    title="Xóa đề thi"
+                                                >
+                                                    <X size={16} />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+
+                            {allSavedExams.filter(e => dossierFilter === 'all' || e.status === dossierFilter).length === 0 && (
+                                <div className="text-center py-12 text-gray-400 text-sm">
+                                    Không có đề thi nào trong mục này.
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Footer */}
+                        <div className="p-4 bg-gray-50 border-t flex justify-end">
+                            <button
+                                onClick={() => setShowDossierRepoModal(false)}
+                                className="px-5 py-2 bg-gray-200 text-gray-700 font-bold rounded-xl text-xs hover:bg-gray-300"
+                            >
+                                Đóng
                             </button>
                         </div>
                     </div>

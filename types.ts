@@ -188,3 +188,98 @@ export interface ToastState {
     type: 'success' | 'error';
     visible: boolean;
 }
+
+// ==========================================
+// ROLE-BASED ACCESS CONTROL (RBAC) TYPES
+// ==========================================
+export type UserRole = 'admin' | 'reviewer' | 'teacher';
+
+export interface UserProfile {
+  id: string;
+  name: string;
+  role: UserRole;
+  department?: string;
+  school?: string;
+  email?: string;
+  avatar?: string;
+  provider?: 'google' | 'local';
+  createdAt?: string;
+  lastLoginAt?: string;
+  status?: 'active' | 'blocked';
+}
+
+// ==========================================
+// EXAM APPROVAL WORKFLOW (DUYỆT ĐỀ) TYPES
+// ==========================================
+export type ExamApprovalStatus = 'draft' | 'pending_review' | 'approved' | 'rejected';
+
+export interface ExamAuditEntry {
+  id: string;
+  timestamp: string;
+  userId: string;
+  userName: string;
+  userRole: UserRole;
+  action: 'created' | 'submitted' | 'approved' | 'rejected' | 'updated';
+  comment?: string;
+  previousStatus?: ExamApprovalStatus;
+  newStatus?: ExamApprovalStatus;
+}
+
+export interface SavedExamDossier {
+  id: string;
+  title: string;
+  grade: string;
+  status: ExamApprovalStatus;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+  creatorRole: UserRole;
+  submittedAt?: string;
+  submissionNotes?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  reviewerNotes?: string;
+  aiReviewScore?: number;
+  aiReviewSummary?: string;
+  auditLog: ExamAuditEntry[];
+  questions: any[];
+  variants?: ExamVariant[];
+  matrixData?: any;
+  headerInfo: any;
+  teacherName?: string;
+}
+
+// ==========================================
+// FAIL-SAFE API & GENERATOR CONFIG TYPES
+// ==========================================
+export interface ApiKeyItem {
+  id: string;
+  key: string;
+  label?: string;
+  status: 'active' | 'rate_limited' | 'invalid' | 'unknown';
+  lastUsed?: string;
+  errorCount?: number;
+}
+
+export interface ApiSystemConfig {
+  keys: ApiKeyItem[];
+  activeKeyIndex: number;
+  selectedModel: string;
+  enableOfflineFallback: boolean;
+  enableMultiKeyRotation: boolean;
+}
+
+// ==========================================
+// DATABASE & CLOUD SYNC CONFIG TYPES
+// ==========================================
+export type DatabaseProvider = 'local' | 'supabase' | 'rest_api';
+
+export interface DatabaseConfig {
+  provider: DatabaseProvider;
+  endpointUrl?: string;
+  apiKey?: string; // anon/public key for Supabase or Bearer token
+  enableAutoSync: boolean;
+  lastSyncAt?: string;
+  syncStatus?: 'idle' | 'syncing' | 'synced' | 'error';
+  errorMessage?: string;
+}
