@@ -40,14 +40,31 @@ const MatrixBuilder: React.FC = () => {
 
     // --- Persistence ---
     useEffect(() => {
-        const saved = localStorage.getItem('matrixFileSystem');
-        if (saved) {
-            try {
-                setFileSystem(JSON.parse(saved));
-            } catch (e) {
-                console.error("Failed to load file system", e);
+        const reloadFs = () => {
+            const saved = localStorage.getItem('matrixFileSystem');
+            if (saved) {
+                try {
+                    setFileSystem(JSON.parse(saved));
+                } catch (e) {
+                    console.error("Failed to load file system", e);
+                }
             }
-        }
+        };
+
+        reloadFs();
+
+        const handleStorage = (e: StorageEvent) => {
+            if (e.key === 'matrixFileSystem') {
+                reloadFs();
+            }
+        };
+
+        window.addEventListener('storage', handleStorage);
+        window.addEventListener('matrix_filesystem_updated', reloadFs);
+        return () => {
+            window.removeEventListener('storage', handleStorage);
+            window.removeEventListener('matrix_filesystem_updated', reloadFs);
+        };
     }, []);
 
     useEffect(() => {

@@ -23,7 +23,8 @@ import {
   FileUp, 
   FileText, 
   CheckCircle2,
-  CheckSquare
+  CheckSquare,
+  Pencil
 } from 'lucide-react';
 import { ExerciseQuestion } from '../types';
 import { CURRICULUM } from '../data/curriculum';
@@ -35,6 +36,8 @@ import { isQuestionForHskt } from '../utils';
 import { 
   getMergedCriteria, 
   addCustomCriterion, 
+  updateCustomCriterion,
+  deleteCustomCriterion,
   loadCustomCriteriaStore, 
   CUSTOM_CRITERIA_STORAGE_KEY 
 } from '../services/criteriaService';
@@ -251,20 +254,34 @@ const QuestionManager: React.FC = () => {
   const [newCriterionLevel, setNewCriterionLevel] = useState('NB');
   const [newCriterionText, setNewCriterionText] = useState('');
 
+  // Editing existing criterion state: { level: string; originalText: string } | null
+  const [editingCriterion, setEditingCriterion] = useState<{ level: string; originalText: string } | null>(null);
+  const [editingCriterionText, setEditingCriterionText] = useState('');
+
   // Reload custom criteria whenever grade or lesson changes
   useEffect(() => {
     setCustomCriteriaStore(loadCustomCriteriaStore());
   }, [grade, lesson]);
 
-  // Listen to storage events from MatrixView or other tabs
+  // Listen to storage events and window events for criteria synchronization across Matrix & QuestionManager
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === CUSTOM_CRITERIA_STORAGE_KEY || e.key === 'matrixFileSystem') {
         setCustomCriteriaStore(loadCustomCriteriaStore());
       }
     };
+    const handleLocalSync = () => {
+      setCustomCriteriaStore(loadCustomCriteriaStore());
+    };
+
     window.addEventListener('storage', handleStorageChange);
-    return () => window.removeEventListener('storage', handleStorageChange);
+    window.addEventListener('matrix_filesystem_updated', handleLocalSync);
+    window.addEventListener('criteria_updated', handleLocalSync);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('matrix_filesystem_updated', handleLocalSync);
+      window.removeEventListener('criteria_updated', handleLocalSync);
+    };
   }, []);
 
   // Derived state for available lessons and merged criteria (curriculum + matrix custom levels)
@@ -287,7 +304,88 @@ const QuestionManager: React.FC = () => {
     setCustomCriteriaStore(loadCustomCriteriaStore());
     setNewCriterionText('');
     setIsAddingCustomCriterion(false);
-    setAlertMessage(`Đã bổ sung YCCĐ cho mức độ ${newCriterionLevel === 'NB' ? 'Nhận biết' : newCriterionLevel === 'TH' ? 'Thông hiểu' : newCriterionLevel === 'VD' ? 'Vận dụng' : 'Vận dụng cao'}.`);
+    setAlertMessage(`Đã bổ sung YCCĐ cho mức độ ${newCriterionLevel === 'NB' ? 'Nhận biết' : newCriterionLevel === 'TH' ? 'Thông hiểu' : newCriterionLevel === 'VD' ? 'Vận dụng' : 'Vận dụng cao'} và đồng bộ qua Bảng đặc tả.`);
+  };
+
+  const handleStartEditCriterion = (level: string, rawText: string) => {
+    const clean = rawText.replace(/^\d+\.\d+\s*/, '').replace(/^[\s–\-*•]+/, '').trim();
+    setEditingCriterion({ level, originalText: rawText });
+    setEditingCriterionText(clean);
+  };
+
+  const handleCancelEditCriterion = () => {
+    setEditingCriterion(null);
+    setEditingCriterionText('');
+  };
+
+  const handleSaveEditCriterion = () => {
+    if (!editingCriterion || !grade || !lesson) return;
+    const trimmed = editingCriterionText.trim();
+    if (!trimmed) {
+      setAlertMessage("Nội dung yêu cầu cần đạt không được để trống.");
+      return;
+    }
+
+    try {
+      updateCustomCriterion(
+        grade,
+        lesson,
+        editingCriterion.level,
+        editingCriterion.originalText,
+        trimmed
+      );
+      setCustomCriteriaStore(loadCustomCriteriaStore());
+
+      // Update hsktChecked if the old criterion was selected
+      setHsktChecked(prev => {
+        const updated = { ...prev };
+        const oldKey = editingCriterion.originalText;
+        if (updated[oldKey]) {
+          delete updated[oldKey];
+        }
+        return updated;
+      });
+
+      setEditingCriterion(null);
+      setEditingCriterionText('');
+      setAlertMessage("Đã cập nhật yêu cầu cần đạt và đồng bộ qua Bảng đặc tả thành công!");
+    } catch (err: any) {
+      setAlertMessage(err?.message || "Lỗi khi cập nhật yêu cầu cần đạt.");
+    }
+  };
+
+  const handleDeleteCriterion = (level: string, rawText: string) => {
+    if (!grade || !lesson) return;
+    const cleanDisplay = rawText.replace(/^\d+\.\d+\s*/, '').replace(/^[\s–\-*•]+/, '').trim();
+    if (!window.confirm(`Bạn có chắc chắn muốn xóa yêu cầu cần đạt này?\n"${cleanDisplay}"\nThao tác này cũng sẽ xóa và đồng bộ khỏi Bảng đặc tả.`)) {
+      return;
+    }
+
+    try {
+      deleteCustomCriterion(grade, lesson, level, rawText);
+      setCustomCriteriaStore(loadCustomCriteriaStore());
+
+      // Clean up hsktChecked
+      setHsktChecked(prev => {
+        const updated = { ...prev };
+        delete updated[rawText];
+        const code = rawText.split(' ')[0].trim();
+        if (lesson) {
+          delete updated[`${lesson}:::${rawText}`];
+          delete updated[`${lesson}:::${code}`];
+        }
+        return updated;
+      });
+
+      if (editingCriterion?.originalText === rawText) {
+        setEditingCriterion(null);
+        setEditingCriterionText('');
+      }
+
+      setAlertMessage("Đã xóa yêu cầu cần đạt và đồng bộ khỏi Bảng đặc tả thành công!");
+    } catch (err: any) {
+      setAlertMessage(err?.message || "Lỗi khi xóa yêu cầu cần đạt.");
+    }
   };
 
   // --- FUZZY MATCHING HELPERS ---
@@ -1643,8 +1741,61 @@ const QuestionManager: React.FC = () => {
                                                     const lessonKey = lesson ? `${lesson}:::${code}` : '';
                                                     const fullLessonKey = lesson ? `${lesson}:::${c}` : '';
                                                     const isChecked = !!(hsktChecked[c] || (fullLessonKey && hsktChecked[fullLessonKey]) || (lessonKey && hsktChecked[lessonKey]));
+                                                    const isEditingThis = editingCriterion?.level === level && editingCriterion?.originalText === c;
+
+                                                    if (isEditingThis) {
+                                                        return (
+                                                            <li key={i} className="p-2 bg-blue-50/90 border border-blue-300 rounded-lg space-y-2">
+                                                                <div className="flex items-center justify-between text-[11px] font-semibold text-blue-800">
+                                                                    <span>Chỉnh sửa YCCĐ:</span>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={handleCancelEditCriterion}
+                                                                        className="text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                                                                        title="Hủy"
+                                                                    >
+                                                                        <X size={14} />
+                                                                    </button>
+                                                                </div>
+                                                                <textarea
+                                                                    rows={3}
+                                                                    autoFocus
+                                                                    className="w-full p-2 border border-blue-300 rounded bg-white text-xs outline-none focus:ring-1 focus:ring-blue-500"
+                                                                    value={editingCriterionText}
+                                                                    onChange={(e) => setEditingCriterionText(e.target.value)}
+                                                                    onKeyDown={(e) => {
+                                                                        if (e.key === 'Enter' && !e.shiftKey) {
+                                                                            e.preventDefault();
+                                                                            handleSaveEditCriterion();
+                                                                        } else if (e.key === 'Escape') {
+                                                                            handleCancelEditCriterion();
+                                                                        }
+                                                                    }}
+                                                                />
+                                                                <div className="flex items-center justify-end gap-1.5 pt-0.5">
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={handleCancelEditCriterion}
+                                                                        className="px-2 py-0.5 rounded text-slate-500 hover:bg-slate-200/60 text-[11px] font-medium cursor-pointer"
+                                                                    >
+                                                                        Hủy
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={handleSaveEditCriterion}
+                                                                        disabled={!editingCriterionText.trim()}
+                                                                        className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-[11px] font-semibold flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                                                                    >
+                                                                        <Check size={12} />
+                                                                        <span>Lưu thay đổi</span>
+                                                                    </button>
+                                                                </div>
+                                                            </li>
+                                                        );
+                                                    }
+
                                                     return (
-                                                    <li key={i} className="flex gap-2 items-start">
+                                                    <li key={i} className="group/crit flex items-start gap-1.5 p-1 rounded-md hover:bg-slate-100/70 transition-colors">
                                                         <input 
                                                             type="checkbox" 
                                                             className="mt-0.5 cursor-pointer accent-red-500 flex-shrink-0" 
@@ -1660,9 +1811,29 @@ const QuestionManager: React.FC = () => {
                                                                 });
                                                             }}
                                                         />
-                                                        <span className={isChecked ? "font-semibold text-red-600" : ""}>{cleanText}</span>
+                                                        <span className={`flex-1 break-words leading-relaxed ${isChecked ? "font-semibold text-red-600" : ""}`}>
+                                                            {cleanText}
+                                                        </span>
+                                                        <div className="opacity-0 group-hover/crit:opacity-100 flex items-center gap-0.5 shrink-0 transition-opacity">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleStartEditCriterion(level, c)}
+                                                                className="text-slate-400 hover:text-blue-600 p-1 rounded hover:bg-blue-50 transition-colors cursor-pointer"
+                                                                title="Sửa yêu cầu cần đạt này"
+                                                            >
+                                                                <Pencil size={13} />
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleDeleteCriterion(level, c)}
+                                                                className="text-slate-400 hover:text-red-600 p-1 rounded hover:bg-red-50 transition-colors cursor-pointer"
+                                                                title="Xóa yêu cầu cần đạt này"
+                                                            >
+                                                                <Trash2 size={13} />
+                                                            </button>
+                                                        </div>
                                                     </li>
-                                                )})}
+                                                );})}
                                             </ul>
                                         </div>
                                     );

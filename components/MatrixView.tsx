@@ -1,8 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { MatrixData } from '../types';
 import { formatDiem } from '../utils';
-import { Trash2, GripVertical, Plus, CheckSquare, Square, X } from 'lucide-react';
-import { syncCriteriaFromMatrixData } from '../services/criteriaService';
+import { Trash2, GripVertical, Plus, CheckSquare, Square, X, Pencil, Check } from 'lucide-react';
+import { 
+    syncCriteriaFromMatrixData,
+    getLevelCodeFromTitle,
+    detectGradeFromLessonOrContext,
+    deleteCustomCriterion,
+    updateCustomCriterion,
+    addCustomCriterion
+} from '../services/criteriaService';
 
 interface MatrixViewProps {
     data: MatrixData;
@@ -590,13 +597,67 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
             const newData = JSON.parse(JSON.stringify(data));
             newData.specifications.rows[rowIndex][4] = newHtml;
             handleUpdateMatrixWithSync(newData);
+
+            const lessonName = data.specifications.rows[rowIndex]?.[3] || data.matrix?.rows?.[rowIndex]?.[3] || '';
+            const lvlCode = getLevelCodeFromTitle(sections[sectionIdx].levelTitle);
+            const grade = detectGradeFromLessonOrContext(lessonName, examName);
+            if (grade && lessonName) {
+                try {
+                    addCustomCriterion(grade, lessonName, lvlCode, trimmed);
+                } catch (e) {
+                    console.error('Error recording add to criteriaStore:', e);
+                }
+            }
         }
+    };
+
+    const handleUpdateYccd = (rowIndex: number, sectionIdx: number, itemIdx: number, updatedText: string) => {
+        const trimmed = updatedText.trim();
+        if (!trimmed) return;
+        const currentReq = data.specifications.rows[rowIndex]?.[4] || '';
+        const sections = parseYccdHtml(currentReq);
+        const itemToUpdate = sections[sectionIdx]?.items[itemIdx];
+        if (itemToUpdate) {
+            const oldText = itemToUpdate.text;
+            const lessonName = data.specifications.rows[rowIndex]?.[3] || data.matrix?.rows?.[rowIndex]?.[3] || '';
+            const lvlCode = getLevelCodeFromTitle(sections[sectionIdx].levelTitle);
+            const grade = detectGradeFromLessonOrContext(lessonName, examName);
+
+            if (grade && lessonName) {
+                try {
+                    updateCustomCriterion(grade, lessonName, lvlCode, oldText, trimmed);
+                } catch (e) {
+                    console.error('Error updating criterion in criteriaStore:', e);
+                }
+            }
+
+            itemToUpdate.text = trimmed.startsWith('–') || trimmed.startsWith('-') ? trimmed : `– ${trimmed}`;
+            const newHtml = serializeYccdSections(sections);
+            const newData = JSON.parse(JSON.stringify(data));
+            newData.specifications.rows[rowIndex][4] = newHtml;
+            handleUpdateMatrixWithSync(newData);
+        }
+        setEditingYccdFor(null);
+        setEditingYccdText('');
     };
 
     const handleDeleteYccd = (rowIndex: number, sectionIdx: number, itemIdx: number) => {
         const currentReq = data.specifications.rows[rowIndex]?.[4] || '';
         const sections = parseYccdHtml(currentReq);
-        if (sections[sectionIdx]?.items[itemIdx]) {
+        const itemToDelete = sections[sectionIdx]?.items[itemIdx];
+        if (itemToDelete) {
+            const lessonName = data.specifications.rows[rowIndex]?.[3] || data.matrix?.rows?.[rowIndex]?.[3] || '';
+            const lvlCode = getLevelCodeFromTitle(sections[sectionIdx].levelTitle);
+            const grade = detectGradeFromLessonOrContext(lessonName, examName);
+
+            if (grade && lessonName) {
+                try {
+                    deleteCustomCriterion(grade, lessonName, lvlCode, itemToDelete.text);
+                } catch (e) {
+                    console.error('Error recording deletion in criteriaStore:', e);
+                }
+            }
+
             sections[sectionIdx].items.splice(itemIdx, 1);
             const newHtml = serializeYccdSections(sections);
             const newData = JSON.parse(JSON.stringify(data));
@@ -686,6 +747,8 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
 
     const [addingYccdFor, setAddingYccdFor] = useState<{ rowIndex: number; sectionIdx: number } | null>(null);
     const [newYccdText, setNewYccdText] = useState('');
+    const [editingYccdFor, setEditingYccdFor] = useState<{ rowIndex: number; sectionIdx: number; itemIdx: number } | null>(null);
+    const [editingYccdText, setEditingYccdText] = useState('');
     const [addingLevelForRow, setAddingLevelForRow] = useState<number | null>(null);
     const [customLevelName, setCustomLevelName] = useState('');
 
@@ -697,7 +760,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
         const [vd_tn, vd_tl] = (String(vd_raw)||'0-0').split('-').map(s=>parseInt(s)||0);
         const [vdc_tn, vdc_tl] = (String(vdc_raw)||'0-0').split('-').map(s=>parseInt(s)||0);
 
-        const avail = data.availableCounts[rowIndex] || { NB:{TN:0,TL:0}, TH:{TN:0,TL:0}, VD:{TN:0,TL:0}, VDC:{TN:0,TL:0} };
+        const avail = data.availableCounts?.[rowIndex] || { NB:{TN:0,TL:0}, TH:{TN:0,TL:0}, VD:{TN:0,TL:0}, VDC:{TN:0,TL:0} };
         
         // Helper to collect positions for this row
         const getPositions = () => {
@@ -802,7 +865,51 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                     )}
 
                                     <div className="space-y-1 pl-1">
-                                        {section.items.map((item, iIdx) => (
+                                        {section.items.map((item, iIdx) => {
+                                            const isEditingThis = editingYccdFor?.rowIndex === rowIndex && editingYccdFor?.sectionIdx === sIdx && editingYccdFor?.itemIdx === iIdx;
+
+                                            if (isEditingThis) {
+                                                return (
+                                                    <div key={item.id} className="my-1 p-1.5 bg-blue-50/90 border border-blue-300 rounded flex items-center gap-1.5">
+                                                        <input
+                                                            type="text"
+                                                            autoFocus
+                                                            value={editingYccdText}
+                                                            onChange={(e) => setEditingYccdText(e.target.value)}
+                                                            onKeyDown={(e) => {
+                                                                if (e.key === 'Enter') {
+                                                                    handleUpdateYccd(rowIndex, sIdx, iIdx, editingYccdText);
+                                                                } else if (e.key === 'Escape') {
+                                                                    setEditingYccdFor(null);
+                                                                    setEditingYccdText('');
+                                                                }
+                                                            }}
+                                                            className="flex-1 text-xs border border-blue-300 rounded px-2 py-1 outline-none bg-white focus:ring-1 focus:ring-blue-500"
+                                                        />
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleUpdateYccd(rowIndex, sIdx, iIdx, editingYccdText)}
+                                                            disabled={!editingYccdText.trim()}
+                                                            className="bg-blue-600 text-white text-xs px-2.5 py-1 rounded hover:bg-blue-700 font-medium cursor-pointer disabled:opacity-50"
+                                                        >
+                                                            Lưu
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setEditingYccdFor(null);
+                                                                setEditingYccdText('');
+                                                            }}
+                                                            className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
+                                                            title="Hủy"
+                                                        >
+                                                            <X size={14} />
+                                                        </button>
+                                                    </div>
+                                                );
+                                            }
+
+                                            return (
                                             <div
                                                 key={item.id}
                                                 className={`group/item flex items-start gap-2 p-1 rounded transition-colors ${
@@ -826,16 +933,29 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                                 >
                                                     {item.text}
                                                 </span>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleDeleteYccd(rowIndex, sIdx, iIdx)}
-                                                    className="opacity-0 group-hover/item:opacity-100 text-red-400 hover:text-red-600 p-0.5 rounded hover:bg-red-50 transition-opacity cursor-pointer"
-                                                    title="Xoá yêu cầu cần đạt này"
-                                                >
-                                                    <X size={13} />
-                                                </button>
+                                                <div className="opacity-0 group-hover/item:opacity-100 flex items-center gap-0.5 shrink-0 transition-opacity">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setEditingYccdFor({ rowIndex, sectionIdx: sIdx, itemIdx: iIdx });
+                                                            setEditingYccdText(item.text.replace(/^[–\-*•]\s*/, ''));
+                                                        }}
+                                                        className="text-slate-400 hover:text-blue-600 p-0.5 rounded hover:bg-blue-50 transition-colors cursor-pointer"
+                                                        title="Sửa yêu cầu cần đạt này"
+                                                    >
+                                                        <Pencil size={13} />
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleDeleteYccd(rowIndex, sIdx, iIdx)}
+                                                        className="text-red-400 hover:text-red-600 p-0.5 rounded hover:bg-red-50 transition-colors cursor-pointer"
+                                                        title="Xoá yêu cầu cần đạt này"
+                                                    >
+                                                        <X size={13} />
+                                                    </button>
+                                                </div>
                                             </div>
-                                        ))}
+                                        );})}
 
                                         {section.items.length === 0 && !(addingYccdFor?.rowIndex === rowIndex && addingYccdFor?.sectionIdx === sIdx) && (
                                             <div className="text-xs text-slate-400 italic py-1 pl-1">
