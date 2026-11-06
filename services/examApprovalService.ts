@@ -1,8 +1,15 @@
 import { SavedExamDossier, ExamApprovalStatus, ExamAuditEntry, UserProfile } from '../types';
-import { getCurrentUser } from './authService';
+import { getCurrentUser, canApproveExam } from './authService';
 import { SAMPLE_QUESTIONS } from '../data/sampleQuestions';
+import { loadQuestionBank, saveQuestionBank, computeQuestionContentHash } from './storage/questionBankStorage';
 
 const EXAMS_STORAGE_KEY = 'matrandethi_saved_exams';
+const MAX_AUDIT_LOG_ENTRIES = 10; // Giới hạn lịch sử để chống phình dữ liệu (Zero-Bloat)
+
+const pruneAuditLog = (logs: ExamAuditEntry[] = []): ExamAuditEntry[] => {
+  if (!Array.isArray(logs)) return [];
+  return logs.length > MAX_AUDIT_LOG_ENTRIES ? logs.slice(-MAX_AUDIT_LOG_ENTRIES) : logs;
+};
 
 type ExamChangeListener = () => void;
 const listeners: Set<ExamChangeListener> = new Set();
@@ -124,7 +131,7 @@ export const saveExamDossier = (dossierData: Partial<SavedExamDossier>): SavedEx
       ...existing,
       ...dossierData,
       updatedAt: now,
-      auditLog: [...(existing.auditLog || []), updateLog]
+      auditLog: pruneAuditLog([...(existing.auditLog || []), updateLog])
     } as SavedExamDossier;
 
     exams[existingIdx] = target;
@@ -302,7 +309,7 @@ export const submitExamForReview = (
   exam.submittedAt = now;
   exam.submissionNotes = submissionNotes;
   exam.updatedAt = now;
-  exam.auditLog = [...(exam.auditLog || []), entry];
+  exam.auditLog = pruneAuditLog([...(exam.auditLog || []), entry]);
 
   saveAllExams(exams);
   return exam;
@@ -313,8 +320,8 @@ export const approveExam = (
   reviewerNotes: string, 
   user: UserProfile = getCurrentUser()
 ): SavedExamDossier => {
-  if (user.role !== 'admin' && user.role !== 'reviewer') {
-    throw new Error('Chỉ Tổ trưởng chuyên môn hoặc Quản trị viên mới có quyền phê duyệt đề thi.');
+  if (!canApproveExam(user)) {
+    throw new Error('Chỉ Quản trị viên (lethimaithuong@gmail.com) hoặc Giáo viên được cấp quyền Duyệt mới được phê duyệt đề thi vào Ngân hàng dùng chung.');
   }
 
   const exams = getSavedExams();
@@ -329,7 +336,7 @@ export const approveExam = (
     userName: user.name,
     userRole: user.role,
     action: 'approved',
-    comment: reviewerNotes || 'Phê duyệt đề thi đạt chuẩn',
+    comment: reviewerNotes || 'Phê duyệt đề thi đạt chuẩn vào Ngân hàng chung',
     previousStatus: exam.status,
     newStatus: 'approved'
   };
@@ -339,7 +346,64 @@ export const approveExam = (
   exam.reviewedAt = now;
   exam.reviewerNotes = reviewerNotes || 'Đề thi đã được thẩm định đạt chuẩn chất lượng sư phạm GDPT 2018.';
   exam.updatedAt = now;
-  exam.auditLog = [...(exam.auditLog || []), entry];
+  exam.auditLog = pruneAuditLog([...(exam.auditLog || []), entry]);
+
+  // Đồng thời chuẩn hóa các câu hỏi trong đề thi này thành 'shared' và đồng bộ không trùng lặp vào Ngân hàng Câu hỏi dùng chung
+  if (Array.isArray(exam.questions) && exam.questions.length > 0) {
+    exam.questions = exam.questions.map(q => ({
+      ...q,
+      bankScope: 'shared',
+      approvedBy: user.email || user.name,
+      approvedAt: now,
+      contentHash: q.contentHash || computeQuestionContentHash(q)
+    }));
+
+    try {
+      const bankRes = loadQuestionBank();
+      const currentBank = bankRes.data || [];
+      const hashToIndex = new Map<string, number>();
+      currentBank.forEach((bq, idx) => {
+        const h = bq.contentHash || computeQuestionContentHash(bq);
+        hashToIndex.set(h, idx);
+      });
+
+      let bankChanged = false;
+      exam.questions.forEach(eq => {
+        if (!eq || !eq.content) return;
+        const h = eq.contentHash || computeQuestionContentHash(eq);
+        const existingIdx = hashToIndex.get(h);
+        if (existingIdx !== undefined) {
+          if (currentBank[existingIdx].bankScope !== 'shared') {
+            currentBank[existingIdx] = {
+              ...currentBank[existingIdx],
+              bankScope: 'shared',
+              approvedBy: user.email || user.name,
+              approvedAt: now,
+              contentHash: h
+            };
+            bankChanged = true;
+          }
+        } else {
+          currentBank.push({
+            ...eq,
+            id: eq.id || `q_shared_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            bankScope: 'shared',
+            approvedBy: user.email || user.name,
+            approvedAt: now,
+            contentHash: h
+          });
+          hashToIndex.set(h, currentBank.length - 1);
+          bankChanged = true;
+        }
+      });
+
+      if (bankChanged) {
+        saveQuestionBank(currentBank, { force: true });
+      }
+    } catch {
+      // Bỏ qua nếu đang chạy môi trường cô lập
+    }
+  }
 
   saveAllExams(exams);
   return exam;
@@ -350,8 +414,8 @@ export const rejectExam = (
   feedbackNotes: string, 
   user: UserProfile = getCurrentUser()
 ): SavedExamDossier => {
-  if (user.role !== 'admin' && user.role !== 'reviewer') {
-    throw new Error('Chỉ Tổ trưởng chuyên môn hoặc Quản trị viên mới có quyền yêu cầu chỉnh sửa đề thi.');
+  if (!canApproveExam(user)) {
+    throw new Error('Chỉ Quản trị viên (lethimaithuong@gmail.com) hoặc Giáo viên được cấp quyền Duyệt mới có quyền yêu cầu chỉnh sửa đề thi.');
   }
 
   const exams = getSavedExams();
@@ -376,7 +440,7 @@ export const rejectExam = (
   exam.reviewedAt = now;
   exam.reviewerNotes = feedbackNotes;
   exam.updatedAt = now;
-  exam.auditLog = [...(exam.auditLog || []), entry];
+  exam.auditLog = pruneAuditLog([...(exam.auditLog || []), entry]);
 
   saveAllExams(exams);
   return exam;

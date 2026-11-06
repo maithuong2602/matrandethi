@@ -9,8 +9,17 @@ import {
   preAuthorizeGmailUser, 
   deleteUserById, 
   logoutUser, 
-  DEFAULT_USERS 
+  DEFAULT_USERS,
+  SUPER_ADMIN_EMAIL,
+  toggleTeacherApprovalRight,
+  isSuperAdmin,
+  canApproveExam
 } from '../services/authService';
+import {
+  approveQuestionsToSharedBank,
+  createInheritedQuestionCopy,
+  computeQuestionContentHash
+} from '../services/storage/questionBankStorage';
 import { 
   getDatabaseConfig, 
   saveDatabaseConfig, 
@@ -103,6 +112,83 @@ describe('Gmail Authentication & Role Management', () => {
     const deleted = deleteUserById(user.id);
     expect(deleted).toBe(true);
     expect(getAllUsers().some(u => u.id === user.id)).toBe(false);
+  });
+
+  it('bảo vệ tài khoản Super Admin gốc lethimaithuong@gmail.com và phân quyền duyệt đề cho GV khác', () => {
+    const admin = loginWithGmail('lethimaithuong@gmail.com');
+    expect(admin.email).toBe(SUPER_ADMIN_EMAIL);
+    expect(admin.role).toBe('admin');
+    expect(isSuperAdmin(admin)).toBe(true);
+    expect(canApproveExam(admin)).toBe(true);
+
+    // Không cho phép hạ quyền hoặc xóa Super Admin
+    const afterAttemptDowngrade = updateUserRole(admin.id, 'teacher');
+    expect(afterAttemptDowngrade.role).toBe('admin');
+    expect(deleteUserById(admin.id)).toBe(false);
+
+    // Tạo GV mới -> mặc định không có quyền duyệt
+    const gv = loginWithGmail('gv.tinhoc7@gmail.com', 'Cô Nguyễn Thị Hoa');
+    expect(gv.role).toBe('teacher');
+    expect(canApproveExam(gv)).toBe(false);
+
+    // Admin cấp quyền duyệt cho GV này
+    const promoted = toggleTeacherApprovalRight(gv.id, true);
+    expect(canApproveExam(promoted)).toBe(true);
+    expect(promoted.role).toBe('reviewer');
+
+    // Admin thu hồi quyền duyệt
+    const revoked = toggleTeacherApprovalRight(gv.id, false);
+    expect(canApproveExam(revoked)).toBe(false);
+    expect(revoked.role).toBe('teacher');
+  });
+
+  it('chống phình dữ liệu (Zero-Bloat) và kế thừa câu hỏi khi duyệt vào Ngân hàng dùng chung', () => {
+    const baseQ = {
+      id: 'q_root_1',
+      category: 'mc' as const,
+      level: 'NB',
+      criteria: '1.1',
+      content: 'Thiết bị nào sau đây là thiết bị vào?',
+      grade: '6',
+      lesson: 'Bài 1',
+      bankScope: 'shared' as const,
+      version: 1,
+      options: [
+        { id: 'A', text: 'Bàn phím', isCorrect: true },
+        { id: 'B', text: 'Màn hình', isCorrect: false }
+      ]
+    };
+
+    // 1. GV thường tạo bản kế thừa (Copy-on-Write) và sửa nội dung tốt hơn
+    const inheritedCopy = createInheritedQuestionCopy(baseQ, 'gv.a@gmail.com', 'Cô A');
+    expect(inheritedCopy.parentId).toBe('q_root_1');
+    expect(inheritedCopy.bankScope).toBe('personal');
+    expect(inheritedCopy.version).toBe(2);
+    inheritedCopy.content = 'Thiết bị nào sau đây là thiết bị tiếp nhận thông tin đầu vào?';
+
+    // 2. GV khác tạo 1 câu trùng hệt nội dung với baseQ
+    const duplicatePersonal = {
+      ...baseQ,
+      id: 'q_dup_99',
+      bankScope: 'pending' as const,
+      contentHash: computeQuestionContentHash(baseQ)
+    };
+
+    const list = [baseQ, inheritedCopy, duplicatePersonal];
+
+    // 3. Admin lethimaithuong@gmail.com duyệt cả 2 câu:
+    // - duplicatePersonal trùng với baseQ trước khi nâng cấp hoặc sau nâng cấp
+    const res1 = approveQuestionsToSharedBank(list, ['q_dup_99'], SUPER_ADMIN_EMAIL, true);
+    expect(res1.deduplicatedCount).toBe(1);
+    expect(res1.updatedQuestions.some(q => q.id === 'q_dup_99')).toBe(false);
+
+    // - inheritedCopy nâng cấp trực tiếp vào q_root_1, không làm tăng tổng số bản ghi!
+    const res2 = approveQuestionsToSharedBank(res1.updatedQuestions, [inheritedCopy.id], SUPER_ADMIN_EMAIL, true);
+    expect(res2.upgradedParentCount).toBe(1);
+    expect(res2.updatedQuestions.length).toBe(1);
+    expect(res2.updatedQuestions[0].id).toBe('q_root_1');
+    expect(res2.updatedQuestions[0].version).toBe(2);
+    expect(res2.updatedQuestions[0].content).toContain('tiếp nhận thông tin đầu vào');
   });
 });
 

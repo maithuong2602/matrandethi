@@ -26,11 +26,17 @@ import {
   CheckSquare,
   Pencil
 } from 'lucide-react';
-import { ExerciseQuestion } from '../types';
+import { ExerciseQuestion, BankScope, UserProfile } from '../types';
 import { CURRICULUM } from '../data/curriculum';
 import { parseQuestionsWithAI, generateBulkQuestions, generateEssayRubric } from '../services/geminiService';
 import { generateOfflineQuestions } from '../services/offlineQuestionGenerator';
-import { loadQuestionBank, saveQuestionBank } from '../services/storage/questionBankStorage';
+import { 
+  loadQuestionBank, 
+  saveQuestionBank, 
+  computeQuestionContentHash, 
+  approveQuestionsToSharedBank 
+} from '../services/storage/questionBankStorage';
+import { getCurrentUser, canApproveExam, subscribeUserChange, SUPER_ADMIN_EMAIL } from '../services/authService';
 import { CurriculumMappingReview } from '../components/CurriculumMappingReview';
 import { isQuestionForHskt } from '../utils';
 import { 
@@ -258,6 +264,15 @@ const QuestionManager: React.FC = () => {
   const [editingCriterion, setEditingCriterion] = useState<{ level: string; originalText: string } | null>(null);
   const [editingCriterionText, setEditingCriterionText] = useState('');
 
+  // Hierarchical Bank Scope & User Permission State
+  const [currentUser, setCurrentUser] = useState<UserProfile>(() => getCurrentUser());
+  const [bankScopeFilter, setBankScopeFilter] = useState<'all' | BankScope>('all');
+
+  useEffect(() => {
+    const unsub = subscribeUserChange((u) => setCurrentUser(u));
+    return () => unsub();
+  }, []);
+
   // Reload custom criteria whenever grade or lesson changes
   useEffect(() => {
     setCustomCriteriaStore(loadCustomCriteriaStore());
@@ -431,25 +446,49 @@ const QuestionManager: React.FC = () => {
       return (longer.length - distance) / longer.length;
   };
 
-  // Lọc câu hỏi hiển thị theo Khối và Bài học hiện tại
+  // Lọc câu hỏi hiển thị theo Khối, Bài học và Phân tầng Ngân hàng (Chung / Chờ duyệt / Cá nhân)
   const filteredQuestions = useMemo(() => {
-    if (!lesson) {
-      if (!grade) return questions;
-      return questions.filter(q => !q.grade || q.grade === grade);
-    }
-    return questions.filter(q => q.lesson === lesson && (!q.grade || !grade || q.grade === grade));
+    return questions.filter(q => {
+      if (grade && q.grade && q.grade !== grade) return false;
+      if (lesson && q.lesson !== lesson) return false;
+      if (bankScopeFilter !== 'all') {
+        const qScope = q.bankScope || 'shared';
+        if (qScope !== bankScopeFilter) return false;
+      }
+      return true;
+    });
+  }, [questions, grade, lesson, bankScopeFilter]);
+
+  // Thống kê theo phân tầng Ngân hàng
+  const scopeCounts = useMemo(() => {
+    const base = questions.filter(q => {
+      if (grade && q.grade && q.grade !== grade) return false;
+      if (lesson && q.lesson !== lesson) return false;
+      return true;
+    });
+    return {
+      total: base.length,
+      shared: base.filter(q => (q.bankScope || 'shared') === 'shared').length,
+      pending: base.filter(q => q.bankScope === 'pending').length,
+      personal: base.filter(q => q.bankScope === 'personal').length
+    };
   }, [questions, grade, lesson]);
 
   // Stats
   const questionSummary = useMemo(() => {
     const summary: Record<string, number> = {};
-    const lessonNumberMatch = lesson.match(/Bài (\d+)|(\d+\w)/);
-    const lessonNumber = lessonNumberMatch ? (lessonNumberMatch[1] || lessonNumberMatch[2]) : null;
+    const selectedLessonMatch = lesson.match(/Bài (\d+)|(\d+\w)/);
+    const selectedLessonNumber = selectedLessonMatch ? (selectedLessonMatch[1] || selectedLessonMatch[2]) : null;
     
     filteredQuestions.forEach(q => {
-      if (q.criteria && lessonNumber) {
-        const key = `B${lessonNumber}-${q.level}-${q.criteria}`;
+      const qLessonMatch = (q.lesson || '').match(/Bài (\d+)|(\d+\w)/);
+      const lNum = selectedLessonNumber || (qLessonMatch ? (qLessonMatch[1] || qLessonMatch[2]) : null);
+      if (q.criteria && lNum) {
+        const key = `${!lesson && q.grade ? `K${q.grade}-` : ''}B${lNum}-${q.level}-${q.criteria}`;
         summary[key] = (summary[key] || 0) + 1;
+      } else if (q.level) {
+        const fallbackKey = `${q.grade ? `Khối ${q.grade} - ` : ''}Mức ${q.level}${q.criteria ? ` (${q.criteria})` : ''}`;
+        summary[fallbackKey] = (summary[fallbackKey] || 0) + 1;
       }
     });
     return summary;
@@ -457,6 +496,7 @@ const QuestionManager: React.FC = () => {
 
   // Handlers
   const handleAddQuestion = (type: 'mc' | 'essay') => {
+    const userCanApprove = canApproveExam(currentUser);
     const newQuestion: ExerciseQuestion = {
       id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
       category: type,
@@ -465,6 +505,11 @@ const QuestionManager: React.FC = () => {
       content: '',
       grade: grade || '',
       lesson: lesson || '',
+      bankScope: userCanApprove ? 'shared' : 'personal',
+      ownerEmail: currentUser.email,
+      ownerName: currentUser.name,
+      version: 1,
+      updatedAt: new Date().toISOString(),
       // MC defaults
       mcType: 'multiple-choice',
       options: [
@@ -477,6 +522,52 @@ const QuestionManager: React.FC = () => {
       essayType: 'explanation'
     };
     setQuestions(prev => [...prev, newQuestion]);
+  };
+
+  // Gửi câu hỏi cá nhân lên chờ duyệt vào Ngân hàng dùng chung
+  const handleSubmitFilteredToSharedBank = () => {
+    const targetIds = new Set(
+      filteredQuestions
+        .filter(q => q.bankScope === 'personal')
+        .map(q => q.id)
+    );
+    if (targetIds.size === 0) {
+      setAlertMessage('Không có câu hỏi nào ở Kho cá nhân cần gửi duyệt.');
+      return;
+    }
+    const now = new Date().toISOString();
+    setQuestions(prev =>
+      prev.map(q =>
+        targetIds.has(q.id)
+          ? { ...q, bankScope: 'pending', updatedAt: now, contentHash: computeQuestionContentHash(q) }
+          : q
+      )
+    );
+    setAlertMessage(`Đã gửi ${targetIds.size} câu hỏi lên danh sách Chờ duyệt vào Ngân hàng dùng chung.`);
+  };
+
+  // Duyệt câu hỏi vào Ngân hàng chuẩn dùng chung (chỉ Admin lethimaithuong@gmail.com hoặc GV có quyền canApprove)
+  const handleApprovePendingQuestions = () => {
+    const targetIds = filteredQuestions
+      .filter(q => q.bankScope === 'pending' || q.bankScope === 'personal')
+      .map(q => q.id);
+    if (targetIds.length === 0) {
+      setAlertMessage('Tất cả câu hỏi trong danh sách hiện tại đã nằm trong Ngân hàng chuẩn dùng chung.');
+      return;
+    }
+    try {
+      const res = approveQuestionsToSharedBank(
+        questions,
+        targetIds,
+        currentUser.email || SUPER_ADMIN_EMAIL,
+        canApproveExam(currentUser)
+      );
+      setQuestions(res.updatedQuestions);
+      const dedupNote = res.deduplicatedCount > 0 ? ` (Đã tự động gộp ${res.deduplicatedCount} câu trùng lặp để chống phình dữ liệu)` : '';
+      setAlertMessage(`Đã phê duyệt ${res.approvedCount} câu hỏi vào Ngân hàng chuẩn dùng chung!${dedupNote}`);
+    } catch (err: any) {
+      setAlertMessage(err.message || 'Không có quyền duyệt.');
+    }
   };
 
   const handleRemoveQuestion = (id: string) => {
@@ -1226,6 +1317,80 @@ const QuestionManager: React.FC = () => {
                                 </option>
                             ))}
                         </select>
+                    </div>
+                </div>
+
+                {/* Thanh Phân tầng Ngân hàng Câu hỏi & Phê duyệt dùng chung */}
+                <div className="mt-4 pt-3.5 border-t border-gray-100 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-xs font-bold text-gray-600 mr-1">Phân cấp Ngân hàng:</span>
+                        <button
+                            type="button"
+                            onClick={() => setBankScopeFilter('all')}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                                bankScopeFilter === 'all'
+                                    ? 'bg-primary text-white'
+                                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                            }`}
+                        >
+                            Tất cả ({scopeCounts.total})
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setBankScopeFilter('shared')}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                                bankScopeFilter === 'shared'
+                                    ? 'bg-emerald-600 text-white'
+                                    : 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
+                            }`}
+                        >
+                            Ngân hàng chung đã duyệt ({scopeCounts.shared})
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setBankScopeFilter('pending')}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                                bankScopeFilter === 'pending'
+                                    ? 'bg-amber-600 text-white'
+                                    : 'bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100'
+                            }`}
+                        >
+                            Chờ duyệt ({scopeCounts.pending})
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setBankScopeFilter('personal')}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                                bankScopeFilter === 'personal'
+                                    ? 'bg-indigo-600 text-white'
+                                    : 'bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100'
+                            }`}
+                        >
+                            Kho cá nhân ({scopeCounts.personal})
+                        </button>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                        {scopeCounts.personal > 0 && !canApproveExam(currentUser) && (
+                            <button
+                                type="button"
+                                onClick={handleSubmitFilteredToSharedBank}
+                                className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold shadow-xs cursor-pointer"
+                            >
+                                Gửi duyệt ({scopeCounts.personal} câu)
+                            </button>
+                        )}
+                        {(scopeCounts.pending > 0 || scopeCounts.personal > 0) && canApproveExam(currentUser) && (
+                            <button
+                                type="button"
+                                onClick={handleApprovePendingQuestions}
+                                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-xs flex items-center gap-1 cursor-pointer"
+                                title="Duyệt đưa vào Ngân hàng chuẩn dùng chung và tự động lọc trùng lặp"
+                            >
+                                <CheckCircle2 size={14} />
+                                Duyệt vào Ngân hàng chung ({scopeCounts.pending + scopeCounts.personal} câu)
+                            </button>
+                        )}
                     </div>
                 </div>
             </div>

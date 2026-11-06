@@ -1,15 +1,15 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { 
-    Upload, FileText, Settings, Play, Check, X, Printer, Download, RefreshCw, 
-    Layers, FileJson, Grid3X3, ChevronDown, AlertCircle, Sparkles, 
-    Wand2, ShieldCheck, CheckCircle2, AlertTriangle, FileSpreadsheet, 
+import {
+    Upload, FileText, Settings, Play, Check, X, Printer, Download, RefreshCw,
+    Layers, FileJson, Grid3X3, ChevronDown, AlertCircle, Sparkles,
+    Wand2, ShieldCheck, CheckCircle2, AlertTriangle, FileSpreadsheet,
     Shuffle, Copy, Loader2, FolderCheck, FileBox, Search, Database, Trash2, PlusCircle
 } from 'lucide-react';
 import { ExerciseQuestion, ImportedMatrixData, ExamVariant, ExamReviewResult, SavedExamDossier } from '../types';
-import { 
-    generateExamWordHtml, 
-    generateAzotaKeyHtml, 
-    generateExamVariants, 
+import {
+    generateExamWordHtml,
+    generateAzotaKeyHtml,
+    generateExamVariants,
     generateMultiCodeAnswerKeyMatrixHtml,
     generateFullDossierHtml,
     extractHtmlParts
@@ -18,15 +18,18 @@ import { reviewExamWithAI, autoFillMissingQuestions } from '../services/geminiSe
 import { splitLegacyTrueFalseQuestions, autoTagQuestion } from './QuestionManager';
 import { CURRICULUM } from '../data/curriculum';
 import { loadQuestionBank, saveQuestionBank } from '../services/storage/questionBankStorage';
-import { 
-    getSavedExams, 
-    saveExamDossier, 
+import {
+    getSavedExams,
+    saveExamDossier,
     deleteExamDossier,
     duplicateExamDossier,
     exportExamBankJson,
     importExamBankJson,
-    subscribeExamChange
+    subscribeExamChange,
+    submitExamForReview,
+    approveExam
 } from '../services/examApprovalService';
+import { getCurrentUser, canApproveExam } from '../services/authService';
 
 export const detectGradeFromContext = (questions: any[], headerInfo?: any, importedMatrix?: any): string => {
     if (Array.isArray(questions)) {
@@ -68,7 +71,7 @@ export const buildDefaultFileName = (
 ): string => {
     const grade = detectGradeFromContext(questions, headerInfo, importedMatrix);
     const examTitle = (headerInfo?.tenKyThi || importedMatrix?.thongTinChung?.tenDe || '').toUpperCase();
-    
+
     let examCode = 'GK1';
     if (examTitle.includes('CUỐI KÌ 1') || examTitle.includes('CUỐI KÌ I') || examTitle.includes('CK1') || examTitle.includes('CK 1') || examTitle.includes('HỌC KÌ 1') || examTitle.includes('HỌC KÌ I')) {
         examCode = 'CK1';
@@ -106,7 +109,7 @@ const ExamGenerator: React.FC = () => {
     const [bank, setBank] = useState<BankQuestion[]>([]);
     const [selectedGradeFilter, setSelectedGradeFilter] = useState<string>('all');
     const [generatedTest, setGeneratedTest] = useState<BankQuestion[]>([]);
-    
+
     // Config Modes
     const [configMode, setConfigMode] = useState<'manual' | 'matrix'>('manual');
     const [manualConfig, setManualConfig] = useState<Record<string, Record<string, number>>>({});
@@ -274,7 +277,7 @@ const ExamGenerator: React.FC = () => {
     const [isFileNameManuallyEdited, setIsFileNameManuallyEdited] = useState<boolean>(false);
 
     useEffect(() => {
-        try { localStorage.setItem('teacherName', teacherName); } catch {}
+        try { localStorage.setItem('teacherName', teacherName); } catch { }
     }, [teacherName]);
 
     useEffect(() => {
@@ -283,7 +286,7 @@ const ExamGenerator: React.FC = () => {
             setCustomFileName(autoName);
         }
     }, [generatedTest, headerInfo, teacherName, importedMatrix, isFileNameManuallyEdited]);
-    
+
     // --- EXAM BANK (NGÂN HÀNG ĐỀ THI) HANDLERS ---
     const handleSaveToExamBank = () => {
         if (generatedTest.length === 0) {
@@ -555,7 +558,7 @@ const ExamGenerator: React.FC = () => {
         const stats: Record<string, Record<string, number>> = {};
         bank.forEach(q => {
             if (!stats[q.lesson]) stats[q.lesson] = { NB: 0, TH: 0, VD: 0, VDC: 0 };
-            const lvl = q.level as 'NB'|'TH'|'VD'|'VDC';
+            const lvl = q.level as 'NB' | 'TH' | 'VD' | 'VDC';
             if (stats[q.lesson][lvl] !== undefined) stats[q.lesson][lvl]++;
         });
         return stats;
@@ -576,8 +579,8 @@ const ExamGenerator: React.FC = () => {
         setImportedMatrix(data);
         if (data.thongTinChung?.tenDe) {
             const detectedG = detectGradeFromContext([], null, data);
-            setHeaderInfo(prev => ({ 
-                ...prev, 
+            setHeaderInfo(prev => ({
+                ...prev,
                 tenKyThi: data.thongTinChung.tenDe,
                 monHoc: `MÔN: TIN HỌC – LỚP ${detectedG}`
             }));
@@ -644,7 +647,7 @@ const ExamGenerator: React.FC = () => {
                     questionType: preferredQuestionType || (category === 'essay' ? 'essay' : 'multiple-choice')
                 });
             }
-            
+
             return sortedPool.slice(0, count).map(q => ({
                 ...q,
                 points: category === 'essay' ? 1.0 : preferredQuestionType === 'true-false' ? 1.0 : preferredQuestionType === 'short-answer' ? 0.5 : 0.25,
@@ -661,8 +664,8 @@ const ExamGenerator: React.FC = () => {
                     if (count > 0) {
                         let picks = findQuestions(lesson, lvl, 'mc', count);
                         if (picks.length < count) {
-                             const essayPicks = findQuestions(lesson, lvl, 'essay', count - picks.length);
-                             picks = [...picks, ...essayPicks];
+                            const essayPicks = findQuestions(lesson, lvl, 'essay', count - picks.length);
+                            picks = [...picks, ...essayPicks];
                         }
                         selected.push(...picks);
                     }
@@ -784,7 +787,7 @@ const ExamGenerator: React.FC = () => {
 
     // --- STEP 3: REVIEW & EXPORT ---
     const triggerBulkSwap = (targetLevel?: string) => {
-        setIsSwapMenuOpen(false); 
+        setIsSwapMenuOpen(false);
         setTimeout(() => handleBulkSwap(targetLevel), 50);
     };
 
@@ -793,7 +796,7 @@ const ExamGenerator: React.FC = () => {
         if (!window.confirm(`Bạn có chắc muốn đổi ${label}?`)) return;
 
         const newTest = [...generatedTest];
-        const currentTestIds = new Set(generatedTest.map(t => t.id)); 
+        const currentTestIds = new Set(generatedTest.map(t => t.id));
         const newlySelectedIds = new Set<string>();
 
         newTest.forEach(q => {
@@ -828,9 +831,9 @@ const ExamGenerator: React.FC = () => {
 
             if (finalCandidates.length > 0) {
                 const replacement = finalCandidates[Math.floor(Math.random() * finalCandidates.length)];
-                newTest[index] = { 
-                    ...replacement, 
-                    points: q.points, 
+                newTest[index] = {
+                    ...replacement,
+                    points: q.points,
                     uniqueId: Math.random()
                 };
                 newlySelectedIds.add(replacement.id);
@@ -851,15 +854,15 @@ const ExamGenerator: React.FC = () => {
     const swapQuestion = (q: BankQuestion) => {
         const qLesson = q.lesson.toLowerCase().trim();
         const qCriteria = (q.criteria || '').trim().toLowerCase();
-        
+
         const isCompatible = (b: BankQuestion) => b.level === q.level && b.category === q.category;
         const isLessonMatch = (b: BankQuestion) => {
-             const bLesson = b.lesson.toLowerCase().trim();
-             return bLesson.includes(qLesson) || qLesson.includes(bLesson);
+            const bLesson = b.lesson.toLowerCase().trim();
+            return bLesson.includes(qLesson) || qLesson.includes(bLesson);
         };
         const isCriteriaMatch = (b: BankQuestion) => {
-             if (!qCriteria) return true;
-             return (b.criteria || '').trim().toLowerCase() === qCriteria;
+            if (!qCriteria) return true;
+            return (b.criteria || '').trim().toLowerCase() === qCriteria;
         };
 
         let pool = bank.filter(b => isCompatible(b) && isLessonMatch(b));
@@ -868,7 +871,7 @@ const ExamGenerator: React.FC = () => {
         let bestCandidates = candidates.filter(b => isCriteriaMatch(b));
 
         if (bestCandidates.length === 0 && candidates.length > 0) {
-             bestCandidates = candidates; 
+            bestCandidates = candidates;
         }
 
         if (bestCandidates.length > 0) {
@@ -898,10 +901,10 @@ const ExamGenerator: React.FC = () => {
         if (generatedTest.length === 0) return;
 
         if (exportType === 'azota_current' || exportType === 'azota_all') {
-            const variantsToExport = exportType === 'azota_current' 
+            const variantsToExport = exportType === 'azota_current'
                 ? [variants.find(v => v.code === activeVariantCode)].filter(Boolean)
                 : variants;
-            
+
             variantsToExport.forEach(v => {
                 if (!v) return;
                 const keyHtml = generateAzotaKeyHtml(v.questions);
@@ -915,7 +918,7 @@ const ExamGenerator: React.FC = () => {
                     }
                     return html;
                 }).join('');
-                
+
                 const fullHtml = `<html><body>${questionsHtml}<br/><br/>${keyHtml}</body></html>`;
                 const blob = new Blob([fullHtml], { type: 'application/msword' });
                 const url = URL.createObjectURL(blob);
@@ -948,14 +951,14 @@ const ExamGenerator: React.FC = () => {
                 const vHeader = { ...headerInfo, maDe: v.code };
                 const parts = extractHtmlParts(generateExamWordHtml(v.questions, vHeader));
                 if (idx === 0) combinedStyles += parts.style;
-                
+
                 let out = parts.body;
                 if (idx > 0) {
                     out = `<br clear=all style='mso-special-character:line-break;page-break-before:always'>` + out;
                 }
                 return out;
             }).join('');
-            
+
             const finalAllHtml = `
                 <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
                 <head>
@@ -975,7 +978,7 @@ const ExamGenerator: React.FC = () => {
                 </body>
                 </html>
             `;
-            
+
             const blob = new Blob(['\ufeff', finalAllHtml], { type: 'application/msword' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -1070,7 +1073,7 @@ const ExamGenerator: React.FC = () => {
                                     </span>
                                 </div>
                                 <h2 className="text-xl font-bold text-gray-900 mb-1.5">
-                                    Sử dụng Ngân hàng Câu hỏi nội bộ trên máy
+                                    Tạo đề thi mới từ Ngân hàng Câu hỏi trên máy
                                 </h2>
                                 <p className="text-sm text-gray-500 mb-5">
                                     Sử dụng trực tiếp các câu hỏi bạn đã soạn trong mục <strong>Câu Hỏi</strong> mà không cần phải xuất/nhập file thủ công.
@@ -1094,11 +1097,10 @@ const ExamGenerator: React.FC = () => {
                                                     setSelectedGradeFilter(g.id);
                                                     loadInternalQuestionBank(g.id, false);
                                                 }}
-                                                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold border transition-all ${
-                                                    selectedGradeFilter === g.id
-                                                        ? 'bg-primary text-white border-primary shadow-xs'
-                                                        : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
-                                                }`}
+                                                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold border transition-all ${selectedGradeFilter === g.id
+                                                    ? 'bg-primary text-white border-primary shadow-xs'
+                                                    : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
+                                                    }`}
                                             >
                                                 {g.label}
                                             </button>
@@ -1122,24 +1124,24 @@ const ExamGenerator: React.FC = () => {
                         </div>
 
                         {/* Card 2: Upload External JSON Files (1 col) */}
-                        <div 
-                            className="bg-white rounded-2xl shadow-xs p-6 text-center border-2 border-dashed border-gray-200 hover:border-primary transition-all cursor-pointer flex flex-col items-center justify-center group" 
+                        <div
+                            className="bg-white rounded-2xl shadow-xs p-6 text-center border-2 border-dashed border-gray-200 hover:border-primary transition-all cursor-pointer flex flex-col items-center justify-center group"
                             onClick={() => document.getElementById('jsonUpload')?.click()}
                         >
                             <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center mb-4 text-primary group-hover:scale-105 transition-transform border border-gray-200">
                                 <Upload size={26} />
                             </div>
-                            <h3 className="text-base font-bold text-gray-800 mb-1">Tải lên Ngân hàng Câu hỏi (.json)</h3>
+                            <h3 className="text-base font-bold text-gray-800 mb-1">Nạp thêm từ File JSON</h3>
                             <p className="text-xs text-gray-500 mb-4 leading-relaxed">
                                 Tải lên 1 hoặc nhiều file <code className="bg-gray-100 px-1 rounded">.json</code> câu hỏi từ máy tính để gộp vào Ngân hàng.
                             </p>
-                            <input 
-                                type="file" 
-                                id="jsonUpload" 
-                                className="hidden" 
-                                accept=".json" 
-                                multiple 
-                                onChange={handleFileUpload} 
+                            <input
+                                type="file"
+                                id="jsonUpload"
+                                className="hidden"
+                                accept=".json"
+                                multiple
+                                onChange={handleFileUpload}
                             />
                             <span className="px-4 py-2 bg-slate-100 group-hover:bg-primary group-hover:text-white text-gray-700 rounded-xl text-xs font-bold transition-colors">
                                 Chọn file JSON từ máy
@@ -1190,11 +1192,10 @@ const ExamGenerator: React.FC = () => {
                                         key={tab.id}
                                         type="button"
                                         onClick={() => setExamGradeFilter(tab.id)}
-                                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                                            examGradeFilter === tab.id
-                                                ? 'bg-primary text-white'
-                                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                                        }`}
+                                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${examGradeFilter === tab.id
+                                            ? 'bg-primary text-white'
+                                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                            }`}
                                     >
                                         {tab.label}
                                     </button>
@@ -1312,16 +1313,16 @@ const ExamGenerator: React.FC = () => {
                                 Ngân hàng đang chọn: <strong className="text-primary">{bank.length} câu hỏi</strong> ({Object.keys(availableStats).length} bài học)
                             </p>
                         </div>
-                        
+
                         {/* Config Mode Toggle */}
                         <div className="flex bg-gray-100 p-1 rounded-xl">
-                            <button 
+                            <button
                                 onClick={() => setConfigMode('manual')}
                                 className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all flex items-center gap-2 ${configMode === 'manual' ? 'bg-white text-primary shadow-2xs' : 'text-gray-500 hover:text-gray-700'}`}
                             >
                                 <Grid3X3 size={16} /> Chọn Số Câu Theo Bài
                             </button>
-                            <button 
+                            <button
                                 onClick={() => setConfigMode('matrix')}
                                 className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all flex items-center gap-2 ${configMode === 'matrix' ? 'bg-white text-primary shadow-2xs' : 'text-gray-500 hover:text-gray-700'}`}
                             >
@@ -1352,10 +1353,10 @@ const ExamGenerator: React.FC = () => {
                                                 {['NB', 'TH', 'VD', 'VDC'].map(lvl => (
                                                     <td key={lvl} className="p-2 border text-center">
                                                         <div className="flex flex-col items-center">
-                                                            <input 
-                                                                type="number" 
-                                                                min="0" 
-                                                                max={stats[lvl]} 
+                                                            <input
+                                                                type="number"
+                                                                min="0"
+                                                                max={stats[lvl]}
                                                                 value={manualConfig[lesson]?.[lvl] || ''}
                                                                 placeholder="0"
                                                                 className={`w-16 p-1.5 text-center border rounded-lg focus:ring-2 focus:ring-primary outline-none text-sm ${stats[lvl] === 0 ? 'bg-gray-100 text-gray-400' : 'bg-white font-bold text-gray-800'}`}
@@ -1415,14 +1416,14 @@ const ExamGenerator: React.FC = () => {
                                         <div className="flex justify-between items-center mb-4">
                                             <div>
                                                 <h3 className="text-base font-bold text-emerald-700 flex items-center gap-2">
-                                                    <CheckCircle2 size={20}/> Đã chọn ma trận: {importedMatrix.thongTinChung.tenDe}
+                                                    <CheckCircle2 size={20} /> Đã chọn ma trận: {importedMatrix.thongTinChung.tenDe}
                                                 </h3>
                                             </div>
                                             <button onClick={() => setImportedMatrix(null)} className="text-red-600 hover:underline text-xs font-bold">
                                                 Đổi ma trận khác
                                             </button>
                                         </div>
-                                        
+
                                         <div className="bg-white border rounded-xl overflow-hidden">
                                             <table className="w-full text-xs sm:text-sm">
                                                 <thead className="bg-gray-100 text-gray-700 font-bold">
@@ -1471,11 +1472,10 @@ const ExamGenerator: React.FC = () => {
                                             key={count}
                                             type="button"
                                             onClick={() => setVariantCount(count)}
-                                            className={`px-3.5 py-2 rounded-lg text-xs font-bold border transition-all ${
-                                                variantCount === count 
-                                                    ? 'bg-primary text-white border-primary' 
-                                                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                                            }`}
+                                            className={`px-3.5 py-2 rounded-lg text-xs font-bold border transition-all ${variantCount === count
+                                                ? 'bg-primary text-white border-primary'
+                                                : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                                                }`}
                                         >
                                             {count} mã đề
                                         </button>
@@ -1483,8 +1483,8 @@ const ExamGenerator: React.FC = () => {
                                 </div>
                             </div>
                             <div className="flex items-center gap-2.5 pt-2 md:pt-5">
-                                <input 
-                                    type="checkbox" 
+                                <input
+                                    type="checkbox"
                                     id="shuffleOpts"
                                     checked={shuffleOptions}
                                     onChange={(e) => setShuffleOptions(e.target.checked)}
@@ -1501,8 +1501,8 @@ const ExamGenerator: React.FC = () => {
                         <button onClick={() => setStep('upload')} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-xl font-semibold text-sm">
                             ← Quay lại
                         </button>
-                        <button 
-                            onClick={generateTest} 
+                        <button
+                            onClick={generateTest}
                             disabled={configMode === 'matrix' && !importedMatrix}
                             className="px-7 py-2.5 bg-emerald-600 text-white rounded-xl font-bold text-sm hover:bg-emerald-700 shadow-md shadow-emerald-200 flex items-center gap-2 disabled:opacity-50 transition-all"
                         >
@@ -1631,11 +1631,10 @@ const ExamGenerator: React.FC = () => {
                                         <button
                                             key={v.code}
                                             onClick={() => setActiveVariantCode(v.code)}
-                                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                                                activeVariantCode === v.code 
-                                                    ? 'bg-primary text-white' 
-                                                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                                            }`}
+                                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${activeVariantCode === v.code
+                                                ? 'bg-primary text-white'
+                                                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                                                }`}
                                         >
                                             Mã {v.code}
                                         </button>
@@ -1657,16 +1656,16 @@ const ExamGenerator: React.FC = () => {
 
                             {/* Bulk Swap Menu */}
                             <div className="relative" ref={swapMenuRef}>
-                                <button 
+                                <button
                                     onClick={(e) => { e.preventDefault(); e.stopPropagation(); setIsSwapMenuOpen(!isSwapMenuOpen); }}
                                     className="px-3.5 py-1.5 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 flex items-center gap-1.5 font-bold text-xs border border-gray-200"
                                 >
-                                    <RefreshCw size={14} /> Đổi câu hỏi <ChevronDown size={13}/>
+                                    <RefreshCw size={14} /> Đổi câu hỏi <ChevronDown size={13} />
                                 </button>
                                 {isSwapMenuOpen && (
                                     <div className="absolute right-0 top-full mt-1.5 w-44 bg-white rounded-xl shadow-xl border border-gray-200 z-50 overflow-hidden">
                                         <button onClick={() => triggerBulkSwap()} className="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-xs flex items-center gap-2 font-bold text-gray-800">
-                                            <RefreshCw size={13}/> Đổi toàn bộ đề
+                                            <RefreshCw size={13} /> Đổi toàn bộ đề
                                         </button>
                                         <div className="border-t border-gray-100"></div>
                                         <button onClick={() => triggerBulkSwap('NB')} className="w-full text-left px-4 py-2 hover:bg-gray-50 text-xs text-green-700 font-semibold">Mức Nhận biết</button>
@@ -1680,10 +1679,10 @@ const ExamGenerator: React.FC = () => {
                             {/* Bulk Points */}
                             <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-xl border border-gray-200">
                                 <span className="text-[11px] font-semibold text-gray-600 pl-2">TN:</span>
-                                <input 
-                                    type="number" 
-                                    step="0.25" 
-                                    value={bulkPoints} 
+                                <input
+                                    type="number"
+                                    step="0.25"
+                                    value={bulkPoints}
                                     onChange={(e) => setBulkPoints(parseFloat(e.target.value))}
                                     className="w-12 p-1 border rounded text-center text-xs font-bold bg-white"
                                 />
@@ -1692,10 +1691,10 @@ const ExamGenerator: React.FC = () => {
                                 </button>
                                 <div className="h-4 w-[1px] bg-gray-300 mx-0.5"></div>
                                 <span className="text-[11px] font-semibold text-gray-600 pl-1">TL:</span>
-                                <input 
-                                    type="number" 
-                                    step="0.25" 
-                                    value={bulkPointsTL} 
+                                <input
+                                    type="number"
+                                    step="0.25"
+                                    value={bulkPointsTL}
                                     onChange={(e) => setBulkPointsTL(parseFloat(e.target.value))}
                                     className="w-12 p-1 border rounded text-center text-xs font-bold bg-white"
                                 />
@@ -1761,38 +1760,37 @@ const ExamGenerator: React.FC = () => {
                                             <div className="flex-1">
                                                 <div className="flex items-center gap-2 mb-2 flex-wrap">
                                                     <span className="font-extrabold text-blue-900 text-sm">Câu {idx + 1}</span>
-                                                    <span className={`text-[10px] px-2 py-0.5 rounded font-bold border ${q.level==='NB'?'bg-green-50 border-green-200 text-green-700':q.level==='TH'?'bg-blue-50 border-blue-200 text-blue-700':q.level==='VD'?'bg-yellow-50 border-yellow-200 text-yellow-700':'bg-red-50 border-red-200 text-red-700'}`}>
+                                                    <span className={`text-[10px] px-2 py-0.5 rounded font-bold border ${q.level === 'NB' ? 'bg-green-50 border-green-200 text-green-700' : q.level === 'TH' ? 'bg-blue-50 border-blue-200 text-blue-700' : q.level === 'VD' ? 'bg-yellow-50 border-yellow-200 text-yellow-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
                                                         {q.level} {q.criteria ? `- ${q.criteria}` : ''}
                                                     </span>
                                                     <span className="text-[10px] font-bold text-purple-700 border border-purple-200 bg-purple-50 px-2 py-0.5 rounded">
-                                                        {q.questionType === 'true-false' 
-                                                            ? 'Đúng / Sai' 
-                                                            : q.questionType === 'short-answer' 
-                                                            ? 'Trả lời ngắn' 
-                                                            : q.questionType === 'multiple-answer' || q.mcType === 'multiple-answer'
-                                                            ? 'Nhiều đáp án'
-                                                            : q.category === 'essay' 
-                                                            ? 'Tự luận' 
-                                                            : 'Trắc nghiệm'}
+                                                        {q.questionType === 'true-false'
+                                                            ? 'Đúng / Sai'
+                                                            : q.questionType === 'short-answer'
+                                                                ? 'Trả lời ngắn'
+                                                                : q.questionType === 'multiple-answer' || q.mcType === 'multiple-answer'
+                                                                    ? 'Nhiều đáp án'
+                                                                    : q.category === 'essay'
+                                                                        ? 'Tự luận'
+                                                                        : 'Trắc nghiệm'}
                                                     </span>
                                                     <span className="text-xs text-gray-400">({q.lesson})</span>
                                                 </div>
                                                 <p className="text-gray-800 text-sm font-medium whitespace-pre-wrap">{q.content}</p>
-                                                
+
                                                 {q.image && (
                                                     <div className="mt-3">
                                                         <img src={q.image} alt="Question illustration" className="max-h-40 w-auto rounded-lg border border-gray-200" />
                                                     </div>
                                                 )}
-                                                
+
                                                 {q.questionType === 'true-false' && (
                                                     <div className="mt-2.5 flex items-center gap-2">
                                                         <span className="text-xs font-semibold text-gray-500">Đáp án chuẩn:</span>
-                                                        <span className={`px-3 py-1 rounded text-xs font-extrabold ${
-                                                            q.answer === 'Sai' || q.options?.find(o => o.isCorrect)?.id === 'Sai'
-                                                                ? 'bg-rose-100 text-rose-800 border border-rose-300'
-                                                                : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                                                        }`}>
+                                                        <span className={`px-3 py-1 rounded text-xs font-extrabold ${q.answer === 'Sai' || q.options?.find(o => o.isCorrect)?.id === 'Sai'
+                                                            ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                                                            : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                                            }`}>
                                                             {q.answer === 'Sai' || q.options?.find(o => o.isCorrect)?.id === 'Sai' ? '✗ SAI' : '✓ ĐÚNG'}
                                                         </span>
                                                     </div>
@@ -1825,8 +1823,8 @@ const ExamGenerator: React.FC = () => {
                                             <div className="flex flex-col items-end gap-2 min-w-[120px]">
                                                 <div className="flex items-center gap-1.5 bg-gray-50 px-2 py-1 rounded-lg border border-gray-200">
                                                     <label className="text-xs text-gray-600 font-semibold">Điểm:</label>
-                                                    <input 
-                                                        type="number" 
+                                                    <input
+                                                        type="number"
                                                         step="0.25"
                                                         min="0.25"
                                                         max="10.0"
@@ -1838,7 +1836,7 @@ const ExamGenerator: React.FC = () => {
                                                         }}
                                                     />
                                                 </div>
-                                                <button 
+                                                <button
                                                     onClick={() => swapQuestion(q)}
                                                     className="text-xs flex items-center gap-1 text-primary hover:bg-blue-50 px-2 py-1 rounded font-semibold transition-colors"
                                                 >
@@ -1857,30 +1855,30 @@ const ExamGenerator: React.FC = () => {
                         <button onClick={() => setStep('config')} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-xl font-semibold text-sm">
                             ← Quay lại Cấu hình
                         </button>
-                        
+
                         <div className="flex flex-wrap items-center gap-2.5">
-                            <button 
+                            <button
                                 onClick={handleSaveToExamBank}
                                 className="px-4 py-2.5 bg-blue-50 text-primary hover:bg-blue-100 border border-blue-200 rounded-xl font-bold text-xs sm:text-sm flex items-center gap-1.5 transition-all"
                             >
                                 <FolderCheck size={16} /> Lưu Vào Ngân Hàng Đề
                             </button>
 
-                            <button 
+                            <button
                                 onClick={() => { setExportType('key_matrix'); setShowExportModal(true); }}
                                 className="px-4 py-2.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 rounded-xl font-bold text-xs sm:text-sm flex items-center gap-1.5 transition-all"
                             >
                                 <FileSpreadsheet size={16} /> Bảng Đáp Án
                             </button>
-                            
-                            <button 
+
+                            <button
                                 onClick={() => { setExportType('azota_current'); setShowExportModal(true); }}
                                 className="px-4 py-2.5 bg-orange-500 text-white hover:bg-orange-600 rounded-xl font-bold text-xs sm:text-sm flex items-center gap-1.5 transition-all"
                             >
                                 <FileText size={16} /> Xuất Azota
                             </button>
-                            
-                            <button 
+
+                            <button
                                 onClick={() => setShowExportModal(true)}
                                 className="px-5 py-2.5 bg-primary text-white hover:bg-primary-dark rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 shadow-md shadow-blue-200 transition-all"
                             >
@@ -2000,42 +1998,42 @@ const ExamGenerator: React.FC = () => {
                                     </label>
                                 </div>
                             </div>
-                            
+
                             <div className="space-y-3 border-t pt-4">
                                 <div className="grid grid-cols-2 gap-3">
                                     <div>
                                         <label className="block text-xs font-semibold text-gray-700 mb-1">Đơn vị chủ quản</label>
-                                        <input type="text" className="w-full p-2 border rounded-lg text-xs" value={headerInfo.donVi} onChange={e=>setHeaderInfo({...headerInfo, donVi:e.target.value})} />
+                                        <input type="text" className="w-full p-2 border rounded-lg text-xs" value={headerInfo.donVi} onChange={e => setHeaderInfo({ ...headerInfo, donVi: e.target.value })} />
                                     </div>
                                     <div>
                                         <label className="block text-xs font-semibold text-gray-700 mb-1">Tên trường</label>
-                                        <input type="text" className="w-full p-2 border rounded-lg text-xs" value={headerInfo.tenTruong} onChange={e=>setHeaderInfo({...headerInfo, tenTruong:e.target.value})} />
+                                        <input type="text" className="w-full p-2 border rounded-lg text-xs" value={headerInfo.tenTruong} onChange={e => setHeaderInfo({ ...headerInfo, tenTruong: e.target.value })} />
                                     </div>
                                 </div>
                                 <div>
                                     <label className="block text-xs font-semibold text-gray-700 mb-1">Tên kỳ thi</label>
-                                    <input type="text" className="w-full p-2 border rounded-lg text-xs" value={headerInfo.tenKyThi} onChange={e=>setHeaderInfo({...headerInfo, tenKyThi:e.target.value})} />
+                                    <input type="text" className="w-full p-2 border rounded-lg text-xs" value={headerInfo.tenKyThi} onChange={e => setHeaderInfo({ ...headerInfo, tenKyThi: e.target.value })} />
                                 </div>
                                 <div className="grid grid-cols-2 gap-3">
                                     <div>
                                         <label className="block text-xs font-semibold text-gray-700 mb-1">Môn & Khối lớp</label>
-                                        <input type="text" className="w-full p-2 border rounded-lg text-xs" value={headerInfo.monHoc} onChange={e=>setHeaderInfo({...headerInfo, monHoc:e.target.value})} />
+                                        <input type="text" className="w-full p-2 border rounded-lg text-xs" value={headerInfo.monHoc} onChange={e => setHeaderInfo({ ...headerInfo, monHoc: e.target.value })} />
                                     </div>
                                     <div>
                                         <label className="block text-xs font-semibold text-gray-700 mb-1">Thời gian làm bài</label>
-                                        <input type="text" className="w-full p-2 border rounded-lg text-xs" value={headerInfo.thoiGian} onChange={e=>setHeaderInfo({...headerInfo, thoiGian:e.target.value})} />
+                                        <input type="text" className="w-full p-2 border rounded-lg text-xs" value={headerInfo.thoiGian} onChange={e => setHeaderInfo({ ...headerInfo, thoiGian: e.target.value })} />
                                     </div>
                                 </div>
                                 <div>
                                     <label className="block text-xs font-bold text-primary mb-1">Tên file tải về</label>
-                                    <input 
-                                        type="text" 
-                                        className="w-full p-2 border border-blue-400 bg-blue-50/30 rounded-lg text-xs font-bold text-gray-800" 
-                                        value={customFileName} 
+                                    <input
+                                        type="text"
+                                        className="w-full p-2 border border-blue-400 bg-blue-50/30 rounded-lg text-xs font-bold text-gray-800"
+                                        value={customFileName}
                                         onChange={e => {
                                             setCustomFileName(e.target.value);
                                             setIsFileNameManuallyEdited(true);
-                                        }} 
+                                        }}
                                     />
                                 </div>
                             </div>
@@ -2097,11 +2095,10 @@ const ExamGenerator: React.FC = () => {
                                     <button
                                         key={tab.id}
                                         onClick={() => setExamGradeFilter(tab.id)}
-                                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                                            examGradeFilter === tab.id 
-                                                ? 'bg-primary text-white' 
-                                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                                        }`}
+                                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${examGradeFilter === tab.id
+                                            ? 'bg-primary text-white'
+                                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                            }`}
                                     >
                                         {tab.label}
                                     </button>
@@ -2127,13 +2124,26 @@ const ExamGenerator: React.FC = () => {
                                     className="p-4 bg-white border border-gray-200 rounded-xl hover:border-primary/40 transition-all flex flex-wrap items-center justify-between gap-4"
                                 >
                                     <div className="flex-1 min-w-[260px]">
-                                        <div className="flex items-center gap-2 mb-1">
+                                        <div className="flex items-center gap-2 mb-1 flex-wrap">
                                             <span className="text-xs bg-blue-50 text-primary px-2.5 py-0.5 rounded-md font-bold">
                                                 Khối {dossier.grade || '7'}
                                             </span>
                                             <span className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-md font-semibold">
                                                 {dossier.questions?.length || 0} câu hỏi
                                             </span>
+                                            {dossier.status === 'approved' ? (
+                                                <span className="text-[11px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-md font-bold">
+                                                    ✓ Ngân hàng chung (Đã duyệt)
+                                                </span>
+                                            ) : dossier.status === 'pending_review' ? (
+                                                <span className="text-[11px] bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-md font-bold">
+                                                    ⏳ Chờ duyệt
+                                                </span>
+                                            ) : (
+                                                <span className="text-[11px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md font-semibold">
+                                                    Kho cá nhân
+                                                </span>
+                                            )}
                                             <span className="text-xs text-gray-400">
                                                 Lưu ngày: {new Date(dossier.updatedAt || dossier.createdAt).toLocaleDateString('vi-VN')}
                                             </span>
@@ -2141,10 +2151,40 @@ const ExamGenerator: React.FC = () => {
                                         <h4 className="text-sm font-bold text-gray-900">{dossier.title}</h4>
                                         <p className="text-xs text-gray-500 mt-0.5">
                                             {dossier.headerInfo?.tenKyThi} • {dossier.headerInfo?.tenTruong}
+                                            {dossier.reviewedBy ? ` • Duyệt bởi: ${dossier.reviewedBy}` : ''}
                                         </p>
                                     </div>
 
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        {dossier.status !== 'approved' && canApproveExam(getCurrentUser()) && (
+                                            <button
+                                                onClick={() => {
+                                                    try {
+                                                        approveExam(dossier.id, 'Đã duyệt vào Ngân hàng đề dùng chung');
+                                                        setAllSavedExams(getSavedExams());
+                                                        showNotice(`Đã phê duyệt đề "${dossier.title}" vào Ngân hàng dùng chung!`);
+                                                    } catch (err: any) {
+                                                        alert(err.message);
+                                                    }
+                                                }}
+                                                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1 transition-all cursor-pointer"
+                                                title="Duyệt đề này vào Ngân hàng dùng chung và đồng bộ câu hỏi chuẩn"
+                                            >
+                                                <CheckCircle2 size={13} /> Duyệt dùng chung
+                                            </button>
+                                        )}
+                                        {dossier.status === 'draft' && !canApproveExam(getCurrentUser()) && (
+                                            <button
+                                                onClick={() => {
+                                                    submitExamForReview(dossier.id, 'Đề xuất đưa vào Ngân hàng đề dùng chung');
+                                                    setAllSavedExams(getSavedExams());
+                                                    showNotice(`Đã gửi đề "${dossier.title}" chờ Admin/Tổ trưởng duyệt!`);
+                                                }}
+                                                className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
+                                            >
+                                                Gửi duyệt
+                                            </button>
+                                        )}
                                         <button
                                             onClick={() => handleLoadDossier(dossier)}
                                             className="px-3.5 py-1.5 bg-primary text-white rounded-xl text-xs font-bold hover:bg-primary-dark transition-all"

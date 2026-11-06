@@ -342,6 +342,49 @@ export const exportQuestionBankBackup = (): string | null => {
 };
 
 /**
+ * Tính mã băm chữ ký nội dung câu hỏi (Content Hash) để chống trùng lặp & chống phình dữ liệu
+ */
+export const computeQuestionContentHash = (q: Partial<ExerciseQuestion>): string => {
+  const normContent = (q.content || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+  const normOpts = Array.isArray(q.options)
+    ? q.options.map(o => `${(o.text || '').toLowerCase().replace(/\s+/g, ' ').trim()}:${o.isCorrect ? 1 : 0}`).join('|')
+    : '';
+  const raw = `${q.grade || ''}_${q.category || 'mc'}_${normContent}_${normOpts}`;
+  let hash = 5381;
+  for (let i = 0; i < raw.length; i++) {
+    hash = ((hash << 5) + hash) ^ raw.charCodeAt(i);
+  }
+  return `qh_${(hash >>> 0).toString(36)}`;
+};
+
+/**
+ * Tạo bản kế thừa cá nhân (Copy-on-Write Inheritance) khi Giáo viên thường chỉnh sửa câu hỏi thuộc Ngân hàng chuẩn dùng chung
+ */
+export const createInheritedQuestionCopy = (
+  original: ExerciseQuestion,
+  editorEmail?: string,
+  editorName?: string
+): ExerciseQuestion => {
+  const now = new Date().toISOString();
+  return {
+    ...original,
+    id: `${original.id}_v${(original.version || 1) + 1}_${Date.now().toString(36)}`,
+    parentId: original.parentId || original.id,
+    version: (original.version || 1) + 1,
+    bankScope: 'personal',
+    ownerEmail: editorEmail || 'teacher@gmail.com',
+    ownerName: editorName || 'Giáo viên',
+    approvedBy: undefined,
+    approvedAt: undefined,
+    updatedAt: now,
+    contentHash: computeQuestionContentHash(original)
+  };
+};
+
+/**
  * Khôi phục dữ liệu từ chuỗi JSON sao lưu
  */
 export const restoreQuestionBankFromBackup = (jsonString: string): { success: boolean; error?: string; count?: number } => {
@@ -362,3 +405,100 @@ export const restoreQuestionBankFromBackup = (jsonString: string): { success: bo
     return { success: false, error: 'Chuỗi JSON sao lưu không thể phân tích cú pháp: ' + err.message };
   }
 };
+
+/**
+ * Phê duyệt danh sách câu hỏi vào Ngân hàng chuẩn dùng chung (chỉ Admin lethimaithuong@gmail.com hoặc GV được cấp quyền canApprove)
+ * Tự động nâng cấp câu hỏi gốc nếu là bản kế thừa (parentId) và lọc trùng lặp theo contentHash để KHÔNG gây phình dữ liệu.
+ */
+export const approveQuestionsToSharedBank = (
+  questions: ExerciseQuestion[],
+  targetIds: string[],
+  approverEmail: string,
+  hasApprovalPermission: boolean
+): {
+  updatedQuestions: ExerciseQuestion[];
+  approvedCount: number;
+  upgradedParentCount: number;
+  deduplicatedCount: number;
+} => {
+  if (!hasApprovalPermission) {
+    throw new Error('Chỉ Quản trị viên (lethimaithuong@gmail.com) hoặc Giáo viên được cấp quyền Duyệt mới được đưa câu hỏi vào Ngân hàng dùng chung.');
+  }
+
+  const now = new Date().toISOString();
+  const targetSet = new Set(targetIds);
+  const working = questions.map(q => ({
+    ...q,
+    contentHash: q.contentHash || computeQuestionContentHash(q)
+  }));
+
+  let approvedCount = 0;
+  let upgradedParentCount = 0;
+  let deduplicatedCount = 0;
+  const idsToRemove = new Set<string>();
+
+  // Tập hợp các contentHash đã có trong Ngân hàng chung
+  const sharedHashMap = new Map<string, string>();
+  working.forEach(q => {
+    if ((q.bankScope || 'shared') === 'shared' && !targetSet.has(q.id)) {
+      const h = q.contentHash || computeQuestionContentHash(q);
+      sharedHashMap.set(h, q.id);
+    }
+  });
+
+  working.forEach(q => {
+    if (!targetSet.has(q.id)) return;
+    const qHash = q.contentHash || computeQuestionContentHash(q);
+
+    // 1. Nếu là bản kế thừa (parentId) -> cập nhật thẳng vào câu hỏi gốc để kế thừa và không phình dữ liệu
+    if (q.parentId) {
+      const parentIdx = working.findIndex(p => p.id === q.parentId);
+      if (parentIdx >= 0 && working[parentIdx].id !== q.id) {
+        working[parentIdx] = {
+          ...working[parentIdx],
+          ...q,
+          id: working[parentIdx].id,
+          parentId: undefined,
+          version: (working[parentIdx].version || 1) + 1,
+          bankScope: 'shared',
+          approvedBy: approverEmail,
+          approvedAt: now,
+          updatedAt: now,
+          contentHash: qHash
+        };
+        idsToRemove.add(q.id);
+        upgradedParentCount++;
+        approvedCount++;
+        sharedHashMap.set(qHash, working[parentIdx].id);
+        return;
+      }
+    }
+
+    // 2. Kiểm tra trùng lặp nội dung với Ngân hàng chuẩn dùng chung
+    const existingSharedId = sharedHashMap.get(qHash);
+    if (existingSharedId && existingSharedId !== q.id) {
+      idsToRemove.add(q.id);
+      deduplicatedCount++;
+      return;
+    }
+
+    // 3. Duyệt câu hỏi thành Ngân hàng chuẩn dùng chung
+    q.bankScope = 'shared';
+    q.approvedBy = approverEmail;
+    q.approvedAt = now;
+    q.updatedAt = now;
+    q.version = q.version || 1;
+    q.contentHash = qHash;
+    sharedHashMap.set(qHash, q.id);
+    approvedCount++;
+  });
+
+  const finalQuestions = working.filter(q => !idsToRemove.has(q.id));
+  return {
+    updatedQuestions: finalQuestions,
+    approvedCount,
+    upgradedParentCount,
+    deduplicatedCount
+  };
+};
+

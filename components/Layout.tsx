@@ -3,7 +3,7 @@ import { Outlet, Link, useLocation } from 'react-router-dom';
 import { 
   Home, FilePlus, GitGraph, LayoutGrid, ChevronRight, Settings, Key, 
   Check, X, ExternalLink, RefreshCw, Zap, CheckCircle2, AlertCircle,
-  Database, Cloud, Download, Upload, HardDrive, FolderArchive
+  Database, Cloud, Download, Upload, HardDrive, FolderArchive, ShieldCheck, UserCheck, Plus, Trash2
 } from 'lucide-react';
 import { getCustomApiKey } from '../services/geminiService';
 import { 
@@ -24,15 +24,35 @@ import {
   getStorageStats
 } from '../services/database/dbService';
 import { subscribeExamChange } from '../services/examApprovalService';
-import { DatabaseConfig } from '../types';
+import {
+  getCurrentUser,
+  getAllUsers,
+  loginWithGmail,
+  preAuthorizeGmailUser,
+  toggleTeacherApprovalRight,
+  deleteUserById,
+  subscribeUserChange,
+  isSuperAdmin,
+  canApproveExam,
+  SUPER_ADMIN_EMAIL
+} from '../services/authService';
+import { DatabaseConfig, UserProfile } from '../types';
 
 const Layout: React.FC = () => {
   const location = useLocation();
   
   // Modal State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<'storage' | 'api'>('storage');
+  const [settingsTab, setSettingsTab] = useState<'storage' | 'rbac' | 'api'>('storage');
   
+  // Current User & Teacher Permission List
+  const [currentUser, setCurrentUserState] = useState<UserProfile>(getCurrentUser());
+  const [allUsers, setAllUsersState] = useState<UserProfile[]>(getAllUsers());
+  const [newTeacherEmail, setNewTeacherEmail] = useState('');
+  const [newTeacherName, setNewTeacherName] = useState('');
+  const [newTeacherCanApprove, setNewTeacherCanApprove] = useState(false);
+  const [loginEmailInput, setLoginEmailInput] = useState('');
+
   // Live Storage Stats
   const [stats, setStats] = useState(getStorageStats());
 
@@ -54,16 +74,23 @@ const Layout: React.FC = () => {
 
   const refreshStats = () => {
     setStats(getStorageStats());
+    setAllUsersState(getAllUsers());
+    setCurrentUserState(getCurrentUser());
   };
 
   useEffect(() => {
     refreshStats();
     const unsubExam = subscribeExamChange(refreshStats);
+    const unsubUser = subscribeUserChange((u) => {
+      setCurrentUserState(u);
+      setAllUsersState(getAllUsers());
+    });
     const handleStorage = () => refreshStats();
     window.addEventListener('storage', handleStorage);
     window.addEventListener('matrix_filesystem_updated', handleStorage);
     return () => {
       unsubExam();
+      unsubUser();
       window.removeEventListener('storage', handleStorage);
       window.removeEventListener('matrix_filesystem_updated', handleStorage);
     };
@@ -291,6 +318,31 @@ const Layout: React.FC = () => {
            
            {/* Clean Header Right Actions */}
            <div className="flex items-center gap-2.5">
+             {/* Account & Permission Pill */}
+             <button
+               onClick={() => {
+                 setSettingsTab('rbac');
+                 setIsSettingsOpen(true);
+               }}
+               className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
+                 isSuperAdmin(currentUser)
+                   ? 'bg-purple-50 text-purple-800 border-purple-200 hover:bg-purple-100'
+                   : canApproveExam(currentUser)
+                   ? 'bg-indigo-50 text-indigo-800 border-indigo-200 hover:bg-indigo-100'
+                   : 'bg-slate-50 text-gray-700 border-gray-200 hover:bg-gray-100'
+               }`}
+               title="Quản lý tài khoản & Phân quyền duyệt Ngân hàng đề chung"
+             >
+               <ShieldCheck size={15} className={isSuperAdmin(currentUser) ? 'text-purple-600' : canApproveExam(currentUser) ? 'text-indigo-600' : 'text-gray-500'} />
+               <span className="truncate max-w-[200px]">
+                 {isSuperAdmin(currentUser)
+                   ? `Admin: ${SUPER_ADMIN_EMAIL}`
+                   : canApproveExam(currentUser)
+                   ? `GV Duyệt đề: ${currentUser.email || currentUser.name}`
+                   : `GV: ${currentUser.email || currentUser.name}`}
+               </span>
+             </button>
+
              {/* Direct Storage & Backup Pill */}
              <button
                onClick={() => {
@@ -367,7 +419,18 @@ const Layout: React.FC = () => {
                     : 'border-transparent text-gray-500 hover:text-gray-800'
                 }`}
               >
-                <FolderArchive size={15} /> Lưu Trữ & Sao Lưu Ngân Hàng
+                <FolderArchive size={15} /> Lưu Trữ & Sao Lưu
+              </button>
+              <button
+                type="button"
+                onClick={() => setSettingsTab('rbac')}
+                className={`flex items-center gap-2 pb-2.5 px-3 text-xs font-bold border-b-2 transition-all ${
+                  settingsTab === 'rbac'
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-gray-500 hover:text-gray-800'
+                }`}
+              >
+                <ShieldCheck size={15} /> Phân Quyền Duyệt Đề (Admin)
               </button>
               <button
                 type="button"
@@ -382,6 +445,203 @@ const Layout: React.FC = () => {
               </button>
             </div>
 
+            {/* TAB 2: RBAC & APPROVAL PERMISSIONS */}
+            {settingsTab === 'rbac' && (
+              <div className="space-y-4">
+                {/* Active Account Switcher */}
+                <div className="p-3.5 bg-purple-50/60 border border-purple-200 rounded-xl space-y-2.5">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div>
+                      <div className="text-xs font-bold text-purple-950 flex items-center gap-1.5">
+                        <UserCheck size={15} className="text-purple-700" />
+                        Tài khoản đang làm việc: <span className="underline">{currentUser.email || currentUser.name}</span>
+                      </div>
+                      <div className="text-[11px] text-purple-800 mt-0.5">
+                        Vai trò: <strong>{isSuperAdmin(currentUser) ? 'Quản trị viên tối cao (Super Admin)' : canApproveExam(currentUser) ? 'Giáo viên có quyền Duyệt đề' : 'Giáo viên bộ môn (Chờ duyệt khi đưa vào kho chung)'}</strong>
+                      </div>
+                    </div>
+                    {!isSuperAdmin(currentUser) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          loginWithGmail(SUPER_ADMIN_EMAIL, 'Lê Thị Mai Thương');
+                          refreshStats();
+                        }}
+                        className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold shadow-xs cursor-pointer"
+                      >
+                        Chuyển sang Admin ({SUPER_ADMIN_EMAIL})
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Quick Gmail Switcher */}
+                  <div className="flex items-center gap-2 pt-2 border-t border-purple-200/60">
+                    <input
+                      type="email"
+                      placeholder="Nhập Gmail để đăng nhập / chuyển tài khoản..."
+                      value={loginEmailInput}
+                      onChange={(e) => setLoginEmailInput(e.target.value)}
+                      className="flex-1 px-2.5 py-1.5 bg-white border border-purple-200 rounded-lg text-xs outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!loginEmailInput.trim()) return;
+                        loginWithGmail(loginEmailInput.trim());
+                        setLoginEmailInput('');
+                        refreshStats();
+                      }}
+                      className="px-3 py-1.5 bg-white hover:bg-purple-100 text-purple-800 border border-purple-300 rounded-lg text-xs font-bold cursor-pointer"
+                    >
+                      Đăng nhập Gmail
+                    </button>
+                  </div>
+                </div>
+
+                {/* Admin Panel for lethimaithuong@gmail.com */}
+                <div className="border border-gray-200 rounded-2xl p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-xs font-bold text-gray-900">
+                        Danh sách Giáo viên & Phân quyền Duyệt Ngân hàng dùng chung
+                      </h4>
+                      <p className="text-[11px] text-gray-500 mt-0.5">
+                        Tài khoản Admin gốc (<strong>{SUPER_ADMIN_EMAIL}</strong>) quyết định Giáo viên nào được phép duyệt câu hỏi/đề thi vào Ngân hàng dùng chung.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Add Teacher Gmail Form (Enabled for Super Admin) */}
+                  {isSuperAdmin(currentUser) && (
+                    <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                      <div className="text-[11px] font-bold text-slate-700">Thêm / Cấp quyền trước cho Gmail Giáo viên:</div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <input
+                          type="email"
+                          placeholder="Gmail giáo viên (VD: gv.tinhoc@gmail.com)"
+                          value={newTeacherEmail}
+                          onChange={(e) => setNewTeacherEmail(e.target.value)}
+                          className="px-2.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs outline-none"
+                        />
+                        <input
+                          type="text"
+                          placeholder="Họ tên giáo viên (VD: Cô Nguyễn Thị B)"
+                          value={newTeacherName}
+                          onChange={(e) => setNewTeacherName(e.target.value)}
+                          className="px-2.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs outline-none"
+                        />
+                      </div>
+                      <div className="flex items-center justify-between pt-1">
+                        <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={newTeacherCanApprove}
+                            onChange={(e) => setNewTeacherCanApprove(e.target.checked)}
+                            className="rounded text-primary"
+                          />
+                          <span>Cho phép GV này <strong>Duyệt đề & câu hỏi</strong> vào Ngân hàng chung</span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!newTeacherEmail.trim()) return;
+                            preAuthorizeGmailUser(
+                              newTeacherEmail.trim(),
+                              newTeacherCanApprove ? 'reviewer' : 'teacher',
+                              newTeacherName.trim() || undefined
+                            );
+                            setNewTeacherEmail('');
+                            setNewTeacherName('');
+                            setNewTeacherCanApprove(false);
+                            refreshStats();
+                          }}
+                          className="px-3 py-1.5 bg-primary hover:bg-primary-dark text-white rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer"
+                        >
+                          <Plus size={13} /> Thêm GV
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Users Table */}
+                  <div className="divide-y divide-gray-100 max-h-56 overflow-y-auto border border-gray-100 rounded-xl">
+                    {allUsers.map((u) => {
+                      const isRoot = (u.email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
+                      const userHasApprove = isRoot || u.role === 'admin' || u.role === 'reviewer' || u.canApprove === true;
+                      return (
+                        <div key={u.id} className="p-2.5 flex items-center justify-between gap-2 hover:bg-slate-50 text-xs">
+                          <div className="min-w-0">
+                            <div className="font-bold text-gray-900 truncate flex items-center gap-1.5">
+                              <span>{u.name}</span>
+                              {isRoot && (
+                                <span className="px-2 py-0.5 bg-purple-100 text-purple-800 rounded-full text-[10px] font-extrabold">
+                                  Admin Gốc
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-gray-500 truncate">{u.email}</div>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            {isRoot ? (
+                              <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-[11px] font-bold">
+                                Toàn quyền Duyệt & Quản trị
+                              </span>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  disabled={!isSuperAdmin(currentUser)}
+                                  onClick={() => {
+                                    toggleTeacherApprovalRight(u.id, !userHasApprove);
+                                    refreshStats();
+                                  }}
+                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
+                                    userHasApprove
+                                      ? 'bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100'
+                                      : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200'
+                                  } ${!isSuperAdmin(currentUser) ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+                                  title={isSuperAdmin(currentUser) ? 'Nhấn để Cấp / Thu hồi quyền Duyệt đề' : 'Chỉ Admin lethimaithuong@gmail.com mới được đổi quyền'}
+                                >
+                                  {userHasApprove ? '✓ Được duyệt đề' : 'Chỉ soạn đề (Chờ duyệt)'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (u.email) {
+                                      loginWithGmail(u.email, u.name);
+                                      refreshStats();
+                                    }
+                                  }}
+                                  className="px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-[10px] font-bold cursor-pointer"
+                                  title="Dùng thử dưới góc nhìn tài khoản này"
+                                >
+                                  Chọn
+                                </button>
+                                {isSuperAdmin(currentUser) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      deleteUserById(u.id);
+                                      refreshStats();
+                                    }}
+                                    className="p-1 text-gray-400 hover:text-rose-600 rounded cursor-pointer"
+                                    title="Xóa tài khoản"
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* TAB 1: STORAGE & BACKUP */}
             {settingsTab === 'storage' && (
               <div className="space-y-4">
@@ -389,11 +649,15 @@ const Layout: React.FC = () => {
                 <div className="grid grid-cols-3 gap-3">
                   <div className="p-3.5 bg-blue-50/60 border border-blue-100 rounded-xl text-center">
                     <div className="text-xl font-extrabold text-primary">{stats.questionCount}</div>
-                    <div className="text-[11px] font-semibold text-gray-600 mt-0.5">Câu hỏi trong kho</div>
+                    <div className="text-[11px] font-semibold text-gray-600 mt-0.5">
+                      Câu hỏi ({stats.sharedQuestionCount ?? stats.questionCount} đã duyệt)
+                    </div>
                   </div>
                   <div className="p-3.5 bg-emerald-50/60 border border-emerald-100 rounded-xl text-center">
                     <div className="text-xl font-extrabold text-emerald-700">{stats.examCount}</div>
-                    <div className="text-[11px] font-semibold text-gray-600 mt-0.5">Đề thi đã lưu</div>
+                    <div className="text-[11px] font-semibold text-gray-600 mt-0.5">
+                      Đề thi ({stats.approvedExamCount ?? 0} dùng chung)
+                    </div>
                   </div>
                   <div className="p-3.5 bg-indigo-50/60 border border-indigo-100 rounded-xl text-center">
                     <div className="text-xl font-extrabold text-indigo-700">{stats.matrixCount}</div>

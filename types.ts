@@ -34,6 +34,9 @@ export interface QuestionCurriculumAttachment {
   notes?: string;
 }
 
+// Phân tầng Cơ sở dữ liệu Câu hỏi (3-Tier Database Hierarchy)
+export type BankScope = 'personal' | 'pending' | 'shared';
+
 // Types for Exercise Creator & Exam Generator
 export interface ExerciseQuestion {
   id: string;
@@ -56,6 +59,16 @@ export interface ExerciseQuestion {
   points?: number; // Score weighting
   // Schema v2: Canonical curriculum attachment (Backward-compatible optional)
   curriculum?: QuestionCurriculumAttachment;
+  // Hierarchical Database & Inheritance Metadata (Zero-Bloat & Conflict-Free)
+  bankScope?: BankScope; // 'shared' (Ngân hàng chung đã duyệt) | 'pending' (Chờ duyệt) | 'personal' (Kho cá nhân)
+  ownerEmail?: string;
+  ownerName?: string;
+  approvedBy?: string;
+  approvedAt?: string;
+  parentId?: string; // ID câu hỏi gốc nếu kế thừa (Copy-on-Write)
+  version?: number; // Phiên bản kế thừa (1, 2, ...)
+  contentHash?: string; // Mã băm chống trùng lặp dữ liệu
+  updatedAt?: string; // Dấu thời gian phục vụ đồng bộ chống xung đột
 }
 
 // Multi-code Exam Variant Structure
@@ -227,6 +240,7 @@ export interface UserProfile {
   id: string;
   name: string;
   role: UserRole;
+  canApprove?: boolean; // Quyền duyệt đề/câu hỏi vào Ngân hàng dùng chung do Admin cấp
   department?: string;
   school?: string;
   email?: string;

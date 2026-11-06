@@ -1,7 +1,7 @@
 import { DatabaseConfig, ExerciseQuestion, SavedExamDossier } from '../../types';
-import { getAllUsers, saveAllUsers } from '../authService';
+import { getAllUsers, saveAllUsers, getCurrentUser, canApproveExam, SUPER_ADMIN_EMAIL } from '../authService';
 import { getSavedExams, saveAllExams } from '../examApprovalService';
-import { loadQuestionBank, saveQuestionBank } from '../storage/questionBankStorage';
+import { loadQuestionBank, saveQuestionBank, computeQuestionContentHash } from '../storage/questionBankStorage';
 import { createSafetySnapshot } from '../backup/questionBankBackup';
 
 const DB_CONFIG_KEY = 'matrandethi_db_config';
@@ -60,16 +60,32 @@ export const getStorageStats = () => {
   }
 
   const questionsByGrade: Record<string, number> = { '6': 0, '7': 0, '8': 0, '9': 0 };
+  let sharedQuestionCount = 0;
+  let pendingQuestionCount = 0;
+  let personalQuestionCount = 0;
+
   questions.forEach(q => {
     if (q.grade && questionsByGrade[q.grade] !== undefined) {
       questionsByGrade[q.grade]++;
     }
+    const scope = q.bankScope || 'shared';
+    if (scope === 'shared') sharedQuestionCount++;
+    else if (scope === 'pending') pendingQuestionCount++;
+    else personalQuestionCount++;
   });
+
+  const approvedExamCount = exams.filter(e => e.status === 'approved').length;
+  const pendingExamCount = exams.filter(e => e.status === 'pending_review').length;
 
   return {
     questionCount: questions.length,
+    sharedQuestionCount,
+    pendingQuestionCount,
+    personalQuestionCount,
     questionsByGrade,
     examCount: exams.length,
+    approvedExamCount,
+    pendingExamCount,
     matrixCount
   };
 };
@@ -329,20 +345,70 @@ export const importFullDatabaseJson = (
       };
     }
 
-    // Xử lý lưu câu hỏi
+    // Xử lý lưu câu hỏi theo cơ chế Chống xung đột & Chống phình dữ liệu (Record-Level Upsert + ContentHash Deduplication)
     let finalQuestions = currentQuestions;
+    let deduplicatedCount = 0;
+    const currentUser = getCurrentUser();
+    const userCanApprove = canApproveExam(currentUser);
+
     if (incomingQuestions.length > 0) {
-      if (mode === 'replace') {
-        finalQuestions = incomingQuestions;
+      if (mode === 'replace' && userCanApprove) {
+        finalQuestions = incomingQuestions.map(q => ({
+          ...q,
+          contentHash: q.contentHash || computeQuestionContentHash(q)
+        }));
       } else {
-        const existingMap = new Map<string, ExerciseQuestion>();
-        currentQuestions.forEach(q => existingMap.set(q.id, q));
+        const existingById = new Map<string, ExerciseQuestion>();
+        const existingByHash = new Map<string, string>(); // hash -> id
+
+        currentQuestions.forEach(q => {
+          const h = q.contentHash || computeQuestionContentHash(q);
+          existingById.set(q.id, { ...q, contentHash: h });
+          existingByHash.set(h, q.id);
+        });
+
         incomingQuestions.forEach(q => {
-          if (q && q.id && q.content) {
-            existingMap.set(q.id, q);
+          if (!q || !q.id || !q.content) return;
+          const qHash = q.contentHash || computeQuestionContentHash(q);
+          const existingSameId = existingById.get(q.id);
+          const existingSameHashId = existingByHash.get(qHash);
+
+          if (existingSameId) {
+            // Bảo vệ câu hỏi thuộc Ngân hàng chuẩn dùng chung (shared): GV thường không được ghi đè trái phép
+            const isProtectedShared = (existingSameId.bankScope || 'shared') === 'shared' && !userCanApprove;
+            if (!isProtectedShared) {
+              const incomingTime = q.updatedAt ? new Date(q.updatedAt).getTime() : Date.now();
+              const existingTime = existingSameId.updatedAt ? new Date(existingSameId.updatedAt).getTime() : 0;
+              if (incomingTime >= existingTime) {
+                existingById.set(q.id, { ...existingSameId, ...q, contentHash: qHash });
+                existingByHash.set(qHash, q.id);
+              }
+            }
+          } else if (existingSameHashId) {
+            // Đã tồn tại câu hỏi giống hệt nội dung -> Chống phình dữ liệu (không tạo bản ghi trùng)
+            deduplicatedCount++;
+            const target = existingById.get(existingSameHashId);
+            if (target && target.bankScope !== 'shared' && q.bankScope === 'shared' && userCanApprove) {
+              existingById.set(existingSameHashId, { ...target, bankScope: 'shared', approvedBy: q.approvedBy || currentUser.email });
+            }
+          } else {
+            // Câu hỏi hoàn toàn mới: Nếu người nhập không có quyền duyệt thì mặc định vào 'personal' hoặc 'pending'
+            const safeScope = userCanApprove
+              ? (q.bankScope || 'shared')
+              : (q.bankScope === 'pending' ? 'pending' : 'personal');
+            existingById.set(q.id, {
+              ...q,
+              bankScope: safeScope,
+              ownerEmail: q.ownerEmail || currentUser.email,
+              ownerName: q.ownerName || currentUser.name,
+              contentHash: qHash,
+              updatedAt: q.updatedAt || new Date().toISOString()
+            });
+            existingByHash.set(qHash, q.id);
           }
         });
-        finalQuestions = Array.from(existingMap.values());
+
+        finalQuestions = Array.from(existingById.values());
       }
       saveQuestionBank(finalQuestions, { force: true });
     }
