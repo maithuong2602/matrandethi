@@ -280,6 +280,10 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
     const tfPoint = data.newPointsConfig?.tfPoint ?? 0.25;
     const saPoint = data.newPointsConfig?.saPoint ?? 0.25;
     const essayPoint = data.newPointsConfig?.essayPoint ?? pointsTL;
+    const useShortAnswer = data.newPointsConfig?.useShortAnswer !== false;
+    const activeParts: ('mc' | 'tf' | 'sa' | 'essay')[] = useShortAnswer
+        ? ['mc', 'tf', 'sa', 'essay']
+        : ['mc', 'tf', 'essay'];
 
     const getRowNewFormatConfig = (rIdx: number): NewMatrixFormatRowConfig => {
         const existing = data.newFormatRows?.[rIdx];
@@ -314,6 +318,86 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                 newData.newFormatRows![idx] = getRowNewFormatConfig(idx);
             });
         }
+        handleUpdateMatrixWithSync(newData);
+    };
+
+    const handleToggleShortAnswer = (enabled: boolean) => {
+        const newData: MatrixData = JSON.parse(JSON.stringify(data));
+        if (!newData.newPointsConfig) newData.newPointsConfig = {};
+        newData.newPointsConfig.useShortAnswer = enabled;
+
+        if (!newData.newFormatRows) newData.newFormatRows = {};
+        for (let i = 0; i < newData.matrix.rows.length; i++) {
+            if (!newData.newFormatRows[i]) {
+                newData.newFormatRows[i] = getRowNewFormatConfig(i);
+            }
+            const rowCfg = newData.newFormatRows[i];
+            if (!enabled) {
+                // Tự động đẩy số câu từ Trả lời ngắn / Điền khuyết sang câu hỏi Đúng – Sai cùng mức độ
+                (['B', 'H', 'VD'] as const).forEach(lvl => {
+                    const saCount = rowCfg.sa[lvl]?.count || 0;
+                    if (saCount > 0) {
+                        rowCfg.tf[lvl].count = (rowCfg.tf[lvl]?.count || 0) + saCount;
+                        rowCfg.sa[lvl].count = 0;
+                    }
+                });
+                if (rowCfg.subRowCells) {
+                    Object.keys(rowCfg.subRowCells).forEach(k => {
+                        if (k.includes('_sa_')) {
+                            const sc = rowCfg.subRowCells![k];
+                            const tfKey = k.replace('_sa_', '_tf_');
+                            if (sc && sc.count > 0) {
+                                if (rowCfg.subRowCells![tfKey]) {
+                                    rowCfg.subRowCells![tfKey].count += sc.count;
+                                } else {
+                                    rowCfg.subRowCells![tfKey] = { ...sc };
+                                }
+                            }
+                            delete rowCfg.subRowCells![k];
+                        }
+                    });
+                }
+            }
+        }
+
+        // Nếu bật lại Trả lời ngắn mà hiện tại tổng sa = 0 và tổng tf đang giữ phần cộng dồn (> 8), tự động tách trả lại
+        if (enabled) {
+            let totalSA = 0;
+            let totalTF_B = 0;
+            let totalTF_H = 0;
+            for (let i = 0; i < newData.matrix.rows.length; i++) {
+                const rc = newData.newFormatRows[i];
+                totalSA += (rc.sa.B.count || 0) + (rc.sa.H.count || 0) + (rc.sa.VD.count || 0);
+                totalTF_B += rc.tf.B.count || 0;
+                totalTF_H += rc.tf.H.count || 0;
+            }
+            if (totalSA === 0 && (totalTF_B + totalTF_H > 8)) {
+                let moveB = Math.floor(totalTF_B / 2);
+                let moveH = Math.floor(totalTF_H / 2);
+                for (let i = newData.matrix.rows.length - 1; i >= 0; i--) {
+                    const rc = newData.newFormatRows[i];
+                    if (moveB > 0 && rc.tf.B.count > 0) {
+                        const take = Math.min(moveB, Math.ceil(rc.tf.B.count / 2));
+                        rc.tf.B.count -= take;
+                        rc.sa.B.count += take;
+                        moveB -= take;
+                    }
+                    if (moveH > 0 && rc.tf.H.count > 0) {
+                        const take = Math.min(moveH, Math.ceil(rc.tf.H.count / 2));
+                        rc.tf.H.count -= take;
+                        rc.sa.H.count += take;
+                        moveH -= take;
+                    }
+                    // Clear custom subRowCells on _tf_ if counts were redistributed at row level
+                    if (rc.subRowCells) {
+                        Object.keys(rc.subRowCells).forEach(k => {
+                            if (k.includes('_tf_')) delete rc.subRowCells![k];
+                        });
+                    }
+                }
+            }
+        }
+
         handleUpdateMatrixWithSync(newData);
     };
 
@@ -1212,7 +1296,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
             const lessonSpan = subRows.length;
             const rowCfg = getRowNewFormatConfig(rowIndex);
             const defaultNL = getDefaultCompetencyForTopic(main, sub);
-            const parts: ('mc' | 'tf' | 'sa' | 'essay')[] = ['mc', 'tf', 'sa', 'essay'];
+            const parts = activeParts;
             const levels: ('B' | 'H' | 'VD')[] = ['B', 'H', 'VD'];
 
             // Xác định dòng mặc định cho từng mức độ (B, H, VD) để hiển thị (n) và (NL?) giống chuẩn hình mẫu
@@ -1948,8 +2032,26 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                 : 'bg-white text-indigo-700 border border-indigo-300 hover:bg-indigo-50'
                         }`}
                     >
-                        Mẫu mới (Nhiều lựa chọn • Đúng–Sai • Trả lời ngắn • Tự luận + Năng lực THCS)
+                        Mẫu mới (Nhiều lựa chọn • Đúng–Sai {useShortAnswer ? '• Trả lời ngắn ' : ''}• Tự luận + Năng lực THCS)
                     </button>
+                    {isNewFormat && (
+                        <label
+                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer select-none ${
+                                useShortAnswer
+                                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300 shadow-xs'
+                                    : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
+                            }`}
+                            title="Bỏ tích nếu môn học không dùng câu hỏi Điền khuyết / Trả lời ngắn (Hệ thống sẽ tự động đẩy toàn bộ số câu này sang Đúng – Sai)"
+                        >
+                            <input
+                                type="checkbox"
+                                checked={useShortAnswer}
+                                onChange={(e) => handleToggleShortAnswer(e.target.checked)}
+                                className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                            />
+                            <span>Có phần Trả lời ngắn / Điền khuyết</span>
+                        </label>
+                    )}
                 </div>
 
                 <button
@@ -2016,8 +2118,12 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                     <span className="text-slate-600">Nhiều lựa chọn: <b>{mcPoint}đ</b></span>
                                     <span className="text-slate-300">|</span>
                                     <span className="text-slate-600">Đúng–Sai: <b>{tfPoint}đ/ý</b></span>
-                                    <span className="text-slate-300">|</span>
-                                    <span className="text-slate-600">Trả lời ngắn: <b>{saPoint}đ</b></span>
+                                    {useShortAnswer && (
+                                        <>
+                                            <span className="text-slate-300">|</span>
+                                            <span className="text-slate-600">Trả lời ngắn: <b>{saPoint}đ</b></span>
+                                        </>
+                                    )}
                                     <span className="text-slate-300">|</span>
                                     <span className="font-semibold text-slate-700">Tự luận:</span>
                                     <input
@@ -2040,18 +2146,20 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                 <th rowSpan={4} className="border border-slate-400 p-2 min-w-[150px]">Nội dung/đơn vị kiến thức</th>
                                 <th rowSpan={4} className="border border-slate-400 p-2 min-w-[120px]">Bài</th>
                                 <th rowSpan={4} className="border border-slate-400 p-1.5 w-14">Số tiết</th>
-                                <th colSpan={12} className="border border-slate-400 p-2 bg-indigo-50/60">Mức độ đánh giá</th>
+                                <th colSpan={useShortAnswer ? 12 : 9} className="border border-slate-400 p-2 bg-indigo-50/60">Mức độ đánh giá</th>
                                 <th colSpan={3} rowSpan={3} className="border border-slate-400 p-2 bg-amber-50/70">Tổng</th>
                                 <th rowSpan={4} className="border border-slate-400 p-2 w-20 bg-emerald-50/60">Tỷ lệ<br/>% điểm</th>
                             </tr>
                             <tr className="bg-gray-100 text-gray-800 font-bold text-xs">
-                                <th colSpan={9} className="border border-slate-400 p-1.5 bg-sky-50/70">TNKQ</th>
+                                <th colSpan={useShortAnswer ? 9 : 6} className="border border-slate-400 p-1.5 bg-sky-50/70">TNKQ</th>
                                 <th colSpan={3} rowSpan={2} className="border border-slate-400 p-1.5 bg-purple-50/70">Tự luận</th>
                             </tr>
                             <tr className="bg-gray-100 text-gray-800 font-semibold text-xs">
                                 <th colSpan={3} className="border border-slate-400 p-1.5 italic bg-white">Nhiều lựa chọn</th>
                                 <th colSpan={3} className="border border-slate-400 p-1.5 italic bg-white">"Đúng – Sai"</th>
-                                <th colSpan={3} className="border border-slate-400 p-1.5 italic bg-white">Trả lời ngắn</th>
+                                {useShortAnswer && (
+                                    <th colSpan={3} className="border border-slate-400 p-1.5 italic bg-white">Trả lời ngắn</th>
+                                )}
                             </tr>
                             <tr className="bg-gray-50 text-gray-700 font-bold text-[11px]">
                                 {/* Nhiều lựa chọn */}
@@ -2063,9 +2171,13 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                 <th className="border border-slate-400 p-1.5">Hiểu</th>
                                 <th className="border border-slate-400 p-1.5">Vận dụng</th>
                                 {/* Trả lời ngắn */}
-                                <th className="border border-slate-400 p-1.5">Biết</th>
-                                <th className="border border-slate-400 p-1.5">Hiểu</th>
-                                <th className="border border-slate-400 p-1.5">Vận dụng</th>
+                                {useShortAnswer && (
+                                    <>
+                                        <th className="border border-slate-400 p-1.5">Biết</th>
+                                        <th className="border border-slate-400 p-1.5">Hiểu</th>
+                                        <th className="border border-slate-400 p-1.5">Vận dụng</th>
+                                    </>
+                                )}
                                 {/* Tự luận */}
                                 <th className="border border-slate-400 p-1.5">Biết</th>
                                 <th className="border border-slate-400 p-1.5">Hiểu</th>
@@ -2103,7 +2215,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                                         (rowCfg.essay.B.count + rowCfg.essay.H.count + rowCfg.essay.VD.count) * rEssayPt;
                                                     const rowPct = calculatePercentage(rowPoints);
 
-                                                    const parts: ('mc' | 'tf' | 'sa' | 'essay')[] = ['mc', 'tf', 'sa', 'essay'];
+                                                    const parts = activeParts;
                                                     const levels: ('B' | 'H' | 'VD')[] = ['B', 'H', 'VD'];
 
                                                     return (
@@ -2221,9 +2333,13 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                 <td className="border border-slate-400 p-1.5 text-center">{newTotals.tf.B || ''}</td>
                                 <td className="border border-slate-400 p-1.5 text-center">{newTotals.tf.H || ''}</td>
                                 <td className="border border-slate-400 p-1.5 text-center">{newTotals.tf.VD || ''}</td>
-                                <td className="border border-slate-400 p-1.5 text-center">{newTotals.sa.B || ''}</td>
-                                <td className="border border-slate-400 p-1.5 text-center">{newTotals.sa.H || ''}</td>
-                                <td className="border border-slate-400 p-1.5 text-center">{newTotals.sa.VD || ''}</td>
+                                {useShortAnswer && (
+                                    <>
+                                        <td className="border border-slate-400 p-1.5 text-center">{newTotals.sa.B || ''}</td>
+                                        <td className="border border-slate-400 p-1.5 text-center">{newTotals.sa.H || ''}</td>
+                                        <td className="border border-slate-400 p-1.5 text-center">{newTotals.sa.VD || ''}</td>
+                                    </>
+                                )}
                                 <td className="border border-slate-400 p-1.5 text-center">{newTotals.essay.B || ''}</td>
                                 <td className="border border-slate-400 p-1.5 text-center">{newTotals.essay.H || ''}</td>
                                 <td className="border border-slate-400 p-1.5 text-center">{newTotals.essay.VD || ''}</td>
@@ -2236,7 +2352,9 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                 <td colSpan={5} className="text-center p-2 border border-slate-400">Tổng số điểm</td>
                                 <td colSpan={3} className="border border-slate-400 p-1.5 text-center">{formatDiem(newPointsMC)}</td>
                                 <td colSpan={3} className="border border-slate-400 p-1.5 text-center">{formatDiem(newPointsTF)}</td>
-                                <td colSpan={3} className="border border-slate-400 p-1.5 text-center">{formatDiem(newPointsSA)}</td>
+                                {useShortAnswer && (
+                                    <td colSpan={3} className="border border-slate-400 p-1.5 text-center">{formatDiem(newPointsSA)}</td>
+                                )}
                                 <td colSpan={3} className="border border-slate-400 p-1.5 text-center">{formatDiem(newPointsEssay)}</td>
                                 <td className="border border-slate-400 p-1.5 text-center bg-amber-50">{formatDiem(newPointsB)}</td>
                                 <td className="border border-slate-400 p-1.5 text-center bg-amber-50">{formatDiem(newPointsH)}</td>
@@ -2247,7 +2365,9 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                 <td colSpan={5} className="text-center p-2 border border-slate-400">Tỷ lệ %</td>
                                 <td colSpan={3} className="border border-slate-400 p-1.5 text-center">{(newPointsMC * 10).toFixed(0)}</td>
                                 <td colSpan={3} className="border border-slate-400 p-1.5 text-center">{(newPointsTF * 10).toFixed(0)}</td>
-                                <td colSpan={3} className="border border-slate-400 p-1.5 text-center">{(newPointsSA * 10).toFixed(0)}</td>
+                                {useShortAnswer && (
+                                    <td colSpan={3} className="border border-slate-400 p-1.5 text-center">{(newPointsSA * 10).toFixed(0)}</td>
+                                )}
                                 <td colSpan={3} className="border border-slate-400 p-1.5 text-center">{(newPointsEssay * 10).toFixed(0)}</td>
                                 <td className="border border-slate-400 p-1.5 text-center bg-amber-50">{(newPointsB * 10).toFixed(0)}</td>
                                 <td className="border border-slate-400 p-1.5 text-center bg-amber-50">{(newPointsH * 10).toFixed(0)}</td>
@@ -2495,16 +2615,18 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                  <th rowSpan={4} className="border border-slate-400 p-2 min-w-[150px]">Nội dung/đơn vị kiến thức</th>
                                  <th rowSpan={4} className="border border-slate-400 p-2 min-w-[110px]">Bài</th>
                                  <th rowSpan={4} className="border border-slate-400 p-2 min-w-[340px]">Yêu cầu cần đạt</th>
-                                 <th colSpan={12} className="border border-slate-400 p-2 bg-indigo-50/60">Số câu hỏi ở các mức độ đánh giá</th>
+                                 <th colSpan={useShortAnswer ? 12 : 9} className="border border-slate-400 p-2 bg-indigo-50/60">Số câu hỏi ở các mức độ đánh giá</th>
                              </tr>
                              <tr className="bg-gray-100 text-gray-800 font-bold text-xs">
-                                 <th colSpan={9} className="border border-slate-400 p-1.5 bg-sky-50/70">TNKQ</th>
+                                 <th colSpan={useShortAnswer ? 9 : 6} className="border border-slate-400 p-1.5 bg-sky-50/70">TNKQ</th>
                                  <th colSpan={3} rowSpan={2} className="border border-slate-400 p-1.5 bg-purple-50/70">Tự luận</th>
                              </tr>
                              <tr className="bg-gray-100 text-gray-800 font-semibold text-xs">
                                  <th colSpan={3} className="border border-slate-400 p-1.5 italic bg-white">Nhiều lựa chọn</th>
                                  <th colSpan={3} className="border border-slate-400 p-1.5 italic bg-white">"Đúng – Sai"</th>
-                                 <th colSpan={3} className="border border-slate-400 p-1.5 italic bg-white">Trả lời ngắn</th>
+                                 {useShortAnswer && (
+                                     <th colSpan={3} className="border border-slate-400 p-1.5 italic bg-white">Trả lời ngắn</th>
+                                 )}
                              </tr>
                              <tr className="bg-gray-50 text-gray-700 font-bold text-[11px]">
                                  <th className="border border-slate-400 p-1.5">Biết</th>
@@ -2513,9 +2635,13 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                  <th className="border border-slate-400 p-1.5">Biết</th>
                                  <th className="border border-slate-400 p-1.5">Hiểu</th>
                                  <th className="border border-slate-400 p-1.5">Vận dụng</th>
-                                 <th className="border border-slate-400 p-1.5">Biết</th>
-                                 <th className="border border-slate-400 p-1.5">Hiểu</th>
-                                 <th className="border border-slate-400 p-1.5">Vận dụng</th>
+                                 {useShortAnswer && (
+                                     <>
+                                         <th className="border border-slate-400 p-1.5">Biết</th>
+                                         <th className="border border-slate-400 p-1.5">Hiểu</th>
+                                         <th className="border border-slate-400 p-1.5">Vận dụng</th>
+                                     </>
+                                 )}
                                  <th className="border border-slate-400 p-1.5">Biết</th>
                                  <th className="border border-slate-400 p-1.5">Hiểu</th>
                                  <th className="border border-slate-400 p-1.5">Vận dụng</th>
@@ -2566,9 +2692,13 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                  <td className="border border-slate-400 p-1.5 text-center">{newTotals.tf.B || ''}</td>
                                  <td className="border border-slate-400 p-1.5 text-center">{newTotals.tf.H || ''}</td>
                                  <td className="border border-slate-400 p-1.5 text-center">{newTotals.tf.VD || ''}</td>
-                                 <td className="border border-slate-400 p-1.5 text-center">{newTotals.sa.B || ''}</td>
-                                 <td className="border border-slate-400 p-1.5 text-center">{newTotals.sa.H || ''}</td>
-                                 <td className="border border-slate-400 p-1.5 text-center">{newTotals.sa.VD || ''}</td>
+                                 {useShortAnswer && (
+                                     <>
+                                         <td className="border border-slate-400 p-1.5 text-center">{newTotals.sa.B || ''}</td>
+                                         <td className="border border-slate-400 p-1.5 text-center">{newTotals.sa.H || ''}</td>
+                                         <td className="border border-slate-400 p-1.5 text-center">{newTotals.sa.VD || ''}</td>
+                                     </>
+                                 )}
                                  <td className="border border-slate-400 p-1.5 text-center">{newTotals.essay.B || ''}</td>
                                  <td className="border border-slate-400 p-1.5 text-center">{newTotals.essay.H || ''}</td>
                                  <td className="border border-slate-400 p-1.5 text-center">{newTotals.essay.VD || ''}</td>

@@ -1380,6 +1380,10 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
         const mcPt = data.newPointsConfig?.mcPoint ?? 0.25;
         const tfPt = data.newPointsConfig?.tfPoint ?? 0.25;
         const saPt = data.newPointsConfig?.saPoint ?? 0.25;
+        const useShortAnswer = data.newPointsConfig?.useShortAnswer !== false;
+        const activeParts: ('mc' | 'tf' | 'sa' | 'essay')[] = useShortAnswer
+            ? ['mc', 'tf', 'sa', 'essay']
+            : ['mc', 'tf', 'essay'];
 
         const getRowCfg = (rIdx: number): NewMatrixFormatRowConfig => {
             const existing = data.newFormatRows?.[rIdx];
@@ -1526,7 +1530,18 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
 
                 subRows.forEach((r: any) => {
                     const origIdx = data.matrix.rows.indexOf(r);
-                    const cfg = getRowCfg(origIdx);
+                    const rawCfg = getRowCfg(origIdx);
+                    const cfg: NewMatrixFormatRowConfig = JSON.parse(JSON.stringify(rawCfg));
+                    if (!useShortAnswer) {
+                        // Tự động đẩy số câu Trả lời ngắn / Điền khuyết sang Đúng – Sai nếu môn không dùng Điền khuyết
+                        (['B', 'H', 'VD'] as const).forEach(lKey => {
+                            const saC = cfg.sa[lKey].count || 0;
+                            if (saC > 0) {
+                                cfg.tf[lKey].count = (cfg.tf[lKey].count || 0) + saC;
+                                cfg.sa[lKey].count = 0;
+                            }
+                        });
+                    }
                     const rEssayPt = getRowPointsTL(origIdx);
 
                     (['mc', 'tf', 'sa', 'essay'] as const).forEach(pKey => {
@@ -1542,10 +1557,11 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                     if (cfg.subRowCells) {
                         if (!agg.subRowCells) agg.subRowCells = {};
                         Object.entries(cfg.subRowCells).forEach(([k, v]) => {
-                            if (!agg.subRowCells![k]) {
-                                agg.subRowCells![k] = { ...v };
+                            const targetKey = !useShortAnswer && k.includes('_sa_') ? k.replace('_sa_', '_tf_') : k;
+                            if (!agg.subRowCells![targetKey]) {
+                                agg.subRowCells![targetKey] = { ...v };
                             } else {
-                                agg.subRowCells![k].count += v.count || 0;
+                                agg.subRowCells![targetKey].count += v.count || 0;
                             }
                         });
                     }
@@ -1574,7 +1590,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                     newMatrixBody += `<td class="text-left align-top" rowspan="${mainSpan}"><b>${mainTopic}</b></td>`;
                 }
                 newMatrixBody += `<td class="text-left">${subTopic}</td>`;
-                (['mc', 'tf', 'sa', 'essay'] as const).forEach(pKey => {
+                activeParts.forEach(pKey => {
                     (['B', 'H', 'VD'] as const).forEach(lKey => {
                         const c = agg[pKey][lKey].count;
                         newMatrixBody += `<td>${c > 0 ? c : ''}</td>`;
@@ -1608,7 +1624,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                     }
                     newSpecBody += `<td class="text-left">${sr.isHeader ? `<b>${sr.text}</b>` : sr.text}</td>`;
 
-                    (['mc', 'tf', 'sa', 'essay'] as const).forEach(pKey => {
+                    activeParts.forEach(pKey => {
                         (['B', 'H', 'VD'] as const).forEach(lKey => {
                             const suffix = `_${pKey}_${lKey}`;
                             const subCells = agg.subRowCells || {};
@@ -1648,23 +1664,23 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                         <th rowspan="4">TT</th>
                         <th rowspan="4">Chủ đề/Chương</th>
                         <th rowspan="4">Nội dung/đơn vị kiến thức</th>
-                        <th colspan="12">Mức độ đánh giá</th>
+                        <th colspan="${useShortAnswer ? 12 : 9}">Mức độ đánh giá</th>
                         <th colspan="3" rowspan="3">Tổng</th>
                         <th rowspan="4">Tỷ lệ % điểm</th>
                     </tr>
                     <tr>
-                        <th colspan="9">TNKQ</th>
+                        <th colspan="${useShortAnswer ? 9 : 6}">TNKQ</th>
                         <th colspan="3" rowspan="2">Tự luận</th>
                     </tr>
                     <tr>
                         <th colspan="3"><i>Nhiều lựa chọn</i></th>
                         <th colspan="3"><i>"Đúng – Sai"</i></th>
-                        <th colspan="3"><i>Trả lời ngắn</i></th>
+                        ${useShortAnswer ? '<th colspan="3"><i>Trả lời ngắn</i></th>' : ''}
                     </tr>
                     <tr>
                         <th>Biết</th><th>Hiểu</th><th>Vận dụng</th>
                         <th>Biết</th><th>Hiểu</th><th>Vận dụng</th>
-                        <th>Biết</th><th>Hiểu</th><th>Vận dụng</th>
+                        ${useShortAnswer ? '<th>Biết</th><th>Hiểu</th><th>Vận dụng</th>' : ''}
                         <th>Biết</th><th>Hiểu</th><th>Vận dụng</th>
                         <th>Biết</th><th>Hiểu</th><th>Vận dụng</th>
                     </tr>
@@ -1675,7 +1691,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                         <td colspan="3"><b>Tổng số câu/lệnh hỏi</b></td>
                         <td><b>${tot.mc.B || ''}</b></td><td><b>${tot.mc.H || ''}</b></td><td><b>${tot.mc.VD || ''}</b></td>
                         <td><b>${tot.tf.B || ''}</b></td><td><b>${tot.tf.H || ''}</b></td><td><b>${tot.tf.VD || ''}</b></td>
-                        <td><b>${tot.sa.B || ''}</b></td><td><b>${tot.sa.H || ''}</b></td><td><b>${tot.sa.VD || ''}</b></td>
+                        ${useShortAnswer ? `<td><b>${tot.sa.B || ''}</b></td><td><b>${tot.sa.H || ''}</b></td><td><b>${tot.sa.VD || ''}</b></td>` : ''}
                         <td><b>${tot.essay.B || ''}</b></td><td><b>${tot.essay.H || ''}</b></td><td><b>${tot.essay.VD || ''}</b></td>
                         <td><b>${totCountB}</b></td><td><b>${totCountH}</b></td><td><b>${totCountVD}</b></td>
                         <td><b>${totCountB + totCountH + totCountVD}</b></td>
@@ -1684,7 +1700,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                         <td colspan="3"><b>Tổng số điểm</b></td>
                         <td colspan="3"><b>${formatDiem(ptMC)}</b></td>
                         <td colspan="3"><b>${formatDiem(ptTF)}</b></td>
-                        <td colspan="3"><b>${formatDiem(ptSA)}</b></td>
+                        ${useShortAnswer ? `<td colspan="3"><b>${formatDiem(ptSA)}</b></td>` : ''}
                         <td colspan="3"><b>${formatDiem(ptEssay)}</b></td>
                         <td><b>${formatDiem(ptB)}</b></td><td><b>${formatDiem(ptH)}</b></td><td><b>${formatDiem(ptVD)}</b></td>
                         <td><b>${formatDiem(grandPoints)}</b></td>
@@ -1693,7 +1709,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                         <td colspan="3"><b>Tỷ lệ %</b></td>
                         <td colspan="3"><b>${formatPercent(ptMC * 10)}</b></td>
                         <td colspan="3"><b>${formatPercent(ptTF * 10)}</b></td>
-                        <td colspan="3"><b>${formatPercent(ptSA * 10)}</b></td>
+                        ${useShortAnswer ? `<td colspan="3"><b>${formatPercent(ptSA * 10)}</b></td>` : ''}
                         <td colspan="3"><b>${formatPercent(ptEssay * 10)}</b></td>
                         <td><b>${formatPercent(ptB * 10)}</b></td><td><b>${formatPercent(ptH * 10)}</b></td><td><b>${formatPercent(ptVD * 10)}</b></td>
                         <td><b>100%</b></td>
@@ -1710,21 +1726,21 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                         <th rowspan="4">Chủ đề/Chương</th>
                         <th rowspan="4">Nội dung/đơn vị kiến thức</th>
                         <th rowspan="4" style="width: 34%;">Yêu cầu cần đạt</th>
-                        <th colspan="12">Số câu hỏi ở các mức độ đánh giá</th>
+                        <th colspan="${useShortAnswer ? 12 : 9}">Số câu hỏi ở các mức độ đánh giá</th>
                     </tr>
                     <tr>
-                        <th colspan="9">TNKQ</th>
+                        <th colspan="${useShortAnswer ? 9 : 6}">TNKQ</th>
                         <th colspan="3" rowspan="2">Tự luận</th>
                     </tr>
                     <tr>
                         <th colspan="3"><i>Nhiều lựa chọn</i></th>
                         <th colspan="3"><i>"Đúng – Sai"</i></th>
-                        <th colspan="3"><i>Trả lời ngắn</i></th>
+                        ${useShortAnswer ? '<th colspan="3"><i>Trả lời ngắn</i></th>' : ''}
                     </tr>
                     <tr>
                         <th>Biết</th><th>Hiểu</th><th>Vận dụng</th>
                         <th>Biết</th><th>Hiểu</th><th>Vận dụng</th>
-                        <th>Biết</th><th>Hiểu</th><th>Vận dụng</th>
+                        ${useShortAnswer ? '<th>Biết</th><th>Hiểu</th><th>Vận dụng</th>' : ''}
                         <th>Biết</th><th>Hiểu</th><th>Vận dụng</th>
                     </tr>
                 </thead>
@@ -1734,7 +1750,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                         <td colspan="4"><b>Tổng số câu</b></td>
                         <td><b>${tot.mc.B || ''}</b></td><td><b>${tot.mc.H || ''}</b></td><td><b>${tot.mc.VD || ''}</b></td>
                         <td><b>${tot.tf.B || ''}</b></td><td><b>${tot.tf.H || ''}</b></td><td><b>${tot.tf.VD || ''}</b></td>
-                        <td><b>${tot.sa.B || ''}</b></td><td><b>${tot.sa.H || ''}</b></td><td><b>${tot.sa.VD || ''}</b></td>
+                        ${useShortAnswer ? `<td><b>${tot.sa.B || ''}</b></td><td><b>${tot.sa.H || ''}</b></td><td><b>${tot.sa.VD || ''}</b></td>` : ''}
                         <td><b>${tot.essay.B || ''}</b></td><td><b>${tot.essay.H || ''}</b></td><td><b>${tot.essay.VD || ''}</b></td>
                     </tr>
                 </tfoot>

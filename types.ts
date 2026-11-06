@@ -160,6 +160,7 @@ export interface MatrixData {
         tfPoint?: number;    // Điểm mỗi lệnh hỏi Đúng - Sai (mặc định 0.25)
         saPoint?: number;    // Điểm mỗi câu Trả lời ngắn (mặc định 0.25)
         essayPoint?: number; // Điểm mỗi câu Tự luận (mặc định 1.0)
+        useShortAnswer?: boolean; // Tùy chọn bật/tắt phần Trả lời ngắn / Điền khuyết theo đặc thù môn học (mặc định true)
     };
 }
 
@@ -196,7 +197,7 @@ export interface ImportedMatrixDetail {
 }
 
 export interface ImportedMatrixData {
-    thongTinChung: { tenDe: string; ngayTao: string; matrixFormat?: 'classic' | 'new_4part' };
+    thongTinChung: { tenDe: string; ngayTao: string; matrixFormat?: 'classic' | 'new_4part'; useShortAnswer?: boolean };
     chiTiet: ImportedMatrixDetail[];
 }
 

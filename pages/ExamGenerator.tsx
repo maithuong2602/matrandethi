@@ -219,7 +219,8 @@ const ExamGenerator: React.FC = () => {
                             thongTinChung: {
                                 tenDe: folder.name,
                                 ngayTao: new Date().toISOString(),
-                                matrixFormat: folder.matrixData.matrixFormat || 'classic'
+                                matrixFormat: folder.matrixData.matrixFormat || 'classic',
+                                useShortAnswer: folder.matrixData.newPointsConfig?.useShortAnswer !== false
                             },
                             chiTiet: mRows.map((row: any[], idx: number) => ({
                                 thongTinChung: {
@@ -610,6 +611,27 @@ const ExamGenerator: React.FC = () => {
     const generateTest = () => {
         const selected: BankQuestion[] = [];
         const missing: { lesson: string; level: string; count: number; questionType?: string; criteriaText?: string }[] = [];
+        const usedIds = new Set<string>();
+
+        const matchesPreferredType = (
+            q: BankQuestion,
+            preferredQuestionType: 'multiple-choice' | 'true-false' | 'short-answer' | 'essay'
+        ) => {
+            if (preferredQuestionType === 'short-answer') {
+                return q.questionType === 'short-answer' || q.questionType === 'fill-blank' || q.mcType === 'fill-blank';
+            }
+            if (preferredQuestionType === 'true-false') {
+                return q.questionType === 'true-false' || q.mcType === 'true-false';
+            }
+            if (preferredQuestionType === 'multiple-choice') {
+                return (
+                    (q.questionType === 'multiple-choice' || !q.questionType) &&
+                    q.mcType !== 'true-false' &&
+                    q.mcType !== 'fill-blank'
+                );
+            }
+            return q.category === 'essay' || q.questionType === 'essay';
+        };
 
         const findQuestions = (
             lessonName: string,
@@ -620,37 +642,51 @@ const ExamGenerator: React.FC = () => {
         ) => {
             const normalizedTarget = lessonName.toLowerCase().trim();
             const pool = bank.filter(q => {
+                if (usedIds.has(q.id)) return false;
                 const normalizedSource = q.lesson.toLowerCase().trim();
                 const lessonMatch = normalizedSource.includes(normalizedTarget) || normalizedTarget.includes(normalizedSource);
                 if (!lessonMatch || q.level !== level) return false;
                 if (preferredQuestionType) {
-                    if (q.questionType === preferredQuestionType) return true;
+                    if (matchesPreferredType(q, preferredQuestionType)) return true;
                     return q.category === category;
                 }
                 return q.category === category;
             });
 
-            // Prefer exact questionType first if specified
-            const sortedPool = preferredQuestionType
-                ? [
-                    ...pool.filter(q => q.questionType === preferredQuestionType).sort(() => 0.5 - Math.random()),
-                    ...pool.filter(q => q.questionType !== preferredQuestionType).sort(() => 0.5 - Math.random())
-                ]
-                : [...pool].sort(() => 0.5 - Math.random());
+            // Nếu yêu cầu câu Điền khuyết / Trả lời ngắn nhưng kho không có (hoặc thiếu), tự động đẩy số lượng thiếu sang câu hỏi Đúng/Sai
+            let sortedPool: BankQuestion[] = [];
+            if (preferredQuestionType === 'short-answer') {
+                const exactSA = pool.filter(q => matchesPreferredType(q, 'short-answer')).sort(() => 0.5 - Math.random());
+                const fallbackTF = pool.filter(q => !matchesPreferredType(q, 'short-answer') && matchesPreferredType(q, 'true-false')).sort(() => 0.5 - Math.random());
+                const fallbackOther = pool.filter(q => !matchesPreferredType(q, 'short-answer') && !matchesPreferredType(q, 'true-false')).sort(() => 0.5 - Math.random());
+                sortedPool = [...exactSA, ...fallbackTF, ...fallbackOther];
+            } else if (preferredQuestionType) {
+                sortedPool = [
+                    ...pool.filter(q => matchesPreferredType(q, preferredQuestionType)).sort(() => 0.5 - Math.random()),
+                    ...pool.filter(q => !matchesPreferredType(q, preferredQuestionType)).sort(() => 0.5 - Math.random())
+                ];
+            } else {
+                sortedPool = [...pool].sort(() => 0.5 - Math.random());
+            }
 
-            if (sortedPool.length < count) {
-                const diff = count - sortedPool.length;
+            const picked = sortedPool.slice(0, count);
+            picked.forEach(q => usedIds.add(q.id));
+
+            if (picked.length < count) {
+                const diff = count - picked.length;
                 missing.push({
                     lesson: lessonName,
                     level,
                     count: diff,
-                    questionType: preferredQuestionType || (category === 'essay' ? 'essay' : 'multiple-choice')
+                    questionType: preferredQuestionType === 'short-answer'
+                        ? 'true-false'
+                        : (preferredQuestionType || (category === 'essay' ? 'essay' : 'multiple-choice'))
                 });
             }
 
-            return sortedPool.slice(0, count).map(q => ({
+            return picked.map(q => ({
                 ...q,
-                points: category === 'essay' ? 1.0 : preferredQuestionType === 'true-false' ? 1.0 : preferredQuestionType === 'short-answer' ? 0.5 : 0.25,
+                points: category === 'essay' ? 1.0 : matchesPreferredType(q, 'true-false') ? 1.0 : matchesPreferredType(q, 'short-answer') ? 0.5 : 0.25,
                 uniqueId: Math.random()
             }));
         };
@@ -676,24 +712,49 @@ const ExamGenerator: React.FC = () => {
                 alert("Vui lòng chọn hoặc tải lên Ma trận đề thi.");
                 return;
             }
+            const useSA = importedMatrix.thongTinChung?.useShortAnswer !== false;
+            const extractCnt = (val: any): number => (typeof val === 'number' ? val : (val?.count || 0));
+
             importedMatrix.chiTiet.forEach(row => {
                 const lessonName = row.thongTinChung.bai;
                 if (importedMatrix.thongTinChung?.matrixFormat === 'new_4part' && row.chiTiet4Phan) {
                     const p4 = row.chiTiet4Phan;
-                    const pick4Part = (
-                        grp: { B: { count: number }; H: { count: number }; VD: { count: number } } | undefined,
-                        cat: 'mc' | 'essay',
-                        qType: 'multiple-choice' | 'true-false' | 'short-answer' | 'essay'
-                    ) => {
-                        if (!grp) return;
-                        if (grp.B?.count > 0) selected.push(...findQuestions(lessonName, 'NB', cat, grp.B.count, qType));
-                        if (grp.H?.count > 0) selected.push(...findQuestions(lessonName, 'TH', cat, grp.H.count, qType));
-                        if (grp.VD?.count > 0) selected.push(...findQuestions(lessonName, 'VD', cat, grp.VD.count, qType));
-                    };
-                    pick4Part(p4.nhieuLuaChon, 'mc', 'multiple-choice');
-                    pick4Part(p4.dungSai, 'mc', 'true-false');
-                    pick4Part(p4.traLoiNgan, 'mc', 'short-answer');
-                    pick4Part(p4.tuLuan, 'essay', 'essay');
+                    const mcB = extractCnt(p4.nhieuLuaChon?.B);
+                    const mcH = extractCnt(p4.nhieuLuaChon?.H);
+                    const mcVD = extractCnt(p4.nhieuLuaChon?.VD);
+
+                    const rawSaB = extractCnt(p4.traLoiNgan?.B);
+                    const rawSaH = extractCnt(p4.traLoiNgan?.H);
+                    const rawSaVD = extractCnt(p4.traLoiNgan?.VD);
+
+                    // Nếu môn học không có điền khuyết (useSA === false), tự động đẩy toàn bộ số lượng Điền khuyết sang câu hỏi Đúng/Sai
+                    const tfB = extractCnt(p4.dungSai?.B) + (useSA ? 0 : rawSaB);
+                    const tfH = extractCnt(p4.dungSai?.H) + (useSA ? 0 : rawSaH);
+                    const tfVD = extractCnt(p4.dungSai?.VD) + (useSA ? 0 : rawSaVD);
+
+                    const saB = useSA ? rawSaB : 0;
+                    const saH = useSA ? rawSaH : 0;
+                    const saVD = useSA ? rawSaVD : 0;
+
+                    const esB = extractCnt(p4.tuLuan?.B);
+                    const esH = extractCnt(p4.tuLuan?.H);
+                    const esVD = extractCnt(p4.tuLuan?.VD);
+
+                    if (mcB > 0) selected.push(...findQuestions(lessonName, 'NB', 'mc', mcB, 'multiple-choice'));
+                    if (mcH > 0) selected.push(...findQuestions(lessonName, 'TH', 'mc', mcH, 'multiple-choice'));
+                    if (mcVD > 0) selected.push(...findQuestions(lessonName, 'VD', 'mc', mcVD, 'multiple-choice'));
+
+                    if (tfB > 0) selected.push(...findQuestions(lessonName, 'NB', 'mc', tfB, 'true-false'));
+                    if (tfH > 0) selected.push(...findQuestions(lessonName, 'TH', 'mc', tfH, 'true-false'));
+                    if (tfVD > 0) selected.push(...findQuestions(lessonName, 'VD', 'mc', tfVD, 'true-false'));
+
+                    if (saB > 0) selected.push(...findQuestions(lessonName, 'NB', 'mc', saB, 'short-answer'));
+                    if (saH > 0) selected.push(...findQuestions(lessonName, 'TH', 'mc', saH, 'short-answer'));
+                    if (saVD > 0) selected.push(...findQuestions(lessonName, 'VD', 'mc', saVD, 'short-answer'));
+
+                    if (esB > 0) selected.push(...findQuestions(lessonName, 'NB', 'essay', esB, 'essay'));
+                    if (esH > 0) selected.push(...findQuestions(lessonName, 'TH', 'essay', esH, 'essay'));
+                    if (esVD > 0) selected.push(...findQuestions(lessonName, 'VD', 'essay', esVD, 'essay'));
                 } else {
                     const tnCounts = row.tracNghiem;
                     if (tnCounts) {
@@ -1413,15 +1474,37 @@ const ExamGenerator: React.FC = () => {
                                     </>
                                 ) : (
                                     <div className="text-left w-full mx-auto">
-                                        <div className="flex justify-between items-center mb-4">
+                                        <div className="flex flex-wrap justify-between items-center gap-3 mb-4">
                                             <div>
                                                 <h3 className="text-base font-bold text-emerald-700 flex items-center gap-2">
                                                     <CheckCircle2 size={20} /> Đã chọn ma trận: {importedMatrix.thongTinChung.tenDe}
                                                 </h3>
                                             </div>
-                                            <button onClick={() => setImportedMatrix(null)} className="text-red-600 hover:underline text-xs font-bold">
-                                                Đổi ma trận khác
-                                            </button>
+                                            <div className="flex items-center gap-3">
+                                                {importedMatrix.thongTinChung.matrixFormat === 'new_4part' && (
+                                                    <label className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-xs font-bold text-indigo-800 cursor-pointer select-none">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={importedMatrix.thongTinChung.useShortAnswer !== false}
+                                                            onChange={(e) => {
+                                                                const checked = e.target.checked;
+                                                                setImportedMatrix(prev => prev ? {
+                                                                    ...prev,
+                                                                    thongTinChung: {
+                                                                        ...prev.thongTinChung,
+                                                                        useShortAnswer: checked
+                                                                    }
+                                                                } : null);
+                                                            }}
+                                                            className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                                        />
+                                                        <span>Có phần Điền khuyết / Trả lời ngắn (Bỏ tích ➔ Tự đẩy sang Đúng/Sai)</span>
+                                                    </label>
+                                                )}
+                                                <button onClick={() => setImportedMatrix(null)} className="text-red-600 hover:underline text-xs font-bold">
+                                                    Đổi ma trận khác
+                                                </button>
+                                            </div>
                                         </div>
 
                                         <div className="bg-white border rounded-xl overflow-hidden">

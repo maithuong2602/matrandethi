@@ -627,13 +627,18 @@ const MatrixBuilder: React.FC = () => {
         // - "Đúng – Sai" (tf): 8 lệnh hỏi = 2,0đ (20%) -> 4 Biết + 4 Hiểu
         // - Trả lời ngắn (sa): 8 câu = 2,0đ (20%) -> 4 Biết + 4 Hiểu
         // - Tự luận (essay): 3 câu = 3,0đ (30%) -> 3 Vận dụng
+        const useShortAnswer = data.newPointsConfig?.useShortAnswer !== false;
         let remMC_B = ratioOption === '30-40-30' ? 6 : 8;
-        let remTF_B = ratioOption === '30-40-30' ? 3 : 4;
-        let remSA_B = ratioOption === '30-40-30' ? 3 : 4;
+        let remTF_B = useShortAnswer
+            ? (ratioOption === '30-40-30' ? 3 : 4)
+            : (ratioOption === '30-40-30' ? 6 : 8);
+        let remSA_B = useShortAnswer ? (ratioOption === '30-40-30' ? 3 : 4) : 0;
 
         let remMC_H = ratioOption === '30-40-30' ? 6 : 4;
-        let remTF_H = ratioOption === '30-40-30' ? 5 : 4;
-        let remSA_H = ratioOption === '30-40-30' ? 5 : 4;
+        let remTF_H = useShortAnswer
+            ? (ratioOption === '30-40-30' ? 5 : 4)
+            : (ratioOption === '30-40-30' ? 10 : 8);
+        let remSA_H = useShortAnswer ? (ratioOption === '30-40-30' ? 5 : 4) : 0;
 
         rows.forEach((r: any) => {
             const idx = r.idx;
@@ -1041,11 +1046,13 @@ const MatrixBuilder: React.FC = () => {
         const { rows: matrixRows } = currentDir.matrixData.matrix;
         const { rows: specRows } = currentDir.matrixData.specifications;
 
+        const useSA = currentDir.matrixData.newPointsConfig?.useShortAnswer !== false;
         const exportData: ImportedMatrixData = {
             thongTinChung: { 
                 tenDe: currentDir.name, 
                 ngayTao: new Date().toISOString(),
-                matrixFormat: currentDir.matrixData.matrixFormat || 'classic'
+                matrixFormat: currentDir.matrixData.matrixFormat || 'classic',
+                useShortAnswer: useSA
             },
             chiTiet: matrixRows.map((row, idx) => {
                 const specRow = specRows[idx];
@@ -1076,8 +1083,18 @@ const MatrixBuilder: React.FC = () => {
                     ...(newCfg ? {
                         chiTiet4Phan: {
                             nhieuLuaChon: { B: newCfg.mc.B.count, H: newCfg.mc.H.count, VD: newCfg.mc.VD.count, NL: newCfg.mc.B.competency || defaultNL },
-                            dungSai: { B: newCfg.tf.B.count, H: newCfg.tf.H.count, VD: newCfg.tf.VD.count, NL: newCfg.tf.B.competency || defaultNL },
-                            traLoiNgan: { B: newCfg.sa.B.count, H: newCfg.sa.H.count, VD: newCfg.sa.VD.count, NL: newCfg.sa.B.competency || defaultNL },
+                            dungSai: {
+                                B: useSA ? newCfg.tf.B.count : (newCfg.tf.B.count + newCfg.sa.B.count),
+                                H: useSA ? newCfg.tf.H.count : (newCfg.tf.H.count + newCfg.sa.H.count),
+                                VD: useSA ? newCfg.tf.VD.count : (newCfg.tf.VD.count + newCfg.sa.VD.count),
+                                NL: newCfg.tf.B.competency || defaultNL
+                            },
+                            traLoiNgan: {
+                                B: useSA ? newCfg.sa.B.count : 0,
+                                H: useSA ? newCfg.sa.H.count : 0,
+                                VD: useSA ? newCfg.sa.VD.count : 0,
+                                NL: newCfg.sa.B.competency || defaultNL
+                            },
                             tuLuan: { B: newCfg.essay.B.count, H: newCfg.essay.H.count, VD: newCfg.essay.VD.count, NL: newCfg.essay.VD.competency || defaultNL }
                         }
                     } : {}),

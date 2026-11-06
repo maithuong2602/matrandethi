@@ -626,12 +626,6 @@ const QuestionManager: React.FC = () => {
 
   const handleContentChange = (id: string, value: string) => {
     const lines = value.split(/\r?\n/).filter(line => line.trim() !== '');
-    const fillInTheBlankPattern = /\.{3,}|_{3,}/;
-    
-    if (lines.length === 1 && fillInTheBlankPattern.test(value)) {
-        setQuestions(prev => prev.map(q => q.id === id ? { ...q, content: value, mcType: 'fill-blank' } : q));
-        return;
-    }
 
     if (lines.length >= 2) {
         const optionLines = lines.slice(1);
