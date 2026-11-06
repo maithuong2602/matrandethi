@@ -31,6 +31,7 @@ type EditingNewCellState = {
     row: number;
     part: 'mc' | 'tf' | 'sa' | 'essay';
     level: 'B' | 'H' | 'VD';
+    subRowId?: string;
 } | null;
 
 interface NewFormatCellEditorProps {
@@ -321,7 +322,9 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
         part: 'mc' | 'tf' | 'sa' | 'essay',
         level: 'B' | 'H' | 'VD',
         newCount: number,
-        newCompetency: string
+        newCompetency: string,
+        subRowId?: string,
+        defaultSubRowIdForLevel?: string
     ) => {
         const newData: MatrixData = JSON.parse(JSON.stringify(data));
         if (!newData.newFormatRows) newData.newFormatRows = {};
@@ -331,10 +334,51 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
             }
         }
         const rowCfg = newData.newFormatRows[rowIndex];
-        rowCfg[part][level] = {
-            count: newCount,
-            competency: newCompetency || getDefaultCompetencyForTopic(String(newData.matrix.rows[rowIndex]?.[1] || ''), String(newData.matrix.rows[rowIndex]?.[2] || ''))
-        };
+        const fallbackNL = getDefaultCompetencyForTopic(String(newData.matrix.rows[rowIndex]?.[1] || ''), String(newData.matrix.rows[rowIndex]?.[2] || ''));
+        const suffix = `_${part}_${level}`;
+
+        if (subRowId) {
+            if (!rowCfg.subRowCells) rowCfg.subRowCells = {};
+            const existingKeysForPartLevel = Object.keys(rowCfg.subRowCells).filter(k => k.endsWith(suffix));
+
+            // Nếu chưa từng chia nhỏ theo từng dòng YCCĐ và đang sửa đúng dòng mặc định -> cập nhật trực tiếp
+            if (existingKeysForPartLevel.length === 0 && subRowId === defaultSubRowIdForLevel) {
+                rowCfg[part][level] = {
+                    count: newCount,
+                    competency: newCompetency || fallbackNL
+                };
+            } else {
+                // Lưu riêng trên dòng YCCĐ / mức độ được chọn và cộng tổng lên Ma trận
+                const cellKey = `${subRowId}${suffix}`;
+                if (newCount > 0) {
+                    rowCfg.subRowCells[cellKey] = {
+                        count: newCount,
+                        competency: newCompetency || fallbackNL
+                    };
+                } else {
+                    delete rowCfg.subRowCells[cellKey];
+                }
+
+                const updatedKeys = Object.keys(rowCfg.subRowCells).filter(k => k.endsWith(suffix));
+                const sumSubCounts = updatedKeys.reduce((acc, k) => acc + (rowCfg.subRowCells![k]?.count || 0), 0);
+                const firstActiveNL = updatedKeys.map(k => rowCfg.subRowCells![k]?.competency).find(Boolean) || newCompetency || fallbackNL;
+                rowCfg[part][level] = {
+                    count: sumSubCounts,
+                    competency: firstActiveNL
+                };
+            }
+        } else {
+            // Sửa từ Bảng Ma trận -> cập nhật tổng và xóa chia lẻ cũ của ô đó nếu có
+            if (rowCfg.subRowCells) {
+                Object.keys(rowCfg.subRowCells).forEach(k => {
+                    if (k.endsWith(suffix)) delete rowCfg.subRowCells![k];
+                });
+            }
+            rowCfg[part][level] = {
+                count: newCount,
+                competency: newCompetency || fallbackNL
+            };
+        }
 
         // Sync totals back to classic matrix & specification columns
         const totalB_TN = rowCfg.mc.B.count + rowCfg.tf.B.count + rowCfg.sa.B.count;
@@ -975,6 +1019,123 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
     const [addingLevelForRow, setAddingLevelForRow] = useState<number | null>(null);
     const [customLevelName, setCustomLevelName] = useState('');
 
+    type NewSpecSubRowItem =
+        | {
+              type: 'level_header';
+              subRowId: string;
+              sectionIdx: number;
+              levelKey: 'B' | 'H' | 'VD';
+              displayTitle: string;
+              rawTitle: string;
+          }
+        | {
+              type: 'yccd_item';
+              subRowId: string;
+              sectionIdx: number;
+              itemIdx: number;
+              levelKey: 'B' | 'H' | 'VD';
+              item: { id: string; text: string; checked: boolean };
+          }
+        | {
+              type: 'empty_item';
+              subRowId: string;
+              sectionIdx: number;
+              levelKey: 'B' | 'H' | 'VD';
+          }
+        | {
+              type: 'add_item_input';
+              subRowId: string;
+              sectionIdx: number;
+              levelKey: 'B' | 'H' | 'VD';
+              rawTitle: string;
+          };
+
+    const mapTitleToNewLevel = (rawTitle: string): { levelKey: 'B' | 'H' | 'VD'; displayTitle: string } => {
+        const lower = (rawTitle || '').trim().toLowerCase();
+        if (lower.startsWith('nhận biết') || lower.startsWith('biết')) {
+            return { levelKey: 'B', displayTitle: 'Biết:' };
+        }
+        if (lower.startsWith('thông hiểu') || lower.startsWith('hiểu')) {
+            return { levelKey: 'H', displayTitle: 'Hiểu:' };
+        }
+        return { levelKey: 'VD', displayTitle: 'Vận dụng:' };
+    };
+
+    const buildNewSpecSubRows = (rowIndex: number): NewSpecSubRowItem[] => {
+        const req = String(data.specifications?.rows?.[rowIndex]?.[4] || '');
+        const yccdSections = parseYccdHtml(req);
+        const subRows: NewSpecSubRowItem[] = [];
+
+        if (yccdSections.length === 0) {
+            const defaults: { levelKey: 'B' | 'H' | 'VD'; displayTitle: string; rawTitle: string }[] = [
+                { levelKey: 'B', displayTitle: 'Biết:', rawTitle: 'Nhận biết' },
+                { levelKey: 'H', displayTitle: 'Hiểu:', rawTitle: 'Thông hiểu' },
+                { levelKey: 'VD', displayTitle: 'Vận dụng:', rawTitle: 'Vận dụng' }
+            ];
+            defaults.forEach((d, idx) => {
+                subRows.push({
+                    type: 'level_header',
+                    subRowId: `header_${idx}`,
+                    sectionIdx: -1,
+                    levelKey: d.levelKey,
+                    displayTitle: d.displayTitle,
+                    rawTitle: d.rawTitle
+                });
+                subRows.push({
+                    type: 'empty_item',
+                    subRowId: `empty_${idx}`,
+                    sectionIdx: -1,
+                    levelKey: d.levelKey
+                });
+            });
+            return subRows;
+        }
+
+        yccdSections.forEach((section, sIdx) => {
+            const { levelKey, displayTitle } = mapTitleToNewLevel(section.levelTitle);
+            subRows.push({
+                type: 'level_header',
+                subRowId: `header_${sIdx}`,
+                sectionIdx: sIdx,
+                levelKey,
+                displayTitle,
+                rawTitle: section.levelTitle || displayTitle
+            });
+
+            if (section.items.length > 0) {
+                section.items.forEach((it, iIdx) => {
+                    subRows.push({
+                        type: 'yccd_item',
+                        subRowId: `item_${sIdx}_${iIdx}`,
+                        sectionIdx: sIdx,
+                        itemIdx: iIdx,
+                        levelKey,
+                        item: it
+                    });
+                });
+            } else {
+                subRows.push({
+                    type: 'empty_item',
+                    subRowId: `empty_${sIdx}`,
+                    sectionIdx: sIdx,
+                    levelKey
+                });
+            }
+
+            if (addingYccdFor?.rowIndex === rowIndex && addingYccdFor?.sectionIdx === sIdx) {
+                subRows.push({
+                    type: 'add_item_input',
+                    subRowId: `add_${sIdx}`,
+                    sectionIdx: sIdx,
+                    levelKey,
+                    rawTitle: section.levelTitle || displayTitle
+                });
+            }
+        });
+
+        return subRows;
+    };
+
     const renderSpecRow = (row: string[], rowIndex: number, rowspanMain: number | null, rowspanSub: number | null) => {
         const [stt, main, sub, lesson, req, nb_raw, th_raw, vd_raw, vdc_raw] = row;
         
@@ -1043,6 +1204,315 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
         };
 
         const yccdSections = parseYccdHtml(req);
+
+        // Chế độ Mẫu mới (2. BẢNG ĐẶC TẢ KIỂM TRA ĐỊNH KÌ):
+        // Tách riêng từng dòng mức độ (Biết:, Hiểu:, Vận dụng:) và TỪNG YCCĐ vào 1 dòng <tr> riêng biệt, KHÔNG gộp chung vào 1 ô
+        if (isNewFormat) {
+            const subRows = buildNewSpecSubRows(rowIndex);
+            const lessonSpan = subRows.length;
+            const rowCfg = getRowNewFormatConfig(rowIndex);
+            const defaultNL = getDefaultCompetencyForTopic(main, sub);
+            const parts: ('mc' | 'tf' | 'sa' | 'essay')[] = ['mc', 'tf', 'sa', 'essay'];
+            const levels: ('B' | 'H' | 'VD')[] = ['B', 'H', 'VD'];
+
+            // Xác định dòng mặc định cho từng mức độ (B, H, VD) để hiển thị (n) và (NL?) giống chuẩn hình mẫu
+            const defaultSubRowForLevel: Record<'B' | 'H' | 'VD', string> = {
+                B: subRows.find(sr => sr.type === 'level_header' && sr.levelKey === 'B')?.subRowId || subRows[0]?.subRowId || 'header_0',
+                H: subRows.find(sr => sr.type === 'level_header' && sr.levelKey === 'H')?.subRowId || subRows[0]?.subRowId || 'header_0',
+                VD: subRows.find(sr => sr.type === 'level_header' && sr.levelKey === 'VD')?.subRowId || subRows[0]?.subRowId || 'header_0'
+            };
+
+            return (
+                <React.Fragment key={`spec-new-frag-${rowIndex}`}>
+                    {subRows.map((subRow, subIdx) => {
+                        const isFirstSubRow = subIdx === 0;
+
+                        return (
+                            <tr key={`spec-new-${rowIndex}-${subRow.subRowId}`} className="hover:bg-slate-50/70">
+                                {isFirstSubRow && (
+                                    <td
+                                        rowSpan={lessonSpan}
+                                        className="bg-white border border-slate-400 p-2 text-center align-top font-medium text-slate-700"
+                                    >
+                                        {stt}
+                                    </td>
+                                )}
+                                {isFirstSubRow && rowspanMain !== null && (
+                                    <td
+                                        rowSpan={rowspanMain}
+                                        className="bg-white align-top text-left border border-slate-400 p-2 font-semibold text-slate-900"
+                                    >
+                                        {main}
+                                    </td>
+                                )}
+                                {isFirstSubRow && rowspanSub !== null && (
+                                    <td
+                                        rowSpan={rowspanSub}
+                                        className="bg-white align-top text-left border border-slate-400 p-2 text-slate-800"
+                                    >
+                                        {sub}
+                                    </td>
+                                )}
+                                {isFirstSubRow && (
+                                    <td
+                                        rowSpan={lessonSpan}
+                                        className="bg-white text-left align-top border border-slate-400 p-2 text-xs text-slate-700"
+                                    >
+                                        {lesson}
+                                    </td>
+                                )}
+
+                                {/* Cột Yêu cầu cần đạt: Mỗi dòng là 1 ô <td> riêng biệt */}
+                                <td className="bg-white text-left border border-slate-400 px-2.5 py-1.5 min-w-[340px] align-middle">
+                                    {subRow.type === 'level_header' && (
+                                        <div className="flex items-center justify-between">
+                                            <span className="font-bold text-slate-900 text-sm">{subRow.displayTitle}</span>
+                                            <div className="flex items-center gap-1">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        if (subRow.sectionIdx === -1) {
+                                                            handleAddLevel(rowIndex, subRow.rawTitle);
+                                                        } else {
+                                                            setAddingYccdFor({ rowIndex, sectionIdx: subRow.sectionIdx });
+                                                            setNewYccdText('');
+                                                        }
+                                                    }}
+                                                    className="text-[11px] text-blue-600 hover:text-blue-800 flex items-center gap-0.5 font-normal py-0.5 px-1.5 rounded hover:bg-blue-50 transition-colors cursor-pointer"
+                                                    title={`Thêm YCCĐ vào mục ${subRow.displayTitle}`}
+                                                >
+                                                    <Plus size={12} />
+                                                    <span>Thêm YCCĐ</span>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {subRow.type === 'yccd_item' && (() => {
+                                        const { item, sectionIdx: sIdx, itemIdx: iIdx } = subRow;
+                                        const isEditingThis =
+                                            editingYccdFor?.rowIndex === rowIndex &&
+                                            editingYccdFor?.sectionIdx === sIdx &&
+                                            editingYccdFor?.itemIdx === iIdx;
+
+                                        if (isEditingThis) {
+                                            return (
+                                                <div className="flex items-center gap-1.5">
+                                                    <input
+                                                        type="text"
+                                                        autoFocus
+                                                        value={editingYccdText}
+                                                        onChange={(e) => setEditingYccdText(e.target.value)}
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === 'Enter') {
+                                                                handleUpdateYccd(rowIndex, sIdx, iIdx, editingYccdText);
+                                                            } else if (e.key === 'Escape') {
+                                                                setEditingYccdFor(null);
+                                                                setEditingYccdText('');
+                                                            }
+                                                        }}
+                                                        className="flex-1 text-xs border border-blue-400 rounded px-2 py-1 outline-none bg-white"
+                                                    />
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleUpdateYccd(rowIndex, sIdx, iIdx, editingYccdText)}
+                                                        className="bg-blue-600 text-white text-xs px-2 py-1 rounded hover:bg-blue-700 font-medium cursor-pointer"
+                                                    >
+                                                        Lưu
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setEditingYccdFor(null);
+                                                            setEditingYccdText('');
+                                                        }}
+                                                        className="text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                                                    >
+                                                        <X size={13} />
+                                                    </button>
+                                                </div>
+                                            );
+                                        }
+
+                                        return (
+                                            <div className="group/item flex items-start gap-2">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={item.checked}
+                                                    onChange={() => handleToggleYccd(rowIndex, sIdx, iIdx)}
+                                                    className="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-blue-600 cursor-pointer shrink-0"
+                                                    title={item.checked ? 'Đang đưa vào bảng đặc tả (Nhấn để ẩn khi in)' : 'Đang ẩn khi in (Nhấn để bật lại)'}
+                                                />
+                                                <span
+                                                    onDoubleClick={() => {
+                                                        setEditingYccdFor({ rowIndex, sectionIdx: sIdx, itemIdx: iIdx });
+                                                        setEditingYccdText(item.text.replace(/^[–\-*•]\s*/, ''));
+                                                    }}
+                                                    className={`flex-1 leading-snug text-[13px] ${
+                                                        item.checked ? 'text-slate-800' : 'line-through text-slate-400'
+                                                    }`}
+                                                >
+                                                    {item.text}
+                                                </span>
+                                                <div className="opacity-0 group-hover/item:opacity-100 flex items-center gap-0.5 shrink-0 transition-opacity">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setEditingYccdFor({ rowIndex, sectionIdx: sIdx, itemIdx: iIdx });
+                                                            setEditingYccdText(item.text.replace(/^[–\-*•]\s*/, ''));
+                                                        }}
+                                                        className="text-slate-400 hover:text-blue-600 p-0.5 rounded hover:bg-blue-50 cursor-pointer"
+                                                        title="Sửa YCCĐ này"
+                                                    >
+                                                        <Pencil size={12} />
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleDeleteYccd(rowIndex, sIdx, iIdx)}
+                                                        className="text-red-400 hover:text-red-600 p-0.5 rounded hover:bg-red-50 cursor-pointer"
+                                                        title="Xóa dòng YCCĐ này"
+                                                    >
+                                                        <X size={12} />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
+
+                                    {subRow.type === 'empty_item' && (
+                                        <span className="text-slate-400 text-xs">...</span>
+                                    )}
+
+                                    {subRow.type === 'add_item_input' && (
+                                        <div className="flex items-center gap-1.5">
+                                            <input
+                                                type="text"
+                                                autoFocus
+                                                value={newYccdText}
+                                                onChange={(e) => setNewYccdText(e.target.value)}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') {
+                                                        handleAddYccd(rowIndex, subRow.sectionIdx, newYccdText);
+                                                        setAddingYccdFor(null);
+                                                        setNewYccdText('');
+                                                    } else if (e.key === 'Escape') {
+                                                        setAddingYccdFor(null);
+                                                        setNewYccdText('');
+                                                    }
+                                                }}
+                                                placeholder="Nhập nội dung YCCĐ mới..."
+                                                className="flex-1 text-xs border border-blue-400 rounded px-2 py-1 outline-none bg-white"
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    handleAddYccd(rowIndex, subRow.sectionIdx, newYccdText);
+                                                    setAddingYccdFor(null);
+                                                    setNewYccdText('');
+                                                }}
+                                                className="bg-blue-600 text-white text-xs px-2 py-1 rounded hover:bg-blue-700 font-medium cursor-pointer"
+                                            >
+                                                Lưu
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setAddingYccdFor(null);
+                                                    setNewYccdText('');
+                                                }}
+                                                className="text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                                            >
+                                                <X size={13} />
+                                            </button>
+                                        </div>
+                                    )}
+                                </td>
+
+                                {/* 12 cột Số câu hỏi ở các mức độ đánh giá cho TỪNG dòng YCCĐ */}
+                                {parts.map(partKey =>
+                                    levels.map(lvlKey => {
+                                        const suffix = `_${partKey}_${lvlKey}`;
+                                        const subCells = rowCfg.subRowCells || {};
+                                        const hasSubCustom = Object.keys(subCells).some(k => k.endsWith(suffix));
+                                        const defaultRowId = defaultSubRowForLevel[lvlKey];
+
+                                        let cCount = 0;
+                                        let cNL = rowCfg[partKey][lvlKey]?.competency || defaultNL;
+
+                                        if (hasSubCustom) {
+                                            const subCell = subCells[`${subRow.subRowId}${suffix}`];
+                                            cCount = subCell?.count || 0;
+                                            if (subCell?.competency) cNL = subCell.competency;
+                                        } else if (subRow.subRowId === defaultRowId) {
+                                            cCount = rowCfg[partKey][lvlKey]?.count || 0;
+                                            cNL = rowCfg[partKey][lvlKey]?.competency || defaultNL;
+                                        }
+
+                                        const isEditingThis =
+                                            editingNewCell?.table === 'spec' &&
+                                            editingNewCell.row === rowIndex &&
+                                            editingNewCell.part === partKey &&
+                                            editingNewCell.level === lvlKey &&
+                                            editingNewCell.subRowId === subRow.subRowId;
+
+                                        return (
+                                            <td
+                                                key={`spec-new-${subRow.subRowId}-${partKey}-${lvlKey}`}
+                                                className="bg-white hover:bg-indigo-50/60 p-1 border border-slate-400 text-center align-middle transition-colors relative min-w-[48px]"
+                                            >
+                                                {isEditingThis ? (
+                                                    <NewFormatCellEditor
+                                                        initialCount={cCount}
+                                                        initialCompetency={cNL}
+                                                        onSave={(newC, newNL) =>
+                                                            handleNewFormatCellSave(
+                                                                rowIndex,
+                                                                partKey,
+                                                                lvlKey,
+                                                                newC,
+                                                                newNL,
+                                                                subRow.subRowId,
+                                                                defaultRowId
+                                                            )
+                                                        }
+                                                        onCancel={() => setEditingNewCell(null)}
+                                                    />
+                                                ) : (
+                                                    <div
+                                                        onClick={() =>
+                                                            setEditingNewCell({
+                                                                table: 'spec',
+                                                                row: rowIndex,
+                                                                part: partKey,
+                                                                level: lvlKey,
+                                                                subRowId: subRow.subRowId
+                                                            })
+                                                        }
+                                                        className="cursor-pointer flex flex-col items-center justify-center py-0.5 min-h-[26px]"
+                                                        title="Nhấn để nhập số câu (n) và chọn năng lực (NLa - NLe) cho dòng này"
+                                                    >
+                                                        {cCount > 0 ? (
+                                                            <>
+                                                                <span className="font-bold text-xs text-slate-900 leading-tight">({cCount})</span>
+                                                                <span className="text-[10px] font-semibold text-indigo-700 leading-tight">
+                                                                    ({cNL})
+                                                                </span>
+                                                            </>
+                                                        ) : (
+                                                            <span className="text-transparent select-none text-[10px]">.</span>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </td>
+                                        );
+                                    })
+                                )}
+                            </tr>
+                        );
+                    })}
+                </React.Fragment>
+            );
+        }
 
         return (
             <tr key={`spec-${rowIndex}`} className="hover:bg-slate-50 group">
@@ -2073,8 +2543,12 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                          {subGroup.map((item, iIdx) => {
                                              const isMainFirst = sIdx === 0 && iIdx === 0;
                                              const isSubFirst = iIdx === 0;
-                                             const mainRowSpan = mainGroup.reduce((a, b) => a + b.length, 0);
-                                             const subRowSpan = subGroup.length;
+                                             const mainRowSpan = isNewFormat
+                                                 ? mainGroup.reduce((a, b) => a + b.reduce((s, it) => s + buildNewSpecSubRows(it.index).length, 0), 0)
+                                                 : mainGroup.reduce((a, b) => a + b.length, 0);
+                                             const subRowSpan = isNewFormat
+                                                 ? subGroup.reduce((s, it) => s + buildNewSpecSubRows(it.index).length, 0)
+                                                 : subGroup.length;
                                              return renderSpecRow(data.specifications.rows[item.index] as unknown as string[], item.index, isMainFirst ? mainRowSpan : null, isSubFirst ? subRowSpan : null)
                                          })}
                                     </React.Fragment>

@@ -117,6 +117,8 @@ export interface NewMatrixFormatRowConfig {
   tf: { B: NewMatrixFormatCell; H: NewMatrixFormatCell; VD: NewMatrixFormatCell };    // "Đúng - Sai"
   sa: { B: NewMatrixFormatCell; H: NewMatrixFormatCell; VD: NewMatrixFormatCell };    // Trả lời ngắn
   essay: { B: NewMatrixFormatCell; H: NewMatrixFormatCell; VD: NewMatrixFormatCell }; // Tự luận
+  // Tùy chọn lưu số câu (n) và mã năng lực (NL) gắn trên từng dòng YCCĐ riêng biệt trong Bảng đặc tả
+  subRowCells?: Record<string, NewMatrixFormatCell>;
 }
 
 export interface MatrixLevelCount {

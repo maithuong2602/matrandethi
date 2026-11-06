@@ -1408,6 +1408,91 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
         let ptB = 0, ptH = 0, ptVD = 0;
         let newStt = 1;
 
+        // Helper tách các dòng YCCĐ thành từng dòng <tr> riêng biệt cho Bảng đặc tả (không gộp chung vào 1 ô)
+        type PrintSpecSubRow = {
+            subRowId: string;
+            isHeader: boolean;
+            levelKey: 'B' | 'H' | 'VD';
+            text: string;
+        };
+
+        const parseReqToSpecSubRows = (reqHtmlStr: string): PrintSpecSubRow[] => {
+            let cleaned = reqHtmlStr || '';
+            if (cleaned.includes('data-unchecked="true"')) {
+                cleaned = cleaned.replace(/<div[^>]*data-unchecked="true"[^>]*>[\s\S]*?<\/div>/gi, '');
+            }
+            const result: PrintSpecSubRow[] = [];
+            const strongRegex = /<strong[^>]*>([\s\S]*?)<\/strong>/gi;
+            const matches: { title: string; index: number; endIndex: number }[] = [];
+            let m;
+            while ((m = strongRegex.exec(cleaned)) !== null) {
+                matches.push({
+                    title: m[1].trim(),
+                    index: m.index,
+                    endIndex: m.index + m[0].length
+                });
+            }
+
+            if (matches.length === 0) {
+                const defaults: { k: 'B' | 'H' | 'VD'; t: string }[] = [
+                    { k: 'B', t: 'Biết:' },
+                    { k: 'H', t: 'Hiểu:' },
+                    { k: 'VD', t: 'Vận dụng:' }
+                ];
+                defaults.forEach((d, idx) => {
+                    result.push({ subRowId: `header_${idx}`, isHeader: true, levelKey: d.k, text: d.t });
+                    result.push({ subRowId: `empty_${idx}`, isHeader: false, levelKey: d.k, text: '...' });
+                });
+                return result;
+            }
+
+            matches.forEach((sec, sIdx) => {
+                const nextStart = sIdx + 1 < matches.length ? matches[sIdx + 1].index : cleaned.length;
+                const block = cleaned.substring(sec.endIndex, nextStart);
+                const lower = sec.title.toLowerCase();
+                const levelKey: 'B' | 'H' | 'VD' =
+                    lower.startsWith('nhận biết') || lower.startsWith('biết')
+                        ? 'B'
+                        : lower.startsWith('thông hiểu') || lower.startsWith('hiểu')
+                        ? 'H'
+                        : 'VD';
+                const displayTitle =
+                    levelKey === 'B' ? 'Biết:' : levelKey === 'H' ? 'Hiểu:' : 'Vận dụng:';
+
+                result.push({
+                    subRowId: `header_${sIdx}`,
+                    isHeader: true,
+                    levelKey,
+                    text: displayTitle
+                });
+
+                const divRegex = /<div[^>]*>([\s\S]*?)<\/div>/gi;
+                let dm;
+                let iIdx = 0;
+                while ((dm = divRegex.exec(block)) !== null) {
+                    const txt = dm[1].trim();
+                    if (txt) {
+                        result.push({
+                            subRowId: `item_${sIdx}_${iIdx++}`,
+                            isHeader: false,
+                            levelKey,
+                            text: txt
+                        });
+                    }
+                }
+                if (iIdx === 0) {
+                    result.push({
+                        subRowId: `empty_${sIdx}`,
+                        isHeader: false,
+                        levelKey,
+                        text: '...'
+                    });
+                }
+            });
+
+            return result;
+        };
+
         Object.keys(groupedByMainTopic).forEach(mainTopic => {
             const rows = groupedByMainTopic[mainTopic];
             const groupedSub = rows.reduce((acc: any, r: any) => {
@@ -1417,6 +1502,21 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             }, {});
             const subs = Object.keys(groupedSub);
             const mainSpan = subs.length;
+
+            // Tính tổng số dòng <tr> của Chủ đề trong Bảng đặc tả (tách riêng từng YCCĐ)
+            const subSpecRowsMap: Record<string, PrintSpecSubRow[]> = {};
+            let mainSpecRowSpan = 0;
+            subs.forEach(subTopic => {
+                const subRows = groupedSub[subTopic];
+                const firstRow = subRows[0];
+                const rawCustomReq = (firstRow && data.specifications?.rows)
+                    ? (data.specifications.rows[data.matrix.rows.indexOf(firstRow)]?.[4] || '')
+                    : '';
+                const reqHtmlStr = rawCustomReq || getRequirementsHtml(gradeStr, mainTopic, subTopic);
+                const parsedSubRows = parseReqToSpecSubRows(reqHtmlStr);
+                subSpecRowsMap[subTopic] = parsedSubRows;
+                mainSpecRowSpan += parsedSubRows.length;
+            });
 
             subs.forEach((subTopic, sIdx) => {
                 const subRows = groupedSub[subTopic];
@@ -1439,6 +1539,16 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                             tot[pKey][lKey] += c;
                         });
                     });
+                    if (cfg.subRowCells) {
+                        if (!agg.subRowCells) agg.subRowCells = {};
+                        Object.entries(cfg.subRowCells).forEach(([k, v]) => {
+                            if (!agg.subRowCells![k]) {
+                                agg.subRowCells![k] = { ...v };
+                            } else {
+                                agg.subRowCells![k].count += v.count || 0;
+                            }
+                        });
+                    }
 
                     const rowPtB = cfg.mc.B.count * mcPt + cfg.tf.B.count * tfPt + cfg.sa.B.count * saPt + cfg.essay.B.count * rEssayPt;
                     const rowPtH = cfg.mc.H.count * mcPt + cfg.tf.H.count * tfPt + cfg.sa.H.count * saPt + cfg.essay.H.count * rEssayPt;
@@ -1476,43 +1586,50 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 newMatrixBody += `<td>${subPct > 0 ? formatPercent(subPct) + '%' : ''}</td>`;
                 newMatrixBody += '</tr>';
 
-                // Specification Row
-                const firstRow = subRows[0];
-                const rawCustomReq = (firstRow && data.specifications?.rows)
-                    ? (data.specifications.rows[data.matrix.rows.indexOf(firstRow)]?.[4] || '')
-                    : '';
-                let activeReqHtml = rawCustomReq || getRequirementsHtml(gradeStr, mainTopic, subTopic);
-                if (activeReqHtml.includes('data-unchecked="true"')) {
-                    activeReqHtml = activeReqHtml.replace(/<div[^>]*data-unchecked="true"[^>]*>[\s\S]*?<\/div>/gi, '');
-                }
-                activeReqHtml = activeReqHtml.replace(/<strong\b[^>]*>[\s\S]*?<\/strong>(?=\s*(?:<strong\b[^>]*>|$))/gi, '');
-                const formattedReq = activeReqHtml
-                    .replace(/Nhận biết/gi, 'Biết:')
-                    .replace(/Thông hiểu/gi, 'Hiểu:')
-                    .replace(/Vận dụng cao/gi, 'Vận dụng:')
-                    .replace(/Vận dụng(?!:)/gi, 'Vận dụng:')
-                    .replace(/<strong class="block font-semibold.*?"/g, '<p style="font-weight: bold; margin: 4px 0 2px 0;"')
-                    .replace(/<strong\b[^>]*>/g, '<p style="font-weight: bold; margin: 4px 0 2px 0;">')
-                    .replace(/<\/strong>/g, '</p>')
-                    .replace(/<div class="pl-2"[^>]*>/g, '<p style="margin: 0 0 0 10px;">')
-                    .replace(/<div[^>]*>/g, '<p style="margin: 0 0 0 10px;">')
-                    .replace(/<\/div>/g, '</p>');
+                // Specification Rows (mỗi dòng Biết:, Hiểu:, Vận dụng: và từng YCCĐ nằm trên 1 <tr> riêng)
+                const specSubRows = subSpecRowsMap[subTopic] || [];
+                const subSpecSpan = specSubRows.length;
+                const defaultRowForLevel: Record<'B' | 'H' | 'VD', string> = {
+                    B: specSubRows.find(sr => sr.isHeader && sr.levelKey === 'B')?.subRowId || specSubRows[0]?.subRowId || 'header_0',
+                    H: specSubRows.find(sr => sr.isHeader && sr.levelKey === 'H')?.subRowId || specSubRows[0]?.subRowId || 'header_0',
+                    VD: specSubRows.find(sr => sr.isHeader && sr.levelKey === 'VD')?.subRowId || specSubRows[0]?.subRowId || 'header_0'
+                };
 
-                newSpecBody += '<tr>';
-                newSpecBody += `<td>${newStt}</td>`;
-                if (sIdx === 0) {
-                    newSpecBody += `<td class="text-left align-top" rowspan="${mainSpan}"><b>${mainTopic}</b></td>`;
-                }
-                newSpecBody += `<td class="text-left align-top"><b>${subTopic}</b></td>`;
-                newSpecBody += `<td class="text-left align-top">${formattedReq}</td>`;
-                (['mc', 'tf', 'sa', 'essay'] as const).forEach(pKey => {
-                    (['B', 'H', 'VD'] as const).forEach(lKey => {
-                        const c = agg[pKey][lKey].count;
-                        const nl = agg[pKey][lKey].competency || defaultNL;
-                        newSpecBody += `<td>${c > 0 ? `<div>(${c})</div><div>(${nl})</div>` : ''}</td>`;
+                specSubRows.forEach((sr, srIdx) => {
+                    newSpecBody += '<tr>';
+                    if (srIdx === 0) {
+                        newSpecBody += `<td class="align-top" rowspan="${subSpecSpan}">${newStt}</td>`;
+                    }
+                    if (sIdx === 0 && srIdx === 0) {
+                        newSpecBody += `<td class="text-left align-top" rowspan="${mainSpecRowSpan}"><b>${mainTopic}</b></td>`;
+                    }
+                    if (srIdx === 0) {
+                        newSpecBody += `<td class="text-left align-top" rowspan="${subSpecSpan}"><b>${subTopic}</b></td>`;
+                    }
+                    newSpecBody += `<td class="text-left">${sr.isHeader ? `<b>${sr.text}</b>` : sr.text}</td>`;
+
+                    (['mc', 'tf', 'sa', 'essay'] as const).forEach(pKey => {
+                        (['B', 'H', 'VD'] as const).forEach(lKey => {
+                            const suffix = `_${pKey}_${lKey}`;
+                            const subCells = agg.subRowCells || {};
+                            const hasCustom = Object.keys(subCells).some(k => k.endsWith(suffix));
+                            let c = 0;
+                            let nl = agg[pKey][lKey].competency || defaultNL;
+
+                            if (hasCustom) {
+                                const sc = subCells[`${sr.subRowId}${suffix}`];
+                                c = sc?.count || 0;
+                                if (sc?.competency) nl = sc.competency;
+                            } else if (sr.subRowId === defaultRowForLevel[lKey]) {
+                                c = agg[pKey][lKey].count;
+                                nl = agg[pKey][lKey].competency || defaultNL;
+                            }
+
+                            newSpecBody += `<td>${c > 0 ? `<div>(${c})</div><div>(${nl})</div>` : ''}</td>`;
+                        });
                     });
+                    newSpecBody += '</tr>';
                 });
-                newSpecBody += '</tr>';
 
                 newStt++;
             });
