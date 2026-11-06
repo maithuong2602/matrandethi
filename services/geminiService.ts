@@ -156,12 +156,137 @@ export const standardizeQuestionText = async (rawText: string): Promise<string> 
     );
 };
 
+export const parseStructuredTextQuestions = (rawText: string): any[] => {
+    if (!rawText || !rawText.trim()) return [];
+    const blocks = rawText
+        .replace(/\r\n/g, '\n')
+        .split(/(?=(?:^|\n)\s*(?:Câu\s*\d+|Bài\s*\d+|\d+\s*[.):]))/i)
+        .map(b => b.trim())
+        .filter(Boolean);
+
+    const targetBlocks = blocks.length > 0 ? blocks : [rawText.trim()];
+    const parsed: any[] = [];
+
+    targetBlocks.forEach(block => {
+        const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
+        if (lines.length === 0) return;
+
+        let stem = lines[0].replace(/^(?:Câu\s*\d+|Bài\s*\d+|\d+)\s*[.):\-]?\s*/i, '').trim();
+        let explicitAnswer = '';
+        let level = 'NB';
+
+        const lvlMatch = stem.match(/^\[(NB|TH|VD|VDC)\]\s*/i) || stem.match(/^\((NB|TH|VD|VDC)\)\s*/i);
+        if (lvlMatch) {
+            level = lvlMatch[1].toUpperCase();
+            stem = stem.slice(lvlMatch[0].length).trim();
+        }
+
+        const optLines: string[] = [];
+        for (let i = 1; i < lines.length; i++) {
+            const line = lines[i];
+            const ansMatch = line.match(/^(?:Đáp\s*án|ĐA|Trả\s*lời|Hướng\s*dẫn\s*chấm)\s*[:=]\s*(.+)$/i);
+            if (ansMatch) {
+                explicitAnswer = ansMatch[1].trim();
+                continue;
+            }
+            if (/^\*?[A-Da-d][.)]\s*/.test(line) || /^[A-Da-d][.)]\s*\*/.test(line)) {
+                optLines.push(line);
+            } else if (optLines.length === 0) {
+                stem += ' ' + line;
+            }
+        }
+
+        // Kiểm tra câu hỏi Đúng/Sai 1 nhận định (VD: có [Đúng]/[Sai] hoặc *Đúng/*Sai ở cuối câu hoặc dòng Đáp án: Đúng/Sai)
+        const tfInlineMatch = stem.match(/(?:\[\s*(\*?Đúng|\*?Sai|Đ|S)\s*\]|\(\s*(\*?(?:Đúng|Sai))\s*\))\s*$/i);
+        if (optLines.length === 0 && (tfInlineMatch || /^(?:Đúng|Sai|Đ|S)$/i.test(explicitAnswer))) {
+            const rawTf = (tfInlineMatch ? (tfInlineMatch[1] || tfInlineMatch[2]) : explicitAnswer).replace('*', '').trim().toLowerCase();
+            const isTrue = rawTf.startsWith('đ') || rawTf === 'true';
+            if (tfInlineMatch) {
+                stem = stem.slice(0, tfInlineMatch.index).trim();
+            }
+            parsed.push({
+                category: 'mc',
+                questionType: 'true-false',
+                mcType: 'multiple-choice',
+                level,
+                criteria: '',
+                content: stem,
+                options: [
+                    { id: 'Đúng', text: 'Đúng', isCorrect: isTrue },
+                    { id: 'Sai', text: 'Sai', isCorrect: !isTrue }
+                ],
+                answer: isTrue ? 'Đúng' : 'Sai'
+            });
+            return;
+        }
+
+        if (optLines.length >= 2) {
+            const explicitLetters = explicitAnswer
+                .toUpperCase()
+                .split(/[,;\s]+/)
+                .filter(x => ['A', 'B', 'C', 'D'].includes(x));
+
+            const options = ['A', 'B', 'C', 'D'].map((id, idx) => {
+                const rawLine = optLines[idx] || '';
+                const hasStar = rawLine.startsWith('*') || /^[A-Da-d][.)]\s*\*/.test(rawLine);
+                const cleanText = rawLine
+                    .replace(/^\*\s*/, '')
+                    .replace(/^[A-Da-d][.)]\s*\*?\s*/, '')
+                    .trim();
+                const isCorrect = hasStar || explicitLetters.includes(id);
+                return { id, text: cleanText, isCorrect };
+            });
+
+            if (!options.some(o => o.isCorrect)) {
+                options[0].isCorrect = true;
+            }
+
+            const correctIds = options.filter(o => o.isCorrect).map(o => o.id);
+            const isMulti = correctIds.length > 1;
+            parsed.push({
+                category: 'mc',
+                questionType: isMulti ? 'multiple-answer' : 'multiple-choice',
+                mcType: isMulti ? 'multiple-answer' : 'multiple-choice',
+                level,
+                criteria: '',
+                content: stem,
+                options,
+                answer: correctIds.join(', ')
+            });
+            return;
+        }
+
+        if (explicitAnswer) {
+            parsed.push({
+                category: 'mc',
+                questionType: 'short-answer',
+                mcType: 'fill-blank',
+                level,
+                criteria: '',
+                content: stem,
+                options: [],
+                answer: explicitAnswer
+            });
+        }
+    });
+
+    return parsed;
+};
+
 export const parseQuestionsWithAI = async (
     text: string, 
     grade?: string, 
     lesson?: string,
     pdfBase64?: string
 ): Promise<any[]> => {
+    // Nếu là văn bản thuần có đánh dấu *A., *B. hoặc Đáp án: ..., ưu tiên bóc tách tức thì (< 5ms) nếu không đính kèm PDF
+    if (!pdfBase64 && text && (/(?:^|\n)\s*\*?[A-Da-d][.)]\s+/m.test(text) || /(?:Đáp\s*án|ĐA)\s*[:=]/i.test(text) || /\[\s*(?:Đúng|Sai|Đ|S)\s*\]/i.test(text))) {
+        const directParsed = parseStructuredTextQuestions(text);
+        if (directParsed.length > 0) {
+            return directParsed;
+        }
+    }
+
     return callGeminiWithFailover(
         async (ai, model) => {
             let contextInstruction = "";
@@ -179,9 +304,14 @@ export const parseQuestionsWithAI = async (
             
             ${contextInstruction}
 
+            IMPORTANT ANSWER DETECTION RULES:
+            - An asterisk (*) before an option letter (e.g. "*A. ...", "*B. ...") or after the option letter (e.g. "A. *...") ALWAYS marks that option as the correct answer ("isCorrect": true). Strip the "*" from the option text.
+            - A line like "Đáp án: B" or "ĐA: A, C" also marks the correct answer(s).
+            - For True/False statements, "[Đúng]" / "[Đ]" / "*Đúng" means True, and "[Sai]" / "[S]" / "*Sai" means False.
+
             The questions may contain:
             1. Multiple Choice Questions (4 options A, B, C, D with single correct answer).
-            2. True/False Questions (Phần II - 4 statements a, b, c, d where each is evaluated as True or False).
+            2. True/False Questions (Phần II - statements evaluated as True or False).
             3. Short Answer Questions (Phần III - Trả lời ngắn, no choices, student writes answer).
             4. Essay Questions (Tự luận).
             
@@ -222,6 +352,8 @@ export const parseQuestionsWithAI = async (
             return Array.isArray(result) ? result : [];
         },
         () => {
+            const offlineParsed = parseStructuredTextQuestions(text);
+            if (offlineParsed.length > 0) return offlineParsed;
             return generateOfflineQuestions(grade || '7', lesson || 'Tin học', 'NB', lesson || '', 3, 'multiple-choice');
         }
     );

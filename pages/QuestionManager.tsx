@@ -628,11 +628,15 @@ const QuestionManager: React.FC = () => {
     const lines = value.split(/\r?\n/).filter(line => line.trim() !== '');
 
     if (lines.length >= 2) {
-        const optionLines = lines.slice(1);
-        const hasValidOption = optionLines.some(line => /^\s*\*?[A-Da-d][.)]/.test(line.trim()));
-        
-        if (hasValidOption) {
-            const questionText = lines[0];
+        const restLines = lines.slice(1);
+        const optionLines = restLines.filter(line => /^\s*\*?[A-Da-d][.)]/.test(line.trim()));
+        const explicitAnsLine = restLines.find(line => /^(?:Đáp\s*án|ĐA)\s*[:=]\s*([A-Da-d,\s]+)$/i.test(line.trim()));
+        const explicitLetters = explicitAnsLine
+            ? explicitAnsLine.replace(/^(?:Đáp\s*án|ĐA)\s*[:=]\s*/i, '').toUpperCase().split(/[,;\s]+/).filter(Boolean)
+            : [];
+
+        if (optionLines.length >= 2) {
+            const questionText = lines[0].replace(/^(?:Câu\s*\d+|Bài\s*\d+|\d+)\s*[.):\-]?\s*/i, '').trim() || lines[0];
             const parsedOptions = [
                 { id: 'A', text: '', isCorrect: false },
                 { id: 'B', text: '', isCorrect: false },
@@ -642,13 +646,15 @@ const QuestionManager: React.FC = () => {
             
             optionLines.forEach((line, idx) => {
                 if (idx < 4) {
-                    const isCorrect = line.trim().startsWith('*');
-                    let cleanText = line.trim();
-                    if (isCorrect) cleanText = cleanText.substring(1).trim();
-                    cleanText = cleanText.replace(/^[A-Da-d][.)]\s*/, '').trim();
-                    
+                    const trimmed = line.trim();
+                    const hasStar = trimmed.startsWith('*') || /^[A-Da-d][.)]\s*\*/.test(trimmed);
+                    const cleanText = trimmed
+                        .replace(/^\*\s*/, '')
+                        .replace(/^[A-Da-d][.)]\s*\*?\s*/, '')
+                        .trim();
+                    const optId = parsedOptions[idx].id;
                     parsedOptions[idx].text = cleanText;
-                    parsedOptions[idx].isCorrect = isCorrect;
+                    parsedOptions[idx].isCorrect = hasStar || explicitLetters.includes(optId);
                 }
             });
 
@@ -2371,12 +2377,20 @@ const QuestionManager: React.FC = () => {
                     </div>
 
                     {bulkTab === 'text' ? (
-                        <textarea 
-                            className="w-full h-64 p-4 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-transparent resize-none font-mono text-sm shadow-inner"
-                            placeholder="Dán nội dung câu hỏi vào đây (Ctrl+V)..."
-                            value={bulkText}
-                            onChange={(e) => setBulkText(e.target.value)}
-                        ></textarea>
+                        <div className="space-y-3">
+                            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-700 space-y-1">
+                                <div className="font-bold text-slate-800">Mẹo cú pháp nhận diện nhanh đáp án đúng (100% chính xác):</div>
+                                <div>• <b>Trắc nghiệm 4 lựa chọn:</b> Đặt dấu <code className="bg-amber-100 text-amber-900 px-1 rounded font-bold">*</code> trước đáp án đúng (VD: <code className="bg-white px-1 border rounded">*B. Bàn phím.</code> hoặc <code className="bg-white px-1 border rounded">B. *Bàn phím.</code>) hoặc ghi <code className="bg-white px-1 border rounded">Đáp án: B</code> ở dòng cuối.</div>
+                                <div>• <b>Đúng / Sai:</b> Ghi <code className="bg-white px-1 border rounded">[Đúng]</code> hoặc <code className="bg-white px-1 border rounded">[Sai]</code> ở cuối câu nhận định (hoặc dòng <code className="bg-white px-1 border rounded">Đáp án: Đúng</code>).</div>
+                                <div>• <b>Mức độ (tùy chọn):</b> Ghi <code className="bg-white px-1 border rounded">[NB]</code>, <code className="bg-white px-1 border rounded">[TH]</code>, <code className="bg-white px-1 border rounded">[VD]</code> ở đầu câu hỏi.</div>
+                            </div>
+                            <textarea 
+                                className="w-full h-60 p-4 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-transparent resize-none font-mono text-sm shadow-inner"
+                                placeholder={`Ví dụ:\nCâu 1: [NB] Thiết bị nào sau đây là thiết bị vào?\nA. Màn hình.\n*B. Bàn phím.\nC. Máy in.\nD. Loa.\n\nCâu 2: [TH] Hệ điều hành Windows là phần mềm hệ thống. [Đúng]`}
+                                value={bulkText}
+                                onChange={(e) => setBulkText(e.target.value)}
+                            ></textarea>
+                        </div>
                     ) : (
                         <div className="py-4">
                             {!bulkPdf ? (
