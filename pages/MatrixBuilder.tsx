@@ -4,8 +4,8 @@ import {
 } from 'lucide-react';
 import FileExplorer from '../components/FileExplorer';
 import MatrixView from '../components/MatrixView';
-import { FileSystemItem, DraggedItemInfo, ToastState, AvailableCounts, ImportedMatrixData, MatrixData, ExerciseQuestion } from '../types';
-import { PREDEFINED_FOLDERS as predefinedFoldersByGrade, REQUIREMENTS_DATA as requirementsData } from '../data/matrixConstants';
+import { FileSystemItem, DraggedItemInfo, ToastState, AvailableCounts, ImportedMatrixData, MatrixData, ExerciseQuestion, NewMatrixFormatRowConfig } from '../types';
+import { PREDEFINED_FOLDERS as predefinedFoldersByGrade, REQUIREMENTS_DATA as requirementsData, getDefaultCompetencyForTopic, createEmptyNewFormatRow } from '../data/matrixConstants';
 import { getRequirementsHtml, generatePrintHTML } from '../utils';
 import { loadQuestionBank } from '../services/storage/questionBankStorage';
 import { CANONICAL_REQUIREMENTS, KNTT_LESSON_MAPPINGS } from '../data/curriculum/index';
@@ -28,6 +28,7 @@ const MatrixBuilder: React.FC = () => {
     const [gradeSelectValue, setGradeSelectValue] = useState('');
     const [gradeDescType, setGradeDescType] = useState('Giữa kì I');
     const [gradeDescValue, setGradeDescValue] = useState(''); // Only used when type is 'Khác'
+    const [newFolderFormat, setNewFolderFormat] = useState<'classic' | 'new_4part'>('new_4part');
     
     const [selectedTopicValue, setSelectedTopicValue] = useState('');
     
@@ -356,13 +357,22 @@ const MatrixBuilder: React.FC = () => {
             });
         }
 
-        // Initialize Matrix Data
+        // Initialize Matrix Data (preserving format & custom configs)
+        const prevFormat = dir.matrixData?.matrixFormat;
+        const prevPointsConfig = dir.matrixData?.pointsConfig;
+        const prevNewPointsConfig = dir.matrixData?.newPointsConfig;
+        const prevNewFormatRows = dir.matrixData?.newFormatRows;
+
         dir.matrixData = {
             matrix: { rows: matrixRows },
             specifications: { rows: specRows },
             availableCounts: availableCounts,
             normalizedPercentages: {}, // Deprecated in favor of SoTiet calculation
-            subTopicPercentages: {} // Deprecated
+            subTopicPercentages: {}, // Deprecated
+            ...(prevFormat ? { matrixFormat: prevFormat } : {}),
+            ...(prevPointsConfig ? { pointsConfig: prevPointsConfig } : {}),
+            ...(prevNewPointsConfig ? { newPointsConfig: prevNewPointsConfig } : {}),
+            ...(prevNewFormatRows ? { newFormatRows: prevNewFormatRows } : {})
         };
     };
 
@@ -608,7 +618,23 @@ const MatrixBuilder: React.FC = () => {
             updateRowScore(best);
         }
 
-        // --- 6. APPLY TO DATA OBJECT ---
+        // --- 6. APPLY TO DATA OBJECT (BOTH CLASSIC & NEW 4-PART FORMAT) ---
+        if (!data.newFormatRows) data.newFormatRows = {};
+
+        // Track remaining quotas for 4-part split across rows:
+        // Standard 10.0pt exam:
+        // - Nhiều lựa chọn (mc): 12 câu = 3,0đ (30%) -> 8 Biết + 4 Hiểu (hoặc 6 Biết + 6 Hiểu)
+        // - "Đúng – Sai" (tf): 8 lệnh hỏi = 2,0đ (20%) -> 4 Biết + 4 Hiểu
+        // - Trả lời ngắn (sa): 8 câu = 2,0đ (20%) -> 4 Biết + 4 Hiểu
+        // - Tự luận (essay): 3 câu = 3,0đ (30%) -> 3 Vận dụng
+        let remMC_B = ratioOption === '30-40-30' ? 6 : 8;
+        let remTF_B = ratioOption === '30-40-30' ? 3 : 4;
+        let remSA_B = ratioOption === '30-40-30' ? 3 : 4;
+
+        let remMC_H = ratioOption === '30-40-30' ? 6 : 4;
+        let remTF_H = ratioOption === '30-40-30' ? 5 : 4;
+        let remSA_H = ratioOption === '30-40-30' ? 5 : 4;
+
         rows.forEach((r: any) => {
             const idx = r.idx;
             data.specifications.rows[idx][5] = `${r.allocNB}-0`;      
@@ -624,6 +650,41 @@ const MatrixBuilder: React.FC = () => {
 
             const pts = r.currentScore;
             mRow[13] = (pts / TOTAL_SCORE * 100).toFixed(1);
+
+            // Populate new 4-part structure (Nhiều lựa chọn, Đúng-Sai, Trả lời ngắn, Tự luận + NLa-NLe)
+            const defaultNL = getDefaultCompetencyForTopic(String(mRow[1] || ''), String(mRow[2] || ''));
+            const rowCfg = createEmptyNewFormatRow(defaultNL);
+
+            let nbLeft = r.allocNB;
+            while (nbLeft > 0) {
+                if (remMC_B >= remTF_B && remMC_B >= remSA_B && remMC_B > 0) {
+                    rowCfg.mc.B.count++; remMC_B--;
+                } else if (remTF_B >= remSA_B && remTF_B > 0) {
+                    rowCfg.tf.B.count++; remTF_B--;
+                } else if (remSA_B > 0) {
+                    rowCfg.sa.B.count++; remSA_B--;
+                } else {
+                    rowCfg.mc.B.count++;
+                }
+                nbLeft--;
+            }
+
+            let thLeft = r.allocTH;
+            while (thLeft > 0) {
+                if (remMC_H >= remTF_H && remMC_H >= remSA_H && remMC_H > 0) {
+                    rowCfg.mc.H.count++; remMC_H--;
+                } else if (remTF_H >= remSA_H && remTF_H > 0) {
+                    rowCfg.tf.H.count++; remTF_H--;
+                } else if (remSA_H > 0) {
+                    rowCfg.sa.H.count++; remSA_H--;
+                } else {
+                    rowCfg.mc.H.count++;
+                }
+                thLeft--;
+            }
+
+            rowCfg.essay.VD.count = (r.allocVD || 0) + (r.allocVDC || 0);
+            data.newFormatRows[idx] = rowCfg;
         });
 
         setFileSystem(root);
@@ -632,7 +693,7 @@ const MatrixBuilder: React.FC = () => {
         const finalNB = rows.reduce((s: number, r: any) => s + r.allocNB, 0);
         const finalTH = rows.reduce((s: number, r: any) => s + r.allocTH, 0);
         
-        showToast(`Đã phân bổ ${isFinalExam ? '(Cuối kỳ)' : '(Giữa kỳ)'}. TN: ${finalNB} NB - ${finalTH} TH.`);
+        showToast(`Đã phân bổ ${isFinalExam ? '(Cuối kỳ)' : '(Giữa kỳ)'}. Biết: ${finalNB} - Hiểu: ${finalTH} - Vận dụng: ${finalTLCount}.`);
     };
 
     // ... (rest of the file remains same: handleNavigate, handleBreadcrumbClick, etc.)
@@ -688,7 +749,18 @@ const MatrixBuilder: React.FC = () => {
                 showToast('Tên đã tồn tại', 'error'); return;
             }
             if (!currentDir.children) currentDir.children = [];
-            currentDir.children.push({ name: folderName, type: 'folder', children: [] });
+            const newFolderNode: FileSystemItem = { name: folderName, type: 'folder', children: [] };
+            if (currentPath.length === 0) {
+                newFolderNode.matrixData = {
+                    matrix: { headers: [], rows: [] },
+                    specifications: { headers: [], rows: [] },
+                    matrixFormat: newFolderFormat,
+                    newPointsConfig: { mc: 3.0, tf: 2.0, sa: 2.0, essay: 3.0 },
+                    newFormatRows: {}
+                };
+                regenerateMatrix(newFolderNode);
+            }
+            currentDir.children.push(newFolderNode);
         }
 
         if (currentPath.length === 1 || (currentPath.length === 0 && folderModalMode === 'rename')) {
@@ -972,10 +1044,13 @@ const MatrixBuilder: React.FC = () => {
         const exportData: ImportedMatrixData = {
             thongTinChung: { 
                 tenDe: currentDir.name, 
-                ngayTao: new Date().toISOString() 
+                ngayTao: new Date().toISOString(),
+                matrixFormat: currentDir.matrixData.matrixFormat || 'classic'
             },
             chiTiet: matrixRows.map((row, idx) => {
                 const specRow = specRows[idx];
+                const newCfg = currentDir.matrixData?.newFormatRows?.[idx];
+                const defaultNL = getDefaultCompetencyForTopic(String(row[1] || ''), String(row[2] || ''));
                 return {
                     thongTinChung: {
                         stt: row[0],
@@ -998,6 +1073,14 @@ const MatrixBuilder: React.FC = () => {
                         VD: parseInt(row[10]) || 0,
                         VDC: parseInt(row[12]) || 0
                     },
+                    ...(newCfg ? {
+                        chiTiet4Phan: {
+                            nhieuLuaChon: { B: newCfg.mc.B.count, H: newCfg.mc.H.count, VD: newCfg.mc.VD.count, NL: newCfg.mc.B.competency || defaultNL },
+                            dungSai: { B: newCfg.tf.B.count, H: newCfg.tf.H.count, VD: newCfg.tf.VD.count, NL: newCfg.tf.B.competency || defaultNL },
+                            traLoiNgan: { B: newCfg.sa.B.count, H: newCfg.sa.H.count, VD: newCfg.sa.VD.count, NL: newCfg.sa.B.competency || defaultNL },
+                            tuLuan: { B: newCfg.essay.B.count, H: newCfg.essay.H.count, VD: newCfg.essay.VD.count, NL: newCfg.essay.VD.competency || defaultNL }
+                        }
+                    } : {}),
                     tiLeDiem: parseFloat(row[13]) || 0
                 };
             })
@@ -1288,6 +1371,18 @@ const MatrixBuilder: React.FC = () => {
                                         autoFocus
                                     />
                                 )}
+
+                                <div className="pt-1">
+                                    <label className="block text-xs font-bold text-slate-600 mb-1">Cấu trúc Ma trận &amp; Bảng đặc tả:</label>
+                                    <select
+                                        className="w-full border p-2 rounded text-sm font-medium bg-indigo-50/50 border-indigo-200 text-indigo-950"
+                                        value={newFolderFormat}
+                                        onChange={(e) => setNewFolderFormat(e.target.value as 'classic' | 'new_4part')}
+                                    >
+                                        <option value="new_4part">Mẫu mới (Nhiều lựa chọn, Đúng–Sai, Trả lời ngắn, Tự luận + Năng lực NLa–NLe)</option>
+                                        <option value="classic">Mẫu chuẩn (TNKQ &amp; Tự luận truyền thống)</option>
+                                    </select>
+                                </div>
                             </div>
                         ) : folderModalMode === 'create' && currentPath.length === 1 ? (
                              <select className="w-full border p-2 rounded" value={selectedTopicValue} onChange={e => setSelectedTopicValue(e.target.value)}>

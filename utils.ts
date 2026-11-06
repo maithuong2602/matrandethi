@@ -1,5 +1,5 @@
-import { REQUIREMENTS_DATA } from './data/matrixConstants';
-import { MatrixData, ExerciseQuestion } from './types';
+import { REQUIREMENTS_DATA, getDefaultCompetencyForTopic, createEmptyNewFormatRow } from './data/matrixConstants';
+import { MatrixData, ExerciseQuestion, NewMatrixFormatRowConfig } from './types';
 import { CURRICULUM } from './data/curriculum';
 
 export const getRequirementsHtml = (grade: string, mainTopic: string, subTopic: string): string => {
@@ -1375,6 +1375,254 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             <tbody>${specBodyHtml}</tbody>
             ${specFooterHtml}
         </table>`;
+
+    if (data.matrixFormat === 'new_4part') {
+        const mcPt = data.newPointsConfig?.mcPoint ?? 0.25;
+        const tfPt = data.newPointsConfig?.tfPoint ?? 0.25;
+        const saPt = data.newPointsConfig?.saPoint ?? 0.25;
+
+        const getRowCfg = (rIdx: number): NewMatrixFormatRowConfig => {
+            const existing = data.newFormatRows?.[rIdx];
+            const r = data.matrix.rows[rIdx] || [];
+            const defNL = getDefaultCompetencyForTopic(String(r[1] || ''), String(r[2] || ''));
+            if (existing) return existing;
+            const cfg = createEmptyNewFormatRow(defNL);
+            cfg.mc.B.count = parseInt(String(r[5] || '0'), 10) || 0;
+            cfg.mc.H.count = parseInt(String(r[7] || '0'), 10) || 0;
+            cfg.mc.VD.count = parseInt(String(r[9] || '0'), 10) || 0;
+            cfg.essay.B.count = parseInt(String(r[6] || '0'), 10) || 0;
+            cfg.essay.H.count = parseInt(String(r[8] || '0'), 10) || 0;
+            cfg.essay.VD.count = (parseInt(String(r[10] || '0'), 10) || 0) + (parseInt(String(r[12] || '0'), 10) || 0);
+            return cfg;
+        };
+
+        let newMatrixBody = '';
+        let newSpecBody = '';
+        const tot = {
+            mc: { B: 0, H: 0, VD: 0 },
+            tf: { B: 0, H: 0, VD: 0 },
+            sa: { B: 0, H: 0, VD: 0 },
+            essay: { B: 0, H: 0, VD: 0 }
+        };
+        let ptMC = 0, ptTF = 0, ptSA = 0, ptEssay = 0;
+        let ptB = 0, ptH = 0, ptVD = 0;
+        let newStt = 1;
+
+        Object.keys(groupedByMainTopic).forEach(mainTopic => {
+            const rows = groupedByMainTopic[mainTopic];
+            const groupedSub = rows.reduce((acc: any, r: any) => {
+                const s = r[2]; if (!acc[s]) acc[s] = [];
+                acc[s].push(r);
+                return acc;
+            }, {});
+            const subs = Object.keys(groupedSub);
+            const mainSpan = subs.length;
+
+            subs.forEach((subTopic, sIdx) => {
+                const subRows = groupedSub[subTopic];
+                const defaultNL = getDefaultCompetencyForTopic(mainTopic, subTopic);
+                const agg = createEmptyNewFormatRow(defaultNL);
+                let subPts = 0;
+
+                subRows.forEach((r: any) => {
+                    const origIdx = data.matrix.rows.indexOf(r);
+                    const cfg = getRowCfg(origIdx);
+                    const rEssayPt = getRowPointsTL(origIdx);
+
+                    (['mc', 'tf', 'sa', 'essay'] as const).forEach(pKey => {
+                        (['B', 'H', 'VD'] as const).forEach(lKey => {
+                            const c = cfg[pKey][lKey].count || 0;
+                            agg[pKey][lKey].count += c;
+                            if (cfg[pKey][lKey].competency) {
+                                agg[pKey][lKey].competency = cfg[pKey][lKey].competency;
+                            }
+                            tot[pKey][lKey] += c;
+                        });
+                    });
+
+                    const rowPtB = cfg.mc.B.count * mcPt + cfg.tf.B.count * tfPt + cfg.sa.B.count * saPt + cfg.essay.B.count * rEssayPt;
+                    const rowPtH = cfg.mc.H.count * mcPt + cfg.tf.H.count * tfPt + cfg.sa.H.count * saPt + cfg.essay.H.count * rEssayPt;
+                    const rowPtVD = cfg.mc.VD.count * mcPt + cfg.tf.VD.count * tfPt + cfg.sa.VD.count * saPt + cfg.essay.VD.count * rEssayPt;
+
+                    ptB += rowPtB; ptH += rowPtH; ptVD += rowPtVD;
+                    ptMC += (cfg.mc.B.count + cfg.mc.H.count + cfg.mc.VD.count) * mcPt;
+                    ptTF += (cfg.tf.B.count + cfg.tf.H.count + cfg.tf.VD.count) * tfPt;
+                    ptSA += (cfg.sa.B.count + cfg.sa.H.count + cfg.sa.VD.count) * saPt;
+                    ptEssay += (cfg.essay.B.count + cfg.essay.H.count + cfg.essay.VD.count) * rEssayPt;
+
+                    subPts += rowPtB + rowPtH + rowPtVD;
+                });
+
+                const sumRowB = agg.mc.B.count + agg.tf.B.count + agg.sa.B.count + agg.essay.B.count;
+                const sumRowH = agg.mc.H.count + agg.tf.H.count + agg.sa.H.count + agg.essay.H.count;
+                const sumRowVD = agg.mc.VD.count + agg.tf.VD.count + agg.sa.VD.count + agg.essay.VD.count;
+                const subPct = (subPts / 10) * 100;
+
+                newMatrixBody += '<tr>';
+                newMatrixBody += `<td>${newStt}</td>`;
+                if (sIdx === 0) {
+                    newMatrixBody += `<td class="text-left align-top" rowspan="${mainSpan}"><b>${mainTopic}</b></td>`;
+                }
+                newMatrixBody += `<td class="text-left">${subTopic}</td>`;
+                (['mc', 'tf', 'sa', 'essay'] as const).forEach(pKey => {
+                    (['B', 'H', 'VD'] as const).forEach(lKey => {
+                        const c = agg[pKey][lKey].count;
+                        newMatrixBody += `<td>${c > 0 ? c : ''}</td>`;
+                    });
+                });
+                newMatrixBody += `<td>${sumRowB > 0 ? sumRowB : ''}</td>`;
+                newMatrixBody += `<td>${sumRowH > 0 ? sumRowH : ''}</td>`;
+                newMatrixBody += `<td>${sumRowVD > 0 ? sumRowVD : ''}</td>`;
+                newMatrixBody += `<td>${subPct > 0 ? formatPercent(subPct) + '%' : ''}</td>`;
+                newMatrixBody += '</tr>';
+
+                // Specification Row
+                const firstRow = subRows[0];
+                const rawCustomReq = (firstRow && data.specifications?.rows)
+                    ? (data.specifications.rows[data.matrix.rows.indexOf(firstRow)]?.[4] || '')
+                    : '';
+                let activeReqHtml = rawCustomReq || getRequirementsHtml(gradeStr, mainTopic, subTopic);
+                if (activeReqHtml.includes('data-unchecked="true"')) {
+                    activeReqHtml = activeReqHtml.replace(/<div[^>]*data-unchecked="true"[^>]*>[\s\S]*?<\/div>/gi, '');
+                }
+                activeReqHtml = activeReqHtml.replace(/<strong\b[^>]*>[\s\S]*?<\/strong>(?=\s*(?:<strong\b[^>]*>|$))/gi, '');
+                const formattedReq = activeReqHtml
+                    .replace(/Nhận biết/gi, 'Biết:')
+                    .replace(/Thông hiểu/gi, 'Hiểu:')
+                    .replace(/Vận dụng cao/gi, 'Vận dụng:')
+                    .replace(/Vận dụng(?!:)/gi, 'Vận dụng:')
+                    .replace(/<strong class="block font-semibold.*?"/g, '<p style="font-weight: bold; margin: 4px 0 2px 0;"')
+                    .replace(/<strong\b[^>]*>/g, '<p style="font-weight: bold; margin: 4px 0 2px 0;">')
+                    .replace(/<\/strong>/g, '</p>')
+                    .replace(/<div class="pl-2"[^>]*>/g, '<p style="margin: 0 0 0 10px;">')
+                    .replace(/<div[^>]*>/g, '<p style="margin: 0 0 0 10px;">')
+                    .replace(/<\/div>/g, '</p>');
+
+                newSpecBody += '<tr>';
+                newSpecBody += `<td>${newStt}</td>`;
+                if (sIdx === 0) {
+                    newSpecBody += `<td class="text-left align-top" rowspan="${mainSpan}"><b>${mainTopic}</b></td>`;
+                }
+                newSpecBody += `<td class="text-left align-top"><b>${subTopic}</b></td>`;
+                newSpecBody += `<td class="text-left align-top">${formattedReq}</td>`;
+                (['mc', 'tf', 'sa', 'essay'] as const).forEach(pKey => {
+                    (['B', 'H', 'VD'] as const).forEach(lKey => {
+                        const c = agg[pKey][lKey].count;
+                        const nl = agg[pKey][lKey].competency || defaultNL;
+                        newSpecBody += `<td>${c > 0 ? `<div>(${c})</div><div>(${nl})</div>` : ''}</td>`;
+                    });
+                });
+                newSpecBody += '</tr>';
+
+                newStt++;
+            });
+        });
+
+        const totCountB = tot.mc.B + tot.tf.B + tot.sa.B + tot.essay.B;
+        const totCountH = tot.mc.H + tot.tf.H + tot.sa.H + tot.essay.H;
+        const totCountVD = tot.mc.VD + tot.tf.VD + tot.sa.VD + tot.essay.VD;
+        const grandPoints = ptB + ptH + ptVD;
+
+        matrixTableHtml = `
+            <table>
+                <caption>1. MA TRẬN ĐỀ KIỂM TRA ĐỊNH KÌ (${examName.toUpperCase()})</caption>
+                <thead>
+                    <tr>
+                        <th rowspan="4">TT</th>
+                        <th rowspan="4">Chủ đề/Chương</th>
+                        <th rowspan="4">Nội dung/đơn vị kiến thức</th>
+                        <th colspan="12">Mức độ đánh giá</th>
+                        <th colspan="3" rowspan="3">Tổng</th>
+                        <th rowspan="4">Tỷ lệ % điểm</th>
+                    </tr>
+                    <tr>
+                        <th colspan="9">TNKQ</th>
+                        <th colspan="3" rowspan="2">Tự luận</th>
+                    </tr>
+                    <tr>
+                        <th colspan="3"><i>Nhiều lựa chọn</i></th>
+                        <th colspan="3"><i>"Đúng – Sai"</i></th>
+                        <th colspan="3"><i>Trả lời ngắn</i></th>
+                    </tr>
+                    <tr>
+                        <th>Biết</th><th>Hiểu</th><th>Vận dụng</th>
+                        <th>Biết</th><th>Hiểu</th><th>Vận dụng</th>
+                        <th>Biết</th><th>Hiểu</th><th>Vận dụng</th>
+                        <th>Biết</th><th>Hiểu</th><th>Vận dụng</th>
+                        <th>Biết</th><th>Hiểu</th><th>Vận dụng</th>
+                    </tr>
+                </thead>
+                <tbody>${newMatrixBody}</tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="3"><b>Tổng số câu/lệnh hỏi</b></td>
+                        <td><b>${tot.mc.B || ''}</b></td><td><b>${tot.mc.H || ''}</b></td><td><b>${tot.mc.VD || ''}</b></td>
+                        <td><b>${tot.tf.B || ''}</b></td><td><b>${tot.tf.H || ''}</b></td><td><b>${tot.tf.VD || ''}</b></td>
+                        <td><b>${tot.sa.B || ''}</b></td><td><b>${tot.sa.H || ''}</b></td><td><b>${tot.sa.VD || ''}</b></td>
+                        <td><b>${tot.essay.B || ''}</b></td><td><b>${tot.essay.H || ''}</b></td><td><b>${tot.essay.VD || ''}</b></td>
+                        <td><b>${totCountB}</b></td><td><b>${totCountH}</b></td><td><b>${totCountVD}</b></td>
+                        <td><b>${totCountB + totCountH + totCountVD}</b></td>
+                    </tr>
+                    <tr>
+                        <td colspan="3"><b>Tổng số điểm</b></td>
+                        <td colspan="3"><b>${formatDiem(ptMC)}</b></td>
+                        <td colspan="3"><b>${formatDiem(ptTF)}</b></td>
+                        <td colspan="3"><b>${formatDiem(ptSA)}</b></td>
+                        <td colspan="3"><b>${formatDiem(ptEssay)}</b></td>
+                        <td><b>${formatDiem(ptB)}</b></td><td><b>${formatDiem(ptH)}</b></td><td><b>${formatDiem(ptVD)}</b></td>
+                        <td><b>${formatDiem(grandPoints)}</b></td>
+                    </tr>
+                    <tr>
+                        <td colspan="3"><b>Tỷ lệ %</b></td>
+                        <td colspan="3"><b>${formatPercent(ptMC * 10)}</b></td>
+                        <td colspan="3"><b>${formatPercent(ptTF * 10)}</b></td>
+                        <td colspan="3"><b>${formatPercent(ptSA * 10)}</b></td>
+                        <td colspan="3"><b>${formatPercent(ptEssay * 10)}</b></td>
+                        <td><b>${formatPercent(ptB * 10)}</b></td><td><b>${formatPercent(ptH * 10)}</b></td><td><b>${formatPercent(ptVD * 10)}</b></td>
+                        <td><b>100%</b></td>
+                    </tr>
+                </tfoot>
+            </table>`;
+
+        specTableHtml = `
+            <table>
+                <caption>2. BẢNG ĐẶC TẢ KIỂM TRA ĐỊNH KÌ (${examName.toUpperCase()})</caption>
+                <thead>
+                    <tr>
+                        <th rowspan="4">TT</th>
+                        <th rowspan="4">Chủ đề/Chương</th>
+                        <th rowspan="4">Nội dung/đơn vị kiến thức</th>
+                        <th rowspan="4" style="width: 34%;">Yêu cầu cần đạt</th>
+                        <th colspan="12">Số câu hỏi ở các mức độ đánh giá</th>
+                    </tr>
+                    <tr>
+                        <th colspan="9">TNKQ</th>
+                        <th colspan="3" rowspan="2">Tự luận</th>
+                    </tr>
+                    <tr>
+                        <th colspan="3"><i>Nhiều lựa chọn</i></th>
+                        <th colspan="3"><i>"Đúng – Sai"</i></th>
+                        <th colspan="3"><i>Trả lời ngắn</i></th>
+                    </tr>
+                    <tr>
+                        <th>Biết</th><th>Hiểu</th><th>Vận dụng</th>
+                        <th>Biết</th><th>Hiểu</th><th>Vận dụng</th>
+                        <th>Biết</th><th>Hiểu</th><th>Vận dụng</th>
+                        <th>Biết</th><th>Hiểu</th><th>Vận dụng</th>
+                    </tr>
+                </thead>
+                <tbody>${newSpecBody}</tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="4"><b>Tổng số câu</b></td>
+                        <td><b>${tot.mc.B || ''}</b></td><td><b>${tot.mc.H || ''}</b></td><td><b>${tot.mc.VD || ''}</b></td>
+                        <td><b>${tot.tf.B || ''}</b></td><td><b>${tot.tf.H || ''}</b></td><td><b>${tot.tf.VD || ''}</b></td>
+                        <td><b>${tot.sa.B || ''}</b></td><td><b>${tot.sa.H || ''}</b></td><td><b>${tot.sa.VD || ''}</b></td>
+                        <td><b>${tot.essay.B || ''}</b></td><td><b>${tot.essay.H || ''}</b></td><td><b>${tot.essay.VD || ''}</b></td>
+                    </tr>
+                </tfoot>
+            </table>`;
+    }
 
     return `
         <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>

@@ -211,10 +211,12 @@ const ExamGenerator: React.FC = () => {
                     if (folder.type === 'folder' && folder.matrixData?.matrix?.rows) {
                         const mRows = folder.matrixData.matrix.rows;
                         const sRows = folder.matrixData.specifications?.rows || [];
+                        const newRows = folder.matrixData.newFormatRows || {};
                         const converted: ImportedMatrixData = {
                             thongTinChung: {
                                 tenDe: folder.name,
-                                ngayTao: new Date().toISOString()
+                                ngayTao: new Date().toISOString(),
+                                matrixFormat: folder.matrixData.matrixFormat || 'classic'
                             },
                             chiTiet: mRows.map((row: any[], idx: number) => ({
                                 thongTinChung: {
@@ -238,6 +240,12 @@ const ExamGenerator: React.FC = () => {
                                     VD: parseInt(row[10]) || 0,
                                     VDC: parseInt(row[12]) || 0
                                 },
+                                chiTiet4Phan: newRows[idx] ? {
+                                    nhieuLuaChon: newRows[idx].mc,
+                                    dungSai: newRows[idx].tf,
+                                    traLoiNgan: newRows[idx].sa,
+                                    tuLuan: newRows[idx].essay
+                                } : undefined,
                                 tiLeDiem: parseFloat(row[13]) || 0
                             }))
                         };
@@ -600,28 +608,46 @@ const ExamGenerator: React.FC = () => {
         const selected: BankQuestion[] = [];
         const missing: { lesson: string; level: string; count: number; questionType?: string; criteriaText?: string }[] = [];
 
-        const findQuestions = (lessonName: string, level: string, category: 'mc'|'essay', count: number) => {
+        const findQuestions = (
+            lessonName: string,
+            level: string,
+            category: 'mc'|'essay',
+            count: number,
+            preferredQuestionType?: 'multiple-choice' | 'true-false' | 'short-answer' | 'essay'
+        ) => {
             const normalizedTarget = lessonName.toLowerCase().trim();
             const pool = bank.filter(q => {
                 const normalizedSource = q.lesson.toLowerCase().trim();
                 const lessonMatch = normalizedSource.includes(normalizedTarget) || normalizedTarget.includes(normalizedSource);
-                return lessonMatch && q.level === level && q.category === category;
+                if (!lessonMatch || q.level !== level) return false;
+                if (preferredQuestionType) {
+                    if (q.questionType === preferredQuestionType) return true;
+                    return q.category === category;
+                }
+                return q.category === category;
             });
 
-            const shuffled = [...pool].sort(() => 0.5 - Math.random());
-            if (shuffled.length < count) {
-                const diff = count - shuffled.length;
+            // Prefer exact questionType first if specified
+            const sortedPool = preferredQuestionType
+                ? [
+                    ...pool.filter(q => q.questionType === preferredQuestionType).sort(() => 0.5 - Math.random()),
+                    ...pool.filter(q => q.questionType !== preferredQuestionType).sort(() => 0.5 - Math.random())
+                ]
+                : [...pool].sort(() => 0.5 - Math.random());
+
+            if (sortedPool.length < count) {
+                const diff = count - sortedPool.length;
                 missing.push({
                     lesson: lessonName,
                     level,
                     count: diff,
-                    questionType: category === 'essay' ? 'essay' : 'multiple-choice'
+                    questionType: preferredQuestionType || (category === 'essay' ? 'essay' : 'multiple-choice')
                 });
             }
             
-            return shuffled.slice(0, count).map(q => ({
+            return sortedPool.slice(0, count).map(q => ({
                 ...q,
-                points: category === 'essay' ? 1.0 : 0.25,
+                points: category === 'essay' ? 1.0 : preferredQuestionType === 'true-false' ? 1.0 : preferredQuestionType === 'short-answer' ? 0.5 : 0.25,
                 uniqueId: Math.random()
             }));
         };
@@ -649,19 +675,37 @@ const ExamGenerator: React.FC = () => {
             }
             importedMatrix.chiTiet.forEach(row => {
                 const lessonName = row.thongTinChung.bai;
-                const tnCounts = row.tracNghiem;
-                if (tnCounts) {
-                    if (tnCounts.NB > 0) selected.push(...findQuestions(lessonName, 'NB', 'mc', tnCounts.NB));
-                    if (tnCounts.TH > 0) selected.push(...findQuestions(lessonName, 'TH', 'mc', tnCounts.TH));
-                    if (tnCounts.VD > 0) selected.push(...findQuestions(lessonName, 'VD', 'mc', tnCounts.VD));
-                    if (tnCounts.VDC > 0) selected.push(...findQuestions(lessonName, 'VDC', 'mc', tnCounts.VDC));
-                }
-                const tlCounts = row.tuLuan;
-                if (tlCounts) {
-                    if (tlCounts.NB > 0) selected.push(...findQuestions(lessonName, 'NB', 'essay', tlCounts.NB));
-                    if (tlCounts.TH > 0) selected.push(...findQuestions(lessonName, 'TH', 'essay', tlCounts.TH));
-                    if (tlCounts.VD > 0) selected.push(...findQuestions(lessonName, 'VD', 'essay', tlCounts.VD));
-                    if (tlCounts.VDC > 0) selected.push(...findQuestions(lessonName, 'VDC', 'essay', tlCounts.VDC));
+                if (importedMatrix.thongTinChung?.matrixFormat === 'new_4part' && row.chiTiet4Phan) {
+                    const p4 = row.chiTiet4Phan;
+                    const pick4Part = (
+                        grp: { B: { count: number }; H: { count: number }; VD: { count: number } } | undefined,
+                        cat: 'mc' | 'essay',
+                        qType: 'multiple-choice' | 'true-false' | 'short-answer' | 'essay'
+                    ) => {
+                        if (!grp) return;
+                        if (grp.B?.count > 0) selected.push(...findQuestions(lessonName, 'NB', cat, grp.B.count, qType));
+                        if (grp.H?.count > 0) selected.push(...findQuestions(lessonName, 'TH', cat, grp.H.count, qType));
+                        if (grp.VD?.count > 0) selected.push(...findQuestions(lessonName, 'VD', cat, grp.VD.count, qType));
+                    };
+                    pick4Part(p4.nhieuLuaChon, 'mc', 'multiple-choice');
+                    pick4Part(p4.dungSai, 'mc', 'true-false');
+                    pick4Part(p4.traLoiNgan, 'mc', 'short-answer');
+                    pick4Part(p4.tuLuan, 'essay', 'essay');
+                } else {
+                    const tnCounts = row.tracNghiem;
+                    if (tnCounts) {
+                        if (tnCounts.NB > 0) selected.push(...findQuestions(lessonName, 'NB', 'mc', tnCounts.NB));
+                        if (tnCounts.TH > 0) selected.push(...findQuestions(lessonName, 'TH', 'mc', tnCounts.TH));
+                        if (tnCounts.VD > 0) selected.push(...findQuestions(lessonName, 'VD', 'mc', tnCounts.VD));
+                        if (tnCounts.VDC > 0) selected.push(...findQuestions(lessonName, 'VDC', 'mc', tnCounts.VDC));
+                    }
+                    const tlCounts = row.tuLuan;
+                    if (tlCounts) {
+                        if (tlCounts.NB > 0) selected.push(...findQuestions(lessonName, 'NB', 'essay', tlCounts.NB));
+                        if (tlCounts.TH > 0) selected.push(...findQuestions(lessonName, 'TH', 'essay', tlCounts.TH));
+                        if (tlCounts.VD > 0) selected.push(...findQuestions(lessonName, 'VD', 'essay', tlCounts.VD));
+                        if (tlCounts.VDC > 0) selected.push(...findQuestions(lessonName, 'VDC', 'essay', tlCounts.VDC));
+                    }
                 }
             });
         }

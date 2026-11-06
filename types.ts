@@ -92,6 +92,20 @@ export interface CurriculumData {
 
 // --- MATRIX SYSTEM TYPES ---
 
+export type CompetencyCode = 'NLa' | 'NLb' | 'NLc' | 'NLd' | 'NLe';
+
+export interface NewMatrixFormatCell {
+  count: number;
+  competency?: string; // e.g., 'NLa', 'NLc'
+}
+
+export interface NewMatrixFormatRowConfig {
+  mc: { B: NewMatrixFormatCell; H: NewMatrixFormatCell; VD: NewMatrixFormatCell };    // Nhiều lựa chọn
+  tf: { B: NewMatrixFormatCell; H: NewMatrixFormatCell; VD: NewMatrixFormatCell };    // "Đúng - Sai"
+  sa: { B: NewMatrixFormatCell; H: NewMatrixFormatCell; VD: NewMatrixFormatCell };    // Trả lời ngắn
+  essay: { B: NewMatrixFormatCell; H: NewMatrixFormatCell; VD: NewMatrixFormatCell }; // Tự luận
+}
+
 export interface MatrixLevelCount {
   TN: number;
   TL: number;
@@ -123,6 +137,15 @@ export interface MatrixData {
         pointsTL?: number;
         rowEssayPoints?: Record<number, number>; // Custom points per matrix row for essay questions
     };
+    // Cấu trúc Ma trận mới (Nhiều lựa chọn, Đúng - Sai, Trả lời ngắn, Tự luận + Năng lực NLa-NLe)
+    matrixFormat?: 'classic' | 'new_4part';
+    newFormatRows?: Record<number, NewMatrixFormatRowConfig>;
+    newPointsConfig?: {
+        mcPoint?: number;    // Điểm mỗi câu Nhiều lựa chọn (mặc định 0.25)
+        tfPoint?: number;    // Điểm mỗi lệnh hỏi Đúng - Sai (mặc định 0.25)
+        saPoint?: number;    // Điểm mỗi câu Trả lời ngắn (mặc định 0.25)
+        essayPoint?: number; // Điểm mỗi câu Tự luận (mặc định 1.0)
+    };
 }
 
 // --- IMPORTED MATRIX JSON TYPES ---
@@ -139,6 +162,12 @@ export interface ImportedMatrixDetail {
     tracNghiem: { NB: number; TH: number; VD: number; VDC: number };
     tuLuan: { NB: number; TH: number; VD: number; VDC: number };
     tiLeDiem: number;
+    chiTiet4Phan?: {
+        nhieuLuaChon: { B: number; H: number; VD: number; NL?: string };
+        dungSai: { B: number; H: number; VD: number; NL?: string };
+        traLoiNgan: { B: number; H: number; VD: number; NL?: string };
+        tuLuan: { B: number; H: number; VD: number; NL?: string };
+    };
     viTriCauHoi?: {
         NB_TN: string;
         NB_TL: string;
@@ -152,7 +181,7 @@ export interface ImportedMatrixDetail {
 }
 
 export interface ImportedMatrixData {
-    thongTinChung: { tenDe: string; ngayTao: string };
+    thongTinChung: { tenDe: string; ngayTao: string; matrixFormat?: 'classic' | 'new_4part' };
     chiTiet: ImportedMatrixDetail[];
 }
 

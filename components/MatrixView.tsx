@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { MatrixData } from '../types';
+import { MatrixData, NewMatrixFormatRowConfig } from '../types';
 import { formatDiem } from '../utils';
-import { Trash2, GripVertical, Plus, CheckSquare, Square, X, Pencil, Check } from 'lucide-react';
+import { Trash2, GripVertical, Plus, CheckSquare, Square, X, Pencil, Check, BookOpen, Layers } from 'lucide-react';
 import { 
     syncCriteriaFromMatrixData,
     getLevelCodeFromTitle,
@@ -10,6 +10,7 @@ import {
     updateCustomCriterion,
     addCustomCriterion
 } from '../services/criteriaService';
+import { THCS_COMPETENCIES, getDefaultCompetencyForTopic, createEmptyNewFormatRow } from '../data/matrixConstants';
 
 interface MatrixViewProps {
     data: MatrixData;
@@ -24,6 +25,136 @@ type EditingCellState = {
     row: number;
     col: number;
 } | null;
+
+type EditingNewCellState = {
+    table: 'matrix' | 'spec';
+    row: number;
+    part: 'mc' | 'tf' | 'sa' | 'essay';
+    level: 'B' | 'H' | 'VD';
+} | null;
+
+interface NewFormatCellEditorProps {
+    initialCount: number;
+    initialCompetency: string;
+    onSave: (newCount: number, newCompetency: string) => void;
+    onCancel: () => void;
+}
+
+const NewFormatCellEditor: React.FC<NewFormatCellEditorProps> = ({
+    initialCount,
+    initialCompetency,
+    onSave,
+    onCancel
+}) => {
+    const [count, setCount] = useState<string>(initialCount > 0 ? initialCount.toString() : '');
+    const [selectedNLs, setSelectedNLs] = useState<string[]>(
+        initialCompetency ? initialCompetency.split(',').map(s => s.trim()).filter(Boolean) : ['NLa']
+    );
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    const toggleNL = (code: string) => {
+        setSelectedNLs(prev => {
+            if (prev.includes(code)) {
+                return prev.length > 1 ? prev.filter(c => c !== code) : prev;
+            }
+            return [...prev, code];
+        });
+    };
+
+    const handleSave = () => {
+        const parsedCount = parseInt(count, 10);
+        const finalCount = isNaN(parsedCount) || parsedCount < 0 ? 0 : parsedCount;
+        onSave(finalCount, selectedNLs.join(', ') || 'NLa');
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            handleSave();
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            onCancel();
+        }
+    };
+
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+                handleSave();
+            }
+        };
+        const timer = setTimeout(() => {
+            document.addEventListener('mousedown', handleClickOutside);
+        }, 50);
+        return () => {
+            clearTimeout(timer);
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
+    }, [count, selectedNLs]);
+
+    return (
+        <div
+            ref={containerRef}
+            className="flex flex-col gap-2 p-2.5 bg-white shadow-2xl rounded-xl border-2 border-indigo-500 z-40 min-w-[210px] text-left"
+            onClick={(e) => e.stopPropagation()}
+        >
+            <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-gray-700 font-bold whitespace-nowrap">Số câu/lệnh hỏi (n):</span>
+                <input
+                    autoFocus
+                    type="number"
+                    min="0"
+                    className="w-16 text-center border border-indigo-400 rounded-lg p-1 outline-none text-xs font-bold bg-white"
+                    value={count}
+                    onChange={(e) => setCount(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder="0"
+                />
+            </div>
+
+            <div className="border-t border-gray-100 pt-1.5">
+                <div className="text-[11px] font-bold text-gray-600 mb-1">Thành phần năng lực (THCS):</div>
+                <div className="flex flex-wrap gap-1">
+                    {THCS_COMPETENCIES.map(nl => {
+                        const active = selectedNLs.includes(nl.code);
+                        return (
+                            <button
+                                key={nl.code}
+                                type="button"
+                                onClick={() => toggleNL(nl.code)}
+                                title={`${nl.code} - ${nl.shortName}: ${nl.description}`}
+                                className={`px-2 py-0.5 rounded text-[11px] font-bold border transition-all cursor-pointer ${
+                                    active
+                                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                                        : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-indigo-50'
+                                }`}
+                            >
+                                {nl.code}
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 w-full pt-1">
+                <button
+                    type="button"
+                    onClick={handleSave}
+                    className="flex-1 text-center text-xs text-white bg-indigo-600 hover:bg-indigo-700 font-bold py-1 rounded-lg shadow-xs transition-colors cursor-pointer"
+                >
+                    Lưu
+                </button>
+                <button
+                    type="button"
+                    onClick={onCancel}
+                    className="text-center text-xs text-slate-500 hover:text-slate-700 font-medium py-1 px-2 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                    Hủy
+                </button>
+            </div>
+        </div>
+    );
+};
 
 interface QuestionCellEditorProps {
     initialCount: number;
@@ -139,7 +270,99 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
     const pointsTL = data.pointsConfig?.pointsTL ?? 1.0;
     const rowEssayPoints = data.pointsConfig?.rowEssayPoints ?? {};
     const [editingCell, setEditingCell] = useState<EditingCellState>(null);
+    const [editingNewCell, setEditingNewCell] = useState<EditingNewCellState>(null);
+    const [showCompetencyGuide, setShowCompetencyGuide] = useState<boolean>(false);
     const [draggedGroupIndex, setDraggedGroupIndex] = useState<number | null>(null);
+
+    const isNewFormat = data.matrixFormat === 'new_4part';
+    const mcPoint = data.newPointsConfig?.mcPoint ?? 0.25;
+    const tfPoint = data.newPointsConfig?.tfPoint ?? 0.25;
+    const saPoint = data.newPointsConfig?.saPoint ?? 0.25;
+    const essayPoint = data.newPointsConfig?.essayPoint ?? pointsTL;
+
+    const getRowNewFormatConfig = (rIdx: number): NewMatrixFormatRowConfig => {
+        const existing = data.newFormatRows?.[rIdx];
+        const row = data.matrix.rows[rIdx] || [];
+        const defaultNL = getDefaultCompetencyForTopic(String(row[1] || ''), String(row[2] || ''));
+        if (existing) {
+            return existing;
+        }
+        // Fallback auto-convert from classic columns if not yet set
+        const nbTn = parseInt(String(row[5] || '0'), 10) || 0;
+        const nbTl = parseInt(String(row[6] || '0'), 10) || 0;
+        const thTn = parseInt(String(row[7] || '0'), 10) || 0;
+        const thTl = parseInt(String(row[8] || '0'), 10) || 0;
+        const vdTn = parseInt(String(row[9] || '0'), 10) || 0;
+        const vdTl = (parseInt(String(row[10] || '0'), 10) || 0) + (parseInt(String(row[12] || '0'), 10) || 0);
+        const cfg = createEmptyNewFormatRow(defaultNL);
+        cfg.mc.B.count = nbTn;
+        cfg.mc.H.count = thTn;
+        cfg.mc.VD.count = vdTn;
+        cfg.essay.B.count = nbTl;
+        cfg.essay.H.count = thTl;
+        cfg.essay.VD.count = vdTl;
+        return cfg;
+    };
+
+    const handleSwitchMatrixFormat = (format: 'classic' | 'new_4part') => {
+        const newData: MatrixData = JSON.parse(JSON.stringify(data));
+        newData.matrixFormat = format;
+        if (format === 'new_4part' && !newData.newFormatRows) {
+            newData.newFormatRows = {};
+            newData.matrix.rows.forEach((_, idx) => {
+                newData.newFormatRows![idx] = getRowNewFormatConfig(idx);
+            });
+        }
+        handleUpdateMatrixWithSync(newData);
+    };
+
+    const handleNewFormatCellSave = (
+        rowIndex: number,
+        part: 'mc' | 'tf' | 'sa' | 'essay',
+        level: 'B' | 'H' | 'VD',
+        newCount: number,
+        newCompetency: string
+    ) => {
+        const newData: MatrixData = JSON.parse(JSON.stringify(data));
+        if (!newData.newFormatRows) newData.newFormatRows = {};
+        for (let i = 0; i < newData.matrix.rows.length; i++) {
+            if (!newData.newFormatRows[i]) {
+                newData.newFormatRows[i] = getRowNewFormatConfig(i);
+            }
+        }
+        const rowCfg = newData.newFormatRows[rowIndex];
+        rowCfg[part][level] = {
+            count: newCount,
+            competency: newCompetency || getDefaultCompetencyForTopic(String(newData.matrix.rows[rowIndex]?.[1] || ''), String(newData.matrix.rows[rowIndex]?.[2] || ''))
+        };
+
+        // Sync totals back to classic matrix & specification columns
+        const totalB_TN = rowCfg.mc.B.count + rowCfg.tf.B.count + rowCfg.sa.B.count;
+        const totalH_TN = rowCfg.mc.H.count + rowCfg.tf.H.count + rowCfg.sa.H.count;
+        const totalVD_TN = rowCfg.mc.VD.count + rowCfg.tf.VD.count + rowCfg.sa.VD.count;
+        const totalB_TL = rowCfg.essay.B.count;
+        const totalH_TL = rowCfg.essay.H.count;
+        const totalVD_TL = rowCfg.essay.VD.count;
+
+        const mRow = newData.matrix.rows[rowIndex];
+        if (mRow) {
+            mRow[5] = totalB_TN > 0 ? totalB_TN.toString() : '';
+            mRow[6] = totalB_TL > 0 ? totalB_TL.toString() : '';
+            mRow[7] = totalH_TN > 0 ? totalH_TN.toString() : '';
+            mRow[8] = totalH_TL > 0 ? totalH_TL.toString() : '';
+            mRow[9] = totalVD_TN > 0 ? totalVD_TN.toString() : '';
+            mRow[10] = totalVD_TL > 0 ? totalVD_TL.toString() : '';
+        }
+        const sRow = newData.specifications?.rows?.[rowIndex];
+        if (sRow) {
+            sRow[5] = `${totalB_TN}-${totalB_TL}`;
+            sRow[6] = `${totalH_TN}-${totalH_TL}`;
+            sRow[7] = `${totalVD_TN}-${totalVD_TL}`;
+        }
+
+        handleUpdateMatrixWithSync(newData);
+        setEditingNewCell(null);
+    };
 
     const handleUpdateMatrixWithSync = (newData: MatrixData) => {
         try {
@@ -838,7 +1061,17 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                 <div key={`sec-${sIdx}`} className="yccd-section">
                                     {section.levelTitle && (
                                         <div className="flex items-center justify-between font-semibold text-slate-800 text-sm mt-1 mb-1 bg-slate-100/70 px-2 py-0.5 rounded">
-                                            <span>{section.levelTitle}</span>
+                                            <span>
+                                                {isNewFormat
+                                                    ? (section.levelTitle.toLowerCase().startsWith('nhận biết')
+                                                        ? 'Biết:'
+                                                        : section.levelTitle.toLowerCase().startsWith('thông hiểu')
+                                                        ? 'Hiểu:'
+                                                        : section.levelTitle.toLowerCase().startsWith('vận dụng')
+                                                        ? 'Vận dụng:'
+                                                        : section.levelTitle)
+                                                    : section.levelTitle}
+                                            </span>
                                             <div className="flex items-center gap-1">
                                                 <button
                                                     type="button"
@@ -1096,7 +1329,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                         </div>
                     )}
 
-                    {positions.length > 0 && (
+                    {positions.length > 0 && !isNewFormat && (
                         <div className="mt-3 pt-2 border-t border-dashed border-gray-300 text-xs text-blue-700">
                             <strong>Vị trí câu hỏi:</strong>
                             <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1">
@@ -1108,16 +1341,453 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                     )}
                 </td>
                 
-                {/* Specific Columns: NB(TN), TH(TN), VD(TL) */}
-                {renderCell(nb_tn, avail.NB.TN, 'TN', 5)}
-                {renderCell(th_tn, avail.TH.TN, 'TN', 7)}
-                {renderCell(vd_tl, avail.VD.TL, 'TL', 10)}
+                {isNewFormat ? (
+                    (() => {
+                        const rowCfg = getRowNewFormatConfig(rowIndex);
+                        const defaultNL = getDefaultCompetencyForTopic(main, sub);
+                        const parts: ('mc' | 'tf' | 'sa' | 'essay')[] = ['mc', 'tf', 'sa', 'essay'];
+                        const levels: ('B' | 'H' | 'VD')[] = ['B', 'H', 'VD'];
+                        return parts.map(partKey =>
+                            levels.map(lvlKey => {
+                                const cell = rowCfg[partKey][lvlKey];
+                                const cCount = cell?.count || 0;
+                                const cNL = cell?.competency || defaultNL;
+                                const isEditingThis =
+                                    editingNewCell?.table === 'spec' &&
+                                    editingNewCell.row === rowIndex &&
+                                    editingNewCell.part === partKey &&
+                                    editingNewCell.level === lvlKey;
+                                return (
+                                    <td
+                                        key={`spec-new-${partKey}-${lvlKey}`}
+                                        className="bg-white hover:bg-indigo-50/60 p-1.5 border border-slate-300 text-center align-middle transition-colors relative min-w-[54px]"
+                                    >
+                                        {isEditingThis ? (
+                                            <NewFormatCellEditor
+                                                initialCount={cCount}
+                                                initialCompetency={cNL}
+                                                onSave={(newC, newNL) => handleNewFormatCellSave(rowIndex, partKey, lvlKey, newC, newNL)}
+                                                onCancel={() => setEditingNewCell(null)}
+                                            />
+                                        ) : (
+                                            <div
+                                                onClick={() => setEditingNewCell({ table: 'spec', row: rowIndex, part: partKey, level: lvlKey })}
+                                                className="cursor-pointer flex flex-col items-center justify-center py-1 min-h-[42px]"
+                                                title="Nhấn để nhập số câu (n) và chọn năng lực (NLa - NLe)"
+                                            >
+                                                {cCount > 0 ? (
+                                                    <>
+                                                        <span className="font-bold text-sm text-slate-900">({cCount})</span>
+                                                        <span className="text-[11px] font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.2 rounded border border-indigo-200 mt-0.5">
+                                                            ({cNL})
+                                                        </span>
+                                                    </>
+                                                ) : (
+                                                    <span className="text-slate-300 text-xs">-</span>
+                                                )}
+                                            </div>
+                                        )}
+                                    </td>
+                                );
+                            })
+                        );
+                    })()
+                ) : (
+                    <>
+                        {/* Specific Columns: NB(TN), TH(TN), VD(TL) */}
+                        {renderCell(nb_tn, avail.NB.TN, 'TN', 5)}
+                        {renderCell(th_tn, avail.TH.TN, 'TN', 7)}
+                        {renderCell(vd_tl, avail.VD.TL, 'TL', 10)}
+                    </>
+                )}
             </tr>
         );
     };
 
+    // Totals for New 4-Part Format
+    const newTotals = {
+        mc: { B: 0, H: 0, VD: 0 },
+        tf: { B: 0, H: 0, VD: 0 },
+        sa: { B: 0, H: 0, VD: 0 },
+        essay: { B: 0, H: 0, VD: 0 }
+    };
+    let newPointsMC = 0;
+    let newPointsTF = 0;
+    let newPointsSA = 0;
+    let newPointsEssay = 0;
+    let newPointsB = 0;
+    let newPointsH = 0;
+    let newPointsVD = 0;
+
+    data.matrix.rows.forEach((_, rIdx) => {
+        const cfg = getRowNewFormatConfig(rIdx);
+        const rEssayPt = getRowPointsTL(rIdx);
+
+        (['B', 'H', 'VD'] as const).forEach(lvl => {
+            newTotals.mc[lvl] += cfg.mc[lvl].count || 0;
+            newTotals.tf[lvl] += cfg.tf[lvl].count || 0;
+            newTotals.sa[lvl] += cfg.sa[lvl].count || 0;
+            newTotals.essay[lvl] += cfg.essay[lvl].count || 0;
+        });
+
+        const rowPtB = (cfg.mc.B.count * mcPoint) + (cfg.tf.B.count * tfPoint) + (cfg.sa.B.count * saPoint) + (cfg.essay.B.count * rEssayPt);
+        const rowPtH = (cfg.mc.H.count * mcPoint) + (cfg.tf.H.count * tfPoint) + (cfg.sa.H.count * saPoint) + (cfg.essay.H.count * rEssayPt);
+        const rowPtVD = (cfg.mc.VD.count * mcPoint) + (cfg.tf.VD.count * tfPoint) + (cfg.sa.VD.count * saPoint) + (cfg.essay.VD.count * rEssayPt);
+
+        newPointsB += rowPtB;
+        newPointsH += rowPtH;
+        newPointsVD += rowPtVD;
+
+        newPointsMC += (cfg.mc.B.count + cfg.mc.H.count + cfg.mc.VD.count) * mcPoint;
+        newPointsTF += (cfg.tf.B.count + cfg.tf.H.count + cfg.tf.VD.count) * tfPoint;
+        newPointsSA += (cfg.sa.B.count + cfg.sa.H.count + cfg.sa.VD.count) * saPoint;
+        newPointsEssay += (cfg.essay.B.count + cfg.essay.H.count + cfg.essay.VD.count) * rEssayPt;
+    });
+
+    const newTotalCountB = newTotals.mc.B + newTotals.tf.B + newTotals.sa.B + newTotals.essay.B;
+    const newTotalCountH = newTotals.mc.H + newTotals.tf.H + newTotals.sa.H + newTotals.essay.H;
+    const newTotalCountVD = newTotals.mc.VD + newTotals.tf.VD + newTotals.sa.VD + newTotals.essay.VD;
+    const newGrandTotalPoints = newPointsB + newPointsH + newPointsVD;
+
     return (
-        <div className="space-y-8 animate-fade-in-up">
+        <div className="space-y-6 animate-fade-in-up">
+            {/* MATRIX FORMAT SWITCHER & THCS COMPETENCY REFERENCE BAR */}
+            <div className="bg-indigo-50/70 border border-indigo-200 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-bold text-indigo-900 flex items-center gap-1.5 mr-1">
+                        <Layers size={16} className="text-indigo-600" />
+                        Mẫu cấu trúc Ma trận:
+                    </span>
+                    <button
+                        type="button"
+                        onClick={() => handleSwitchMatrixFormat('classic')}
+                        className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            !isNewFormat
+                                ? 'bg-indigo-600 text-white shadow-sm'
+                                : 'bg-white text-slate-700 border border-slate-300 hover:bg-indigo-50'
+                        }`}
+                    >
+                        Mẫu chuẩn (TNKQ & Tự luận)
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => handleSwitchMatrixFormat('new_4part')}
+                        className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                            isNewFormat
+                                ? 'bg-indigo-600 text-white shadow-sm'
+                                : 'bg-white text-indigo-700 border border-indigo-300 hover:bg-indigo-50'
+                        }`}
+                    >
+                        Mẫu mới (Nhiều lựa chọn • Đúng–Sai • Trả lời ngắn • Tự luận + Năng lực THCS)
+                    </button>
+                </div>
+
+                <button
+                    type="button"
+                    onClick={() => setShowCompetencyGuide(prev => !prev)}
+                    className="px-3 py-1.5 bg-white hover:bg-indigo-100 text-indigo-700 border border-indigo-300 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                    <BookOpen size={14} />
+                    {showCompetencyGuide ? 'Ẩn Bảng năng lực Tin học THCS' : 'Xem Bảng năng lực Tin học THCS (NLa – NLe)'}
+                </button>
+            </div>
+
+            {/* COLLAPSIBLE THCS COMPETENCY TABLE (IMAGE 3) */}
+            {showCompetencyGuide && (
+                <div className="bg-white border border-indigo-200 rounded-xl shadow-sm overflow-hidden">
+                    <div className="bg-indigo-600 text-white px-4 py-2.5 flex items-center justify-between">
+                        <h4 className="text-sm font-bold">
+                            2.2. Yêu cầu cần đạt về Năng lực Tin học ở cấp Trung học cơ sở (CTGDPT 2018)
+                        </h4>
+                        <button
+                            type="button"
+                            onClick={() => setShowCompetencyGuide(false)}
+                            className="text-white/80 hover:text-white cursor-pointer"
+                        >
+                            <X size={16} />
+                        </button>
+                    </div>
+                    <div className="overflow-x-auto">
+                        <table className="w-full border-collapse text-xs">
+                            <thead>
+                                <tr className="bg-slate-100 text-slate-800">
+                                    <th className="border border-slate-300 p-2.5 w-36 text-center font-bold">Thành phần năng lực</th>
+                                    <th className="border border-slate-300 p-2.5 text-left font-bold">Biểu hiện</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {THCS_COMPETENCIES.map(nl => (
+                                    <tr key={nl.code} className="hover:bg-slate-50">
+                                        <td className="border border-slate-300 p-2.5 text-center align-top">
+                                            <span className="inline-block px-2.5 py-1 rounded-md bg-indigo-50 text-indigo-800 font-extrabold border border-indigo-200">
+                                                {nl.code}
+                                            </span>
+                                            <div className="text-[11px] text-slate-500 mt-1 font-medium">{nl.shortName}</div>
+                                        </td>
+                                        <td className="border border-slate-300 p-2.5 text-slate-700 leading-relaxed">
+                                            {nl.description}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
+
+            {/* 1. MATRIX TABLE: NEW 4-PART FORMAT VS CLASSIC FORMAT */}
+            {isNewFormat ? (
+                <div className="overflow-x-auto rounded-lg border border-slate-300 shadow-sm">
+                    <table className="w-full border-collapse matrix-table text-xs sm:text-sm bg-white">
+                        <caption className="p-4 bg-gray-50 border-b border-gray-200">
+                            <div className="flex flex-wrap items-center justify-between gap-4">
+                                <span className="text-lg font-bold text-slate-800">1. MA TRẬN ĐỀ KIỂM TRA ĐỊNH KÌ</span>
+                                <div className="flex flex-wrap items-center gap-3 bg-white px-3 py-1.5 rounded-lg border border-slate-300 shadow-sm text-xs">
+                                    <span className="text-slate-600">Nhiều lựa chọn: <b>{mcPoint}đ</b></span>
+                                    <span className="text-slate-300">|</span>
+                                    <span className="text-slate-600">Đúng–Sai: <b>{tfPoint}đ/ý</b></span>
+                                    <span className="text-slate-300">|</span>
+                                    <span className="text-slate-600">Trả lời ngắn: <b>{saPoint}đ</b></span>
+                                    <span className="text-slate-300">|</span>
+                                    <span className="font-semibold text-slate-700">Tự luận:</span>
+                                    <input
+                                        type="number"
+                                        step="0.25"
+                                        min="0.25"
+                                        max="5.0"
+                                        className="w-14 p-0.5 border border-indigo-400 rounded text-center font-bold text-indigo-700 outline-none"
+                                        value={pointsTL}
+                                        onChange={(e) => handleUpdatePointsTL(parseFloat(e.target.value))}
+                                    />
+                                    <span className="text-slate-500">đ/câu</span>
+                                </div>
+                            </div>
+                        </caption>
+                        <thead>
+                            <tr className="bg-gray-100 text-gray-800 font-bold text-xs">
+                                <th rowSpan={4} className="border border-slate-400 p-2 w-10">TT</th>
+                                <th rowSpan={4} className="border border-slate-400 p-2 min-w-[130px]">Chủ đề/<br/>Chương</th>
+                                <th rowSpan={4} className="border border-slate-400 p-2 min-w-[150px]">Nội dung/đơn vị kiến thức</th>
+                                <th rowSpan={4} className="border border-slate-400 p-2 min-w-[120px]">Bài</th>
+                                <th rowSpan={4} className="border border-slate-400 p-1.5 w-14">Số tiết</th>
+                                <th colSpan={12} className="border border-slate-400 p-2 bg-indigo-50/60">Mức độ đánh giá</th>
+                                <th colSpan={3} rowSpan={3} className="border border-slate-400 p-2 bg-amber-50/70">Tổng</th>
+                                <th rowSpan={4} className="border border-slate-400 p-2 w-20 bg-emerald-50/60">Tỷ lệ<br/>% điểm</th>
+                            </tr>
+                            <tr className="bg-gray-100 text-gray-800 font-bold text-xs">
+                                <th colSpan={9} className="border border-slate-400 p-1.5 bg-sky-50/70">TNKQ</th>
+                                <th colSpan={3} rowSpan={2} className="border border-slate-400 p-1.5 bg-purple-50/70">Tự luận</th>
+                            </tr>
+                            <tr className="bg-gray-100 text-gray-800 font-semibold text-xs">
+                                <th colSpan={3} className="border border-slate-400 p-1.5 italic bg-white">Nhiều lựa chọn</th>
+                                <th colSpan={3} className="border border-slate-400 p-1.5 italic bg-white">"Đúng – Sai"</th>
+                                <th colSpan={3} className="border border-slate-400 p-1.5 italic bg-white">Trả lời ngắn</th>
+                            </tr>
+                            <tr className="bg-gray-50 text-gray-700 font-bold text-[11px]">
+                                {/* Nhiều lựa chọn */}
+                                <th className="border border-slate-400 p-1.5">Biết</th>
+                                <th className="border border-slate-400 p-1.5">Hiểu</th>
+                                <th className="border border-slate-400 p-1.5">Vận dụng</th>
+                                {/* Đúng - Sai */}
+                                <th className="border border-slate-400 p-1.5">Biết</th>
+                                <th className="border border-slate-400 p-1.5">Hiểu</th>
+                                <th className="border border-slate-400 p-1.5">Vận dụng</th>
+                                {/* Trả lời ngắn */}
+                                <th className="border border-slate-400 p-1.5">Biết</th>
+                                <th className="border border-slate-400 p-1.5">Hiểu</th>
+                                <th className="border border-slate-400 p-1.5">Vận dụng</th>
+                                {/* Tự luận */}
+                                <th className="border border-slate-400 p-1.5">Biết</th>
+                                <th className="border border-slate-400 p-1.5">Hiểu</th>
+                                <th className="border border-slate-400 p-1.5">Vận dụng</th>
+                                {/* Tổng */}
+                                <th className="border border-slate-400 p-1.5 bg-amber-50/50">Biết</th>
+                                <th className="border border-slate-400 p-1.5 bg-amber-50/50">Hiểu</th>
+                                <th className="border border-slate-400 p-1.5 bg-amber-50/50">Vận dụng</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {groupedRows.map((mainGroup, mIdx) => {
+                                const mainRowSpan = mainGroup.reduce((a, b) => a + b.length, 0);
+                                return (
+                                    <React.Fragment key={`new-m-${mIdx}`}>
+                                        {mainGroup.map((subGroup, sIdx) => (
+                                            <React.Fragment key={`new-s-${sIdx}`}>
+                                                {subGroup.map((item, iIdx) => {
+                                                    const row = item.row;
+                                                    const isMainFirst = sIdx === 0 && iIdx === 0;
+                                                    const isSubFirst = iIdx === 0;
+                                                    const subRowSpan = subGroup.length;
+                                                    const rowCfg = getRowNewFormatConfig(item.index);
+                                                    const defaultNL = getDefaultCompetencyForTopic(row[1], row[2]);
+                                                    const rEssayPt = getRowPointsTL(item.index);
+
+                                                    const rowSumB = rowCfg.mc.B.count + rowCfg.tf.B.count + rowCfg.sa.B.count + rowCfg.essay.B.count;
+                                                    const rowSumH = rowCfg.mc.H.count + rowCfg.tf.H.count + rowCfg.sa.H.count + rowCfg.essay.H.count;
+                                                    const rowSumVD = rowCfg.mc.VD.count + rowCfg.tf.VD.count + rowCfg.sa.VD.count + rowCfg.essay.VD.count;
+
+                                                    const rowPoints =
+                                                        (rowCfg.mc.B.count + rowCfg.mc.H.count + rowCfg.mc.VD.count) * mcPoint +
+                                                        (rowCfg.tf.B.count + rowCfg.tf.H.count + rowCfg.tf.VD.count) * tfPoint +
+                                                        (rowCfg.sa.B.count + rowCfg.sa.H.count + rowCfg.sa.VD.count) * saPoint +
+                                                        (rowCfg.essay.B.count + rowCfg.essay.H.count + rowCfg.essay.VD.count) * rEssayPt;
+                                                    const rowPct = calculatePercentage(rowPoints);
+
+                                                    const parts: ('mc' | 'tf' | 'sa' | 'essay')[] = ['mc', 'tf', 'sa', 'essay'];
+                                                    const levels: ('B' | 'H' | 'VD')[] = ['B', 'H', 'VD'];
+
+                                                    return (
+                                                        <tr key={`new-r-${item.index}`} className="hover:bg-slate-50 group">
+                                                            <td className="bg-white relative border border-slate-300 p-1.5 text-center text-gray-500">
+                                                                <span className="group-hover:opacity-0 transition-opacity">{row[0]}</span>
+                                                                <button onClick={() => onDeleteRow(item.index)} className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-red-500 hover:text-red-700 p-1 rounded-full hover:bg-red-100 transition-all z-10">
+                                                                    <Trash2 size={14} />
+                                                                </button>
+                                                            </td>
+                                                            {isMainFirst && (
+                                                                <td className="bg-white align-top text-left border border-slate-300 p-2 font-medium" rowSpan={mainRowSpan}>
+                                                                    {row[1]}
+                                                                </td>
+                                                            )}
+                                                            {isSubFirst && (
+                                                                <td className="bg-white align-top text-left border border-slate-300 p-2" rowSpan={subRowSpan}>
+                                                                    {row[2]}
+                                                                </td>
+                                                            )}
+                                                            <td className="bg-white text-left border border-slate-300 p-2 text-xs">
+                                                                {row[3]}
+                                                            </td>
+                                                            <td
+                                                                className="bg-white text-center cursor-pointer hover:bg-sky-50 border border-slate-300 p-1.5 text-xs"
+                                                                onClick={() => setEditingCell({ table: 'matrix', row: item.index, col: 4 })}
+                                                            >
+                                                                {editingCell?.table === 'matrix' && editingCell.row === item.index && editingCell.col === 4 ? (
+                                                                    <input
+                                                                        autoFocus
+                                                                        type="number"
+                                                                        className="w-full text-center border border-sky-400 rounded p-0.5 outline-none"
+                                                                        defaultValue={row[4]}
+                                                                        onBlur={(e) => handleCellChange(item.index, 4, e.target.value)}
+                                                                        onKeyDown={(e) => {
+                                                                            if (e.key === 'Enter') handleCellChange(item.index, 4, e.currentTarget.value);
+                                                                            if (e.key === 'Escape') setEditingCell(null);
+                                                                        }}
+                                                                    />
+                                                                ) : row[4]}
+                                                            </td>
+
+                                                            {/* 12 Assessment Cells */}
+                                                            {parts.map(partKey =>
+                                                                levels.map(lvlKey => {
+                                                                    const cell = rowCfg[partKey][lvlKey];
+                                                                    const cCount = cell?.count || 0;
+                                                                    const cNL = cell?.competency || defaultNL;
+                                                                    const isEditingThis =
+                                                                        editingNewCell?.table === 'matrix' &&
+                                                                        editingNewCell.row === item.index &&
+                                                                        editingNewCell.part === partKey &&
+                                                                        editingNewCell.level === lvlKey;
+
+                                                                    return (
+                                                                        <td
+                                                                            key={`m-cell-${partKey}-${lvlKey}`}
+                                                                            className="bg-white hover:bg-indigo-50/70 border border-slate-300 p-1 text-center relative min-w-[46px]"
+                                                                        >
+                                                                            {isEditingThis ? (
+                                                                                <NewFormatCellEditor
+                                                                                    initialCount={cCount}
+                                                                                    initialCompetency={cNL}
+                                                                                    onSave={(newC, newNL) => handleNewFormatCellSave(item.index, partKey, lvlKey, newC, newNL)}
+                                                                                    onCancel={() => setEditingNewCell(null)}
+                                                                                />
+                                                                            ) : (
+                                                                                <div
+                                                                                    onClick={() => setEditingNewCell({ table: 'matrix', row: item.index, part: partKey, level: lvlKey })}
+                                                                                    className="cursor-pointer flex flex-col items-center justify-center py-1 min-h-[34px]"
+                                                                                    title="Nhấn để nhập số câu/lệnh hỏi (n) và chọn năng lực (NL)"
+                                                                                >
+                                                                                    {cCount > 0 ? (
+                                                                                        <span className="font-bold text-slate-900">{cCount}</span>
+                                                                                    ) : (
+                                                                                        <span className="text-slate-300">-</span>
+                                                                                    )}
+                                                                                </div>
+                                                                            )}
+                                                                        </td>
+                                                                    );
+                                                                })
+                                                            )}
+
+                                                            {/* Tổng Biết, Hiểu, Vận dụng */}
+                                                            <td className="bg-amber-50/30 border border-slate-300 p-1.5 text-center font-bold text-slate-800">
+                                                                {rowSumB > 0 ? rowSumB : '-'}
+                                                            </td>
+                                                            <td className="bg-amber-50/30 border border-slate-300 p-1.5 text-center font-bold text-slate-800">
+                                                                {rowSumH > 0 ? rowSumH : '-'}
+                                                            </td>
+                                                            <td className="bg-amber-50/30 border border-slate-300 p-1.5 text-center font-bold text-slate-800">
+                                                                {rowSumVD > 0 ? rowSumVD : '-'}
+                                                            </td>
+
+                                                            {/* Tỷ lệ % điểm */}
+                                                            <td className="bg-emerald-50/30 border border-slate-300 p-1.5 text-center font-bold text-emerald-800">
+                                                                {rowPct > 0 ? `${rowPct.toFixed(0)}%` : '-'}
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </React.Fragment>
+                                        ))}
+                                    </React.Fragment>
+                                );
+                            })}
+                        </tbody>
+                        <tfoot className="font-bold bg-slate-50 text-xs sm:text-sm">
+                            <tr>
+                                <td colSpan={5} className="text-center p-2 border border-slate-400">Tổng số câu/lệnh hỏi</td>
+                                <td className="border border-slate-400 p-1.5 text-center">{newTotals.mc.B || ''}</td>
+                                <td className="border border-slate-400 p-1.5 text-center">{newTotals.mc.H || ''}</td>
+                                <td className="border border-slate-400 p-1.5 text-center">{newTotals.mc.VD || ''}</td>
+                                <td className="border border-slate-400 p-1.5 text-center">{newTotals.tf.B || ''}</td>
+                                <td className="border border-slate-400 p-1.5 text-center">{newTotals.tf.H || ''}</td>
+                                <td className="border border-slate-400 p-1.5 text-center">{newTotals.tf.VD || ''}</td>
+                                <td className="border border-slate-400 p-1.5 text-center">{newTotals.sa.B || ''}</td>
+                                <td className="border border-slate-400 p-1.5 text-center">{newTotals.sa.H || ''}</td>
+                                <td className="border border-slate-400 p-1.5 text-center">{newTotals.sa.VD || ''}</td>
+                                <td className="border border-slate-400 p-1.5 text-center">{newTotals.essay.B || ''}</td>
+                                <td className="border border-slate-400 p-1.5 text-center">{newTotals.essay.H || ''}</td>
+                                <td className="border border-slate-400 p-1.5 text-center">{newTotals.essay.VD || ''}</td>
+                                <td className="border border-slate-400 p-1.5 text-center bg-amber-50">{newTotalCountB}</td>
+                                <td className="border border-slate-400 p-1.5 text-center bg-amber-50">{newTotalCountH}</td>
+                                <td className="border border-slate-400 p-1.5 text-center bg-amber-50">{newTotalCountVD}</td>
+                                <td className="border border-slate-400 p-1.5 text-center bg-emerald-50">{newTotalCountB + newTotalCountH + newTotalCountVD}</td>
+                            </tr>
+                            <tr>
+                                <td colSpan={5} className="text-center p-2 border border-slate-400">Tổng số điểm</td>
+                                <td colSpan={3} className="border border-slate-400 p-1.5 text-center">{formatDiem(newPointsMC)}</td>
+                                <td colSpan={3} className="border border-slate-400 p-1.5 text-center">{formatDiem(newPointsTF)}</td>
+                                <td colSpan={3} className="border border-slate-400 p-1.5 text-center">{formatDiem(newPointsSA)}</td>
+                                <td colSpan={3} className="border border-slate-400 p-1.5 text-center">{formatDiem(newPointsEssay)}</td>
+                                <td className="border border-slate-400 p-1.5 text-center bg-amber-50">{formatDiem(newPointsB)}</td>
+                                <td className="border border-slate-400 p-1.5 text-center bg-amber-50">{formatDiem(newPointsH)}</td>
+                                <td className="border border-slate-400 p-1.5 text-center bg-amber-50">{formatDiem(newPointsVD)}</td>
+                                <td className="border border-slate-400 p-1.5 text-center text-indigo-700 bg-emerald-50">{formatDiem(newGrandTotalPoints)}</td>
+                            </tr>
+                            <tr>
+                                <td colSpan={5} className="text-center p-2 border border-slate-400">Tỷ lệ %</td>
+                                <td colSpan={3} className="border border-slate-400 p-1.5 text-center">{(newPointsMC * 10).toFixed(0)}</td>
+                                <td colSpan={3} className="border border-slate-400 p-1.5 text-center">{(newPointsTF * 10).toFixed(0)}</td>
+                                <td colSpan={3} className="border border-slate-400 p-1.5 text-center">{(newPointsSA * 10).toFixed(0)}</td>
+                                <td colSpan={3} className="border border-slate-400 p-1.5 text-center">{(newPointsEssay * 10).toFixed(0)}</td>
+                                <td className="border border-slate-400 p-1.5 text-center bg-amber-50">{(newPointsB * 10).toFixed(0)}</td>
+                                <td className="border border-slate-400 p-1.5 text-center bg-amber-50">{(newPointsH * 10).toFixed(0)}</td>
+                                <td className="border border-slate-400 p-1.5 text-center bg-amber-50">{(newPointsVD * 10).toFixed(0)}</td>
+                                <td className="border border-slate-400 p-1.5 text-center bg-emerald-50">{(newGrandTotalPoints * 10).toFixed(0)}%</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            ) : (
             <div className="overflow-x-auto rounded-lg border border-slate-300 shadow-sm">
                 <table className="w-full border-collapse matrix-table text-sm bg-white">
                     <caption className="p-4 bg-gray-50 border-b border-gray-200">
@@ -1321,6 +1991,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                     </tfoot>
                 </table>
             </div>
+            )}
 
             {/* Note Section for Final Exams */}
             {isFinalExam && sumSoTietChecked > 0 && (
@@ -1343,19 +2014,57 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
             
             <div className="overflow-x-auto rounded-lg border border-slate-300 shadow-sm mt-8">
                 <table className="w-full border-collapse matrix-table text-sm bg-white">
-                     <caption className="text-lg font-bold text-slate-800 p-4 bg-gray-50 text-left border-b border-gray-200">BẢNG ĐẶC TẢ ĐỀ KIỂM TRA</caption>
-                     <thead>
-                        <tr className="bg-gray-100 text-gray-700">
-                            <th className="border border-slate-300 p-2">TT</th>
-                            <th className="border border-slate-300 p-2">Chương/Chủ đề</th>
-                            <th className="border border-slate-300 p-2">Nội dung/đơn vị kiến thức</th>
-                            <th className="border border-slate-300 p-2">Bài</th>
-                            <th className="border border-slate-300 p-2 w-[400px]">Mức độ đánh giá</th>
-                            <th className="border border-slate-300 p-2 w-24 text-center">Nhận biết<br/>(TNKQ)</th>
-                            <th className="border border-slate-300 p-2 w-24 text-center">Thông hiểu<br/>(TNKQ)</th>
-                            <th className="border border-slate-300 p-2 w-24 text-center">Vận dụng<br/>(TL)</th>
-                        </tr>
-                     </thead>
+                     <caption className="text-lg font-bold text-slate-800 p-4 bg-gray-50 text-left border-b border-gray-200">
+                        {isNewFormat ? '2. BẢNG ĐẶC TẢ KIỂM TRA ĐỊNH KÌ' : 'BẢNG ĐẶC TẢ ĐỀ KIỂM TRA'}
+                     </caption>
+                     {isNewFormat ? (
+                         <thead>
+                             <tr className="bg-gray-100 text-gray-800 font-bold text-xs">
+                                 <th rowSpan={4} className="border border-slate-400 p-2 w-10">TT</th>
+                                 <th rowSpan={4} className="border border-slate-400 p-2 min-w-[130px]">Chủ đề/<br/>Chương</th>
+                                 <th rowSpan={4} className="border border-slate-400 p-2 min-w-[150px]">Nội dung/đơn vị kiến thức</th>
+                                 <th rowSpan={4} className="border border-slate-400 p-2 min-w-[110px]">Bài</th>
+                                 <th rowSpan={4} className="border border-slate-400 p-2 min-w-[340px]">Yêu cầu cần đạt</th>
+                                 <th colSpan={12} className="border border-slate-400 p-2 bg-indigo-50/60">Số câu hỏi ở các mức độ đánh giá</th>
+                             </tr>
+                             <tr className="bg-gray-100 text-gray-800 font-bold text-xs">
+                                 <th colSpan={9} className="border border-slate-400 p-1.5 bg-sky-50/70">TNKQ</th>
+                                 <th colSpan={3} rowSpan={2} className="border border-slate-400 p-1.5 bg-purple-50/70">Tự luận</th>
+                             </tr>
+                             <tr className="bg-gray-100 text-gray-800 font-semibold text-xs">
+                                 <th colSpan={3} className="border border-slate-400 p-1.5 italic bg-white">Nhiều lựa chọn</th>
+                                 <th colSpan={3} className="border border-slate-400 p-1.5 italic bg-white">"Đúng – Sai"</th>
+                                 <th colSpan={3} className="border border-slate-400 p-1.5 italic bg-white">Trả lời ngắn</th>
+                             </tr>
+                             <tr className="bg-gray-50 text-gray-700 font-bold text-[11px]">
+                                 <th className="border border-slate-400 p-1.5">Biết</th>
+                                 <th className="border border-slate-400 p-1.5">Hiểu</th>
+                                 <th className="border border-slate-400 p-1.5">Vận dụng</th>
+                                 <th className="border border-slate-400 p-1.5">Biết</th>
+                                 <th className="border border-slate-400 p-1.5">Hiểu</th>
+                                 <th className="border border-slate-400 p-1.5">Vận dụng</th>
+                                 <th className="border border-slate-400 p-1.5">Biết</th>
+                                 <th className="border border-slate-400 p-1.5">Hiểu</th>
+                                 <th className="border border-slate-400 p-1.5">Vận dụng</th>
+                                 <th className="border border-slate-400 p-1.5">Biết</th>
+                                 <th className="border border-slate-400 p-1.5">Hiểu</th>
+                                 <th className="border border-slate-400 p-1.5">Vận dụng</th>
+                             </tr>
+                         </thead>
+                     ) : (
+                         <thead>
+                            <tr className="bg-gray-100 text-gray-700">
+                                <th className="border border-slate-300 p-2">TT</th>
+                                <th className="border border-slate-300 p-2">Chương/Chủ đề</th>
+                                <th className="border border-slate-300 p-2">Nội dung/đơn vị kiến thức</th>
+                                <th className="border border-slate-300 p-2">Bài</th>
+                                <th className="border border-slate-300 p-2 w-[400px]">Mức độ đánh giá</th>
+                                <th className="border border-slate-300 p-2 w-24 text-center">Nhận biết<br/>(TNKQ)</th>
+                                <th className="border border-slate-300 p-2 w-24 text-center">Thông hiểu<br/>(TNKQ)</th>
+                                <th className="border border-slate-300 p-2 w-24 text-center">Vận dụng<br/>(TL)</th>
+                            </tr>
+                         </thead>
+                     )}
                      <tbody>
                         {groupedRows.map((mainGroup, mIdx) => (
                              <React.Fragment key={mIdx}>
@@ -1373,6 +2082,25 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                              </React.Fragment>
                         ))}
                      </tbody>
+                     {isNewFormat && (
+                         <tfoot className="font-bold bg-slate-50 text-xs sm:text-sm">
+                             <tr>
+                                 <td colSpan={5} className="text-center p-2 border border-slate-400">Tổng số câu</td>
+                                 <td className="border border-slate-400 p-1.5 text-center">{newTotals.mc.B || ''}</td>
+                                 <td className="border border-slate-400 p-1.5 text-center">{newTotals.mc.H || ''}</td>
+                                 <td className="border border-slate-400 p-1.5 text-center">{newTotals.mc.VD || ''}</td>
+                                 <td className="border border-slate-400 p-1.5 text-center">{newTotals.tf.B || ''}</td>
+                                 <td className="border border-slate-400 p-1.5 text-center">{newTotals.tf.H || ''}</td>
+                                 <td className="border border-slate-400 p-1.5 text-center">{newTotals.tf.VD || ''}</td>
+                                 <td className="border border-slate-400 p-1.5 text-center">{newTotals.sa.B || ''}</td>
+                                 <td className="border border-slate-400 p-1.5 text-center">{newTotals.sa.H || ''}</td>
+                                 <td className="border border-slate-400 p-1.5 text-center">{newTotals.sa.VD || ''}</td>
+                                 <td className="border border-slate-400 p-1.5 text-center">{newTotals.essay.B || ''}</td>
+                                 <td className="border border-slate-400 p-1.5 text-center">{newTotals.essay.H || ''}</td>
+                                 <td className="border border-slate-400 p-1.5 text-center">{newTotals.essay.VD || ''}</td>
+                             </tr>
+                         </tfoot>
+                     )}
                 </table>
             </div>
         </div>

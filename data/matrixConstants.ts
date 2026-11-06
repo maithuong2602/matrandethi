@@ -165,3 +165,62 @@ export const TOPIC_PERCENTAGES: Record<string, any> = {
 
 export const POINTS_TNKQ = 0.25;
 export const POINTS_TL = 1.0;
+
+export interface ThcsCompetencyInfo {
+    code: 'NLa' | 'NLb' | 'NLc' | 'NLd' | 'NLe';
+    shortName: string;
+    description: string;
+}
+
+export const THCS_COMPETENCIES: ReadonlyArray<ThcsCompetencyInfo> = [
+    {
+        code: 'NLa',
+        shortName: 'Sử dụng và quản lí các phương tiện ICT',
+        description: 'Sử dụng đúng cách các thiết bị, các phần mềm thông dụng và mạng máy tính phục vụ cuộc sống và học tập; có ý thức và biết cách khai thác môi trường số, biết tổ chức và lưu trữ dữ liệu; bước đầu tạo ra được sản phẩm số phục vụ cuộc sống nhờ khai thác phần mềm ứng dụng. Ví dụ bức ảnh đẹp, bản quảng cáo, bản thiết kế thời trang, đoạn video phục vụ một chủ đề nào đó,...'
+    },
+    {
+        code: 'NLb',
+        shortName: 'Ứng xử phù hợp trong môi trường số',
+        description: 'Biết và nêu được một số quy định cơ bản liên quan đến quyền sở hữu và sử dụng tài nguyên số, tôn trọng bản quyền và quyền an toàn thông tin của người khác; hiểu và ứng xử có văn hoá trong thế giới ảo; sử dụng được cách thông dụng bảo vệ thông tin cá nhân và cộng đồng, tránh tác động tiêu cực tới bản thân và cộng đồng; có ý thức tự bảo vệ sức khoẻ trong khai thác và ứng dụng ICT.'
+    },
+    {
+        code: 'NLc',
+        shortName: 'Giải quyết vấn đề với sự hỗ trợ của ICT',
+        description: 'Hiểu được tầm quan trọng của thông tin và xử lí thông tin trong xã hội hiện đại; tìm kiếm được thông tin từ nhiều nguồn với các chức năng đơn giản của công cụ tìm kiếm, đánh giá được sự phù hợp của thông tin và dữ liệu đã tìm thấy với nhiệm vụ đặt ra; thao tác được với phần mềm và môi trường lập trình trực quan để bước đầu có tư duy thiết kế và điều khiển hệ thống.'
+    },
+    {
+        code: 'NLd',
+        shortName: 'Ứng dụng ICT trong học và tự học',
+        description: 'Sử dụng được một số phần mềm học tập; sử dụng được môi trường mạng máy tính để tìm kiếm, thu thập, cập nhật và lưu trữ thông tin phù hợp với mục tiêu học tập, chủ động khai thác các tài nguyên hỗ trợ tự học.'
+    },
+    {
+        code: 'NLe',
+        shortName: 'Hợp tác trong môi trường số',
+        description: 'Biết lựa chọn và sử dụng được các công cụ, các dịch vụ ICT thông dụng để chia sẻ, trao đổi thông tin và hợp tác một cách an toàn; giao lưu được trong xã hội số một cách văn hoá; có khả năng làm việc nhóm, hợp tác được trong việc tạo ra, trình bày và giới thiệu được sản phẩm số; nhận biết được sơ lược một số ngành nghề chính thuộc lĩnh vực tin học.'
+    }
+];
+
+export const getDefaultCompetencyForTopic = (mainTopic: string = '', subTopic: string = ''): 'NLa' | 'NLb' | 'NLc' | 'NLd' | 'NLe' => {
+    const m = mainTopic.toLowerCase();
+    const s = subTopic.toLowerCase();
+    if (m.includes('chủ đề d') || s.includes('đạo đức') || s.includes('pháp lí') || s.includes('ứng xử') || s.includes('tác hại')) {
+        return 'NLb';
+    }
+    if (m.includes('chủ đề f') || s.includes('thuật toán') || s.includes('lập trình') || s.includes('giải bài toán') || s.includes('giải quyết vấn đề')) {
+        return 'NLc';
+    }
+    if (m.includes('chủ đề g') || s.includes('hướng nghiệp') || s.includes('ngành nghề') || s.includes('hợp tác') || s.includes('trao đổi') || s.includes('mạng xã hội')) {
+        return 'NLe';
+    }
+    if (m.includes('chủ đề c') || s.includes('mô phỏng') || s.includes('tìm kiếm') || s.includes('sơ đồ tư duy')) {
+        return 'NLd';
+    }
+    return 'NLa';
+};
+
+export const createEmptyNewFormatRow = (defaultNL: string = 'NLa') => ({
+    mc: { B: { count: 0, competency: defaultNL }, H: { count: 0, competency: defaultNL }, VD: { count: 0, competency: defaultNL } },
+    tf: { B: { count: 0, competency: defaultNL }, H: { count: 0, competency: defaultNL }, VD: { count: 0, competency: defaultNL } },
+    sa: { B: { count: 0, competency: defaultNL }, H: { count: 0, competency: defaultNL }, VD: { count: 0, competency: defaultNL } },
+    essay: { B: { count: 0, competency: defaultNL }, H: { count: 0, competency: defaultNL }, VD: { count: 0, competency: defaultNL } },
+});
