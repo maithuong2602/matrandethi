@@ -1,7 +1,8 @@
-import { DatabaseConfig, DatabaseProvider } from '../../types';
+import { DatabaseConfig, ExerciseQuestion, SavedExamDossier } from '../../types';
 import { getAllUsers, saveAllUsers } from '../authService';
-import { getSavedExams } from '../examApprovalService';
-import { loadQuestionBank } from '../storage/questionBankStorage';
+import { getSavedExams, saveAllExams } from '../examApprovalService';
+import { loadQuestionBank, saveQuestionBank } from '../storage/questionBankStorage';
+import { createSafetySnapshot } from '../backup/questionBankBackup';
 
 const DB_CONFIG_KEY = 'matrandethi_db_config';
 
@@ -36,6 +37,44 @@ export const saveDatabaseConfig = (updates: Partial<DatabaseConfig>): DatabaseCo
 };
 
 /**
+ * Thống kê nhanh dữ liệu Ngân hàng Câu hỏi, Ngân hàng Đề thi & Ma trận trên máy
+ */
+export const getStorageStats = () => {
+  const questionsRes = loadQuestionBank();
+  const questions = questionsRes.data || [];
+  const exams = getSavedExams() || [];
+
+  let matrixCount = 0;
+  if (typeof window !== 'undefined') {
+    try {
+      const rawFs = localStorage.getItem('matrixFileSystem');
+      if (rawFs) {
+        const parsedFs = JSON.parse(rawFs);
+        if (Array.isArray(parsedFs?.children)) {
+          matrixCount = parsedFs.children.filter((c: any) => c.type === 'folder').length;
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const questionsByGrade: Record<string, number> = { '6': 0, '7': 0, '8': 0, '9': 0 };
+  questions.forEach(q => {
+    if (q.grade && questionsByGrade[q.grade] !== undefined) {
+      questionsByGrade[q.grade]++;
+    }
+  });
+
+  return {
+    questionCount: questions.length,
+    questionsByGrade,
+    examCount: exams.length,
+    matrixCount
+  };
+};
+
+/**
  * Kiểm tra kết nối đến máy chủ Cơ sở dữ liệu đám mây (Supabase / REST API)
  */
 export const testDatabaseConnection = async (
@@ -50,7 +89,6 @@ export const testDatabaseConnection = async (
   const cleanUrl = endpointUrl.trim().replace(/\/+$/, '');
 
   try {
-    // Ping Supabase REST API endpoint /rest/v1/ hoặc custom health endpoint
     const targetUrl = cleanUrl.includes('/rest/v1') ? cleanUrl : `${cleanUrl}/rest/v1/`;
     const headers: Record<string, string> = {
       'apikey': apiKey.trim(),
@@ -111,7 +149,6 @@ export const syncAllDataToCloud = async (): Promise<{
   };
 
   if (config.provider === 'local') {
-    // Lưu trữ nội bộ an toàn (Offline-first snapshot)
     saveDatabaseConfig({
       lastSyncAt: new Date().toISOString(),
       syncStatus: 'synced'
@@ -123,7 +160,6 @@ export const syncAllDataToCloud = async (): Promise<{
     };
   }
 
-  // Đẩy lên Supabase qua PostgREST
   if (config.provider === 'supabase' && config.endpointUrl && config.apiKey) {
     try {
       saveDatabaseConfig({ syncStatus: 'syncing' });
@@ -135,7 +171,6 @@ export const syncAllDataToCloud = async (): Promise<{
         'Prefer': 'resolution=merge-duplicates'
       };
 
-      // 1. Sync Users
       await fetch(`${cleanUrl}/rest/v1/users`, {
         method: 'POST',
         headers,
@@ -152,7 +187,6 @@ export const syncAllDataToCloud = async (): Promise<{
         })))
       });
 
-      // 2. Sync Exams
       await fetch(`${cleanUrl}/rest/v1/exams`, {
         method: 'POST',
         headers,
@@ -214,6 +248,16 @@ export const exportFullDatabaseJson = (): string => {
   const users = getAllUsers();
   const dbConfig = getDatabaseConfig();
 
+  let matrixFileSystem = null;
+  if (typeof window !== 'undefined') {
+    try {
+      const rawFs = localStorage.getItem('matrixFileSystem');
+      if (rawFs) matrixFileSystem = JSON.parse(rawFs);
+    } catch {
+      // ignore
+    }
+  }
+
   const backupPackage = {
     app: 'ExamMaster Pro',
     version: '2025.1.0',
@@ -222,9 +266,123 @@ export const exportFullDatabaseJson = (): string => {
       users,
       exams,
       questions: questionsRes.data || [],
+      matrixFileSystem,
       config: dbConfig
     }
   };
 
   return JSON.stringify(backupPackage, null, 2);
+};
+
+/**
+ * Nhập / Khôi phục gói dữ liệu sao lưu toàn diện (hỗ trợ cả Full Backup, Kho Đề Thi, hoặc Ngân Hàng Câu Hỏi)
+ */
+export const importFullDatabaseJson = (
+  jsonString: string,
+  mode: 'merge' | 'replace' = 'merge'
+): {
+  success: boolean;
+  message: string;
+  counts?: { questions: number; exams: number };
+} => {
+  try {
+    const parsed = JSON.parse(jsonString);
+    if (!parsed || typeof parsed !== 'object') {
+      return { success: false, message: 'Tệp JSON không hợp lệ.' };
+    }
+
+    const currentQuestions = loadQuestionBank().data || [];
+    const currentExams = getSavedExams() || [];
+
+    // Tạo Safety Snapshot trước khi nhập
+    createSafetySnapshot(currentQuestions, 'IMPORT_FULL_DATABASE');
+
+    let incomingQuestions: ExerciseQuestion[] = [];
+    let incomingExams: SavedExamDossier[] = [];
+    let incomingMatrixFs: any = null;
+
+    if (parsed.database && typeof parsed.database === 'object') {
+      // Định dạng Full Backup
+      if (Array.isArray(parsed.database.questions)) incomingQuestions = parsed.database.questions;
+      if (Array.isArray(parsed.database.exams)) incomingExams = parsed.database.exams;
+      if (parsed.database.matrixFileSystem) incomingMatrixFs = parsed.database.matrixFileSystem;
+      if (Array.isArray(parsed.database.users) && mode === 'replace') {
+        saveAllUsers(parsed.database.users);
+      }
+    } else if (Array.isArray(parsed.exams)) {
+      // Định dạng Kho Đề Thi
+      incomingExams = parsed.exams;
+      if (Array.isArray(parsed.questions)) incomingQuestions = parsed.questions;
+    } else if (Array.isArray(parsed.questions)) {
+      // Định dạng Ngân hàng câu hỏi hoặc bài học lẻ
+      const defaultGrade = parsed.info?.grade || '';
+      const defaultLesson = parsed.info?.lesson || '';
+      incomingQuestions = parsed.questions.map((q: any) => ({
+        ...q,
+        grade: q.grade || defaultGrade,
+        lesson: q.lesson || defaultLesson
+      }));
+    } else {
+      return {
+        success: false,
+        message: 'Tệp JSON không chứa dữ liệu Ngân hàng câu hỏi hoặc Ngân hàng đề thi hợp lệ.'
+      };
+    }
+
+    // Xử lý lưu câu hỏi
+    let finalQuestions = currentQuestions;
+    if (incomingQuestions.length > 0) {
+      if (mode === 'replace') {
+        finalQuestions = incomingQuestions;
+      } else {
+        const existingMap = new Map<string, ExerciseQuestion>();
+        currentQuestions.forEach(q => existingMap.set(q.id, q));
+        incomingQuestions.forEach(q => {
+          if (q && q.id && q.content) {
+            existingMap.set(q.id, q);
+          }
+        });
+        finalQuestions = Array.from(existingMap.values());
+      }
+      saveQuestionBank(finalQuestions, { force: true });
+    }
+
+    // Xử lý lưu đề thi
+    let finalExams = currentExams;
+    if (incomingExams.length > 0) {
+      if (mode === 'replace') {
+        finalExams = incomingExams;
+      } else {
+        const examMap = new Map<string, SavedExamDossier>();
+        currentExams.forEach(e => examMap.set(e.id, e));
+        incomingExams.forEach(e => {
+          if (e && e.id && e.title) {
+            examMap.set(e.id, e);
+          }
+        });
+        finalExams = Array.from(examMap.values());
+      }
+      saveAllExams(finalExams);
+    }
+
+    // Xử lý lưu Ma trận nếu có
+    if (incomingMatrixFs && typeof window !== 'undefined') {
+      localStorage.setItem('matrixFileSystem', JSON.stringify(incomingMatrixFs));
+      window.dispatchEvent(new Event('matrix_filesystem_updated'));
+    }
+
+    return {
+      success: true,
+      message: `Đã nạp thành công! Ngân hàng hiện có ${finalQuestions.length} câu hỏi và ${finalExams.length} đề thi.`,
+      counts: {
+        questions: finalQuestions.length,
+        exams: finalExams.length
+      }
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: 'Lỗi đọc tệp sao lưu JSON: ' + (err?.message || String(err))
+    };
+  }
 };

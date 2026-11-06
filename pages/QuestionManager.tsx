@@ -996,6 +996,28 @@ const QuestionManager: React.FC = () => {
      }
   };
 
+  const handleExportFullQuestionBank = () => {
+      if (questions.length === 0) {
+          setAlertMessage("Ngân hàng câu hỏi hiện đang trống.");
+          return;
+      }
+      const data = {
+          schemaVersion: 2,
+          updatedAt: new Date().toISOString(),
+          questions
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `NganHangCauHoi_DayDu_${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setAlertMessage(`Đã sao lưu toàn bộ ${questions.length} câu hỏi ra file JSON.`);
+  };
+
   const handleJsonImport = (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
@@ -1007,8 +1029,11 @@ const QuestionManager: React.FC = () => {
                   if (!grade && data.info.grade) setGrade(data.info.grade);
                   if (!lesson && data.info.lesson) setLesson(data.info.lesson);
               }
-              if (data.questions && Array.isArray(data.questions)) {
-                  const incomingQuestions = data.questions as ExerciseQuestion[];
+              const rawQuestions = Array.isArray(data.questions)
+                  ? data.questions
+                  : (Array.isArray(data?.data?.questions) ? data.data.questions : null);
+              if (rawQuestions) {
+                  const incomingQuestions = rawQuestions as ExerciseQuestion[];
                   
                   const newUnique: ExerciseQuestion[] = [];
                   const newDuplicate: ExerciseQuestion[] = [];
@@ -1689,25 +1714,34 @@ const QuestionManager: React.FC = () => {
             </div>
 
             {/* Action Buttons */}
-            <div className="flex flex-wrap items-center gap-4">
+            <div className="flex flex-wrap items-center gap-3">
                 <button 
                     onClick={handleJsonExportClick} 
-                    className="px-6 py-3 bg-orange-500 text-white rounded-xl font-medium hover:bg-orange-600 transition-all flex items-center gap-2 shadow-lg shadow-orange-500/20"
+                    className="px-5 py-3 bg-orange-500 text-white rounded-xl font-medium hover:bg-orange-600 transition-all flex items-center gap-2 shadow-lg shadow-orange-500/20 text-sm"
+                    title="Xuất câu hỏi của bài học đang chọn ra file JSON"
                 >
-                    <FileOutput size={20} /> Xuất JSON
+                    <FileOutput size={18} /> Xuất JSON (Theo bài)
                 </button>
-                <label className="px-6 py-3 bg-blue-500 text-white rounded-xl font-medium hover:bg-blue-600 transition-all flex items-center gap-2 shadow-lg shadow-blue-500/20 cursor-pointer">
-                    <FileInput size={20} /> Nhập JSON
+                <button 
+                    type="button"
+                    onClick={handleExportFullQuestionBank} 
+                    className="px-5 py-3 bg-emerald-600 text-white rounded-xl font-medium hover:bg-emerald-700 transition-all flex items-center gap-2 shadow-lg shadow-emerald-600/20 text-sm"
+                    title="Sao lưu toàn bộ Ngân hàng câu hỏi của mọi khối lớp ra 1 file JSON duy nhất"
+                >
+                    <FileOutput size={18} /> Sao lưu toàn bộ Ngân hàng ({questions.length} câu)
+                </button>
+                <label className="px-5 py-3 bg-blue-500 text-white rounded-xl font-medium hover:bg-blue-600 transition-all flex items-center gap-2 shadow-lg shadow-blue-500/20 cursor-pointer text-sm">
+                    <FileInput size={18} /> Nhập JSON
                     <input type="file" accept=".json" onChange={handleJsonImport} className="hidden" />
                 </label>
                 {filteredQuestions.length > 0 && (
                     <button 
                         type="button"
                         onClick={handleClearAllQuestions} 
-                        className="px-6 py-3 bg-rose-50 border border-rose-200 text-rose-600 rounded-xl font-medium hover:bg-rose-100 hover:border-rose-300 transition-all flex items-center gap-2 shadow-sm ml-auto"
+                        className="px-5 py-3 bg-rose-50 border border-rose-200 text-rose-600 rounded-xl font-medium hover:bg-rose-100 hover:border-rose-300 transition-all flex items-center gap-2 shadow-sm ml-auto text-sm"
                         title={lesson ? `Xóa sạch toàn bộ câu hỏi của bài "${lesson}"` : "Xóa toàn bộ câu hỏi hiện có trong danh sách"}
                     >
-                        <Trash size={20} /> Xóa toàn bộ câu hỏi ({filteredQuestions.length})
+                        <Trash size={18} /> Xóa bài hiện tại ({filteredQuestions.length})
                     </button>
                 )}
             </div>

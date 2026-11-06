@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { 
-    ChevronRight, Copy, Trash2, Upload, FileEdit, Printer, Share2, Clipboard, FileText, FileJson, CheckSquare, Square, FolderPlus, Save, Settings, PieChart, Sparkles
+    ChevronRight, Copy, Trash2, Upload, FileEdit, Printer, Share2, Clipboard, FileText, FileJson, CheckSquare, Square, FolderPlus, Save, Settings, PieChart, Sparkles, Database
 } from 'lucide-react';
 import FileExplorer from '../components/FileExplorer';
 import MatrixView from '../components/MatrixView';
-import { FileSystemItem, DraggedItemInfo, ToastState, AvailableCounts, ImportedMatrixData, MatrixData } from '../types';
+import { FileSystemItem, DraggedItemInfo, ToastState, AvailableCounts, ImportedMatrixData, MatrixData, ExerciseQuestion } from '../types';
 import { PREDEFINED_FOLDERS as predefinedFoldersByGrade, REQUIREMENTS_DATA as requirementsData } from '../data/matrixConstants';
 import { getRequirementsHtml, generatePrintHTML } from '../utils';
+import { loadQuestionBank } from '../services/storage/questionBankStorage';
+import { CANONICAL_REQUIREMENTS, KNTT_LESSON_MAPPINGS } from '../data/curriculum/index';
 
 const MatrixBuilder: React.FC = () => {
     // --- State ---
@@ -851,6 +853,104 @@ const MatrixBuilder: React.FC = () => {
         e.target.value = '';
     };
 
+    const handleSyncFromQuestionBank = () => {
+        if (currentPath.length === 0) return;
+        const root = JSON.parse(JSON.stringify(fileSystem));
+        const gradeDir = findDirectory([currentPath[0]], root);
+        if (!gradeDir) return;
+
+        const gradeMatch = gradeDir.name.match(/\d+/);
+        if (!gradeMatch) {
+            showToast('Không xác định được khối lớp từ tên thư mục.', 'error');
+            return;
+        }
+        const gradeNum = gradeMatch[0];
+        const gradeKey = `Lớp ${gradeNum}`;
+        const topicsForGrade = predefinedFoldersByGrade[gradeKey] || [];
+
+        const bankRes = loadQuestionBank();
+        const gradeQuestions = (bankRes.data || []).filter(q => String(q.grade) === gradeNum && q.lesson);
+
+        if (gradeQuestions.length === 0) {
+            showToast(`Chưa có câu hỏi nào thuộc Khối ${gradeNum} trong Ngân hàng câu hỏi nội bộ.`, 'error');
+            return;
+        }
+
+        // Group questions by lesson
+        const byLesson: Record<string, ExerciseQuestion[]> = {};
+        gradeQuestions.forEach(q => {
+            const lessonName = (q.lesson || '').trim();
+            if (!lessonName) return;
+            if (!byLesson[lessonName]) byLesson[lessonName] = [];
+            byLesson[lessonName].push(q);
+        });
+
+        if (!gradeDir.children) gradeDir.children = [];
+
+        let syncedLessonCount = 0;
+
+        Object.entries(byLesson).forEach(([lessonName, qs]) => {
+            // Find matching subTopicName for this lesson
+            let targetSubTopic = '';
+
+            // 1. Check question curriculum requirementId
+            const firstWithReq = qs.find(q => q.curriculum?.requirementId);
+            if (firstWithReq?.curriculum?.requirementId) {
+                const req = CANONICAL_REQUIREMENTS.find(r => r.id === firstWithReq.curriculum?.requirementId);
+                if (req?.subTopicName) targetSubTopic = req.subTopicName;
+            }
+
+            // 2. Check KNTT_LESSON_MAPPINGS
+            if (!targetSubTopic) {
+                const lessonNumMatch = lessonName.match(/Bài\s*\d+[ab]?/i)?.[0];
+                const mapping = KNTT_LESSON_MAPPINGS.find(m =>
+                    m.grade === Number(gradeNum) &&
+                    (m.lessonTitle === lessonName || (lessonNumMatch && m.lessonNumber.toLowerCase() === lessonNumMatch.toLowerCase()))
+                );
+                if (mapping && mapping.requirementIds.length > 0) {
+                    const req = CANONICAL_REQUIREMENTS.find(r => r.id === mapping.requirementIds[0]);
+                    if (req?.subTopicName) targetSubTopic = req.subTopicName;
+                }
+            }
+
+            // 3. Fallback to first available subtopic in predefinedFoldersByGrade
+            if (!targetSubTopic && topicsForGrade.length > 0 && topicsForGrade[0].items.length > 0) {
+                targetSubTopic = topicsForGrade[0].items[0];
+            }
+
+            if (!targetSubTopic) return;
+
+            let subTopicFolder = gradeDir.children!.find((c: FileSystemItem) => c.type === 'folder' && c.name === targetSubTopic);
+            if (!subTopicFolder) {
+                subTopicFolder = { name: targetSubTopic, type: 'folder', children: [] };
+                gradeDir.children!.push(subTopicFolder);
+            }
+            if (!subTopicFolder.children) subTopicFolder.children = [];
+
+            const fileName = `${lessonName}.json`;
+            const filePayload = {
+                info: { grade: gradeNum, lesson: lessonName, soTiet: 2 },
+                questions: qs
+            };
+
+            const existingFile = subTopicFolder.children.find((f: FileSystemItem) => f.type === 'file' && (f.name === fileName || f.content?.info?.lesson === lessonName));
+            if (existingFile) {
+                existingFile.content = filePayload;
+            } else {
+                subTopicFolder.children.push({
+                    name: fileName,
+                    type: 'file',
+                    content: filePayload
+                });
+            }
+            syncedLessonCount++;
+        });
+
+        regenerateMatrix(gradeDir);
+        setFileSystem(root);
+        showToast(`Đã đồng bộ ${gradeQuestions.length} câu hỏi (${syncedLessonCount} bài học) Khối ${gradeNum} từ Ngân hàng!`);
+    };
+
     const handlePrint = () => {
         const currentDir = getCurrentDirectory();
         if (currentDir?.matrixData) {
@@ -936,10 +1036,20 @@ const MatrixBuilder: React.FC = () => {
                             <Clipboard size={20} /> Dán
                         </button>
                     )}
+                    {currentPath.length >= 1 && (
+                        <button
+                            onClick={handleSyncFromQuestionBank}
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 px-4 rounded-lg shadow-sm flex items-center gap-2 transition-all text-sm"
+                            title="Tự động nạp danh sách bài học và số câu hỏi từ Ngân hàng câu hỏi nội bộ vào Ma trận này"
+                        >
+                            <Database size={18} />
+                            Đồng bộ từ Ngân hàng câu hỏi
+                        </button>
+                    )}
                     {currentPath.length >= 2 && (
-                         <label className="bg-sky-500 hover:bg-sky-600 text-white font-semibold py-2 px-4 rounded-lg shadow-sm cursor-pointer flex items-center gap-2 transition-all">
-                             <Upload size={20} />
-                             Tải ngân hàng câu hỏi
+                         <label className="bg-sky-500 hover:bg-sky-600 text-white font-semibold py-2 px-4 rounded-lg shadow-sm cursor-pointer flex items-center gap-2 transition-all text-sm">
+                             <Upload size={18} />
+                             Tải file JSON lẻ
                              <input type="file" className="hidden" accept=".json" multiple onChange={handleFileUpload} />
                          </label>
                     )}
