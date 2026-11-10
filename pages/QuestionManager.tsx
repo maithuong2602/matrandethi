@@ -1076,37 +1076,41 @@ const QuestionManager: React.FC = () => {
           : `[${genLevel === 'ALL' ? 'NB' : genLevel} - 1.1]`;
 
       if (genType === 'true-false') {
-          formatExample = `Tình huống 1: ${tagSample} [Mô tả tình huống cụ thể, đủ thông tin để học sinh phân tích.]
+          formatExample = `Tình huống 1: ${tagSample} [Mô tả tình huống cụ thể khai thác trực tiếp từ tài liệu nguồn đính kèm, đủ thông tin để học sinh phân tích.]
 Câu 1. Xác định tính đúng hoặc sai của các phát biểu sau:
-a) [Phát biểu thứ nhất] [Đúng]
-b) [Phát biểu thứ hai] [Sai]
-c) [Phát biểu thứ ba] [Đúng]
-d) [Phát biểu thứ tư] [Sai]`;
+a) [Phát biểu thứ nhất bám sát tình huống và nguồn tài liệu] [Đúng]
+b) [Phát biểu thứ hai bám sát tình huống và nguồn tài liệu] [Sai]
+c) [Phát biểu thứ ba bám sát tình huống và nguồn tài liệu] [Đúng]
+d) [Phát biểu thứ tư bám sát tình huống và nguồn tài liệu] [Sai]`;
       } else if (genType === 'short-answer' || genType === 'fill-blank') {
-          formatExample = `Câu 1: ${tagSample} Nội dung câu hỏi trả lời ngắn / điền khuyết?\nĐáp án: Nội dung đáp án ngắn gọn`;
+          formatExample = `Câu 1: ${tagSample} [Nội dung câu hỏi trả lời ngắn / điền khuyết bám sát nguồn tài liệu?]\nĐáp án: [Nội dung đáp án ngắn gọn]`;
       } else if (genType === 'essay') {
-          formatExample = `Câu 1: [TL]${tagSample} Nội dung câu hỏi tự luận?\nHướng dẫn chấm: Nội dung đáp án và biểu điểm tóm tắt.`;
+          formatExample = `Câu 1: [TL]${tagSample} [Nội dung câu hỏi tự luận bám sát nguồn tài liệu?]\nHướng dẫn chấm: [Nội dung đáp án và biểu điểm tóm tắt]`;
       } else {
-          formatExample = `Câu 1: ${tagSample} Nội dung câu hỏi trắc nghiệm?\nA. Phương án nhiễu 1.\n*B. Phương án đúng (có dấu * ngay trước chữ cái đầu dòng).\nC. Phương án nhiễu 2.\nD. Phương án nhiễu 3.`;
+          formatExample = `Câu 1: ${tagSample} [Nội dung câu hỏi trắc nghiệm bám sát nguồn tài liệu?]\nA. [Phương án nhiễu 1.]\n*B. [Phương án đúng (có dấu * ngay trước chữ cái đầu dòng).]\nC. [Phương án nhiễu 2.]\nD. [Phương án nhiễu 3.]`;
       }
 
       return `Hãy đóng vai chuyên gia biên soạn đề kiểm tra môn Tin học theo Công văn 7991/BGDĐT (Chương trình GDPT 2018).
-Dựa sát vào nội dung tài liệu/file đính kèm${genPdf ? ` ("${genPdf.name}")` : ''} của bài học "${lesson || 'Tin học'}" (Khối ${grade || 'THCS'}), hãy tạo đúng ${genQuantity} câu hỏi với thông số sau:
+Dựa sát 100% vào nội dung nguồn tài liệu/file đính kèm${genPdf ? ` ("${genPdf.name}")` : ''} của bài học "${lesson || 'Tin học'}" (Khối ${grade || 'THCS'}), hãy tạo đúng ${genQuantity} câu hỏi với thông số sau:
 - Số lượng: ${genQuantity} câu hỏi
 - Mức độ nhận thức: ${levelNames[genLevel] || genLevel}
 - Dạng câu hỏi: ${typeNames[genType] || genType}
 ${criteriaBlock}
+
+YÊU CẦU CỐT LÕI VỀ NỘI DUNG TÌNH HUỐNG & CÂU HỎI:
+- Toàn bộ nội dung Tình huống và các phát biểu/lựa chọn BẮT BUỘC phải trích xuất, khai thác trực tiếp từ kiến thức, dữ kiện, ví dụ thực tế có trong TÀI LIỆU NGUỒN ĐÍNH KÈM và Yêu cầu cần đạt của bài học.
+- Mỗi Tình huống phải là một bối cảnh cụ thể, riêng biệt gắn với nội dung tài liệu nguồn để học sinh phân tích. Tuyệt đối KHÔNG lấy kiến thức ngoài phạm vi bài học và KHÔNG lặp lại mô-típ giữa các tình huống.
 
 QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC ĐỂ PHẦN MỀM "NHẬP HÀNG LOẠT (AI SCAN)" TỰ ĐỘNG NHẬN DIỆN 100%:
 1. Tuyệt đối KHÔNG xuất dạng bảng (Table), KHÔNG dùng dấu in đậm/in nghiêng Markdown (** hoặc * quanh chữ). Chỉ xuất văn bản thuần.
 2. Đầu mỗi câu hỏi (hoặc ngay sau chữ "Tình huống X:") BẮT BUỘC gắn nhãn mức độ nhận thức và mã tiêu chí trong ngoặc vuông, ví dụ: [NB - 1.1], [TH - 2.1], [VD - 3.1].
 3. Cách trình bày và đánh dấu đáp án đúng:
    - Nếu là Trắc nghiệm 4 lựa chọn: Đặt dấu sao (*) ngay trước chữ cái của phương án đúng (ví dụ: *A. hoặc *B. hoặc *C. hoặc *D.).
-   - Nếu là Trắc nghiệm Đúng/Sai: Trình bày đúng cấu trúc gồm "Tình huống X: [Mức độ - Mã tiêu chí] <Mô tả tình huống>", dòng tiếp theo "Câu X. Xác định tính đúng hoặc sai của các phát biểu sau:", tiếp theo là 4 ý a), b), c), d) và ghi [Đúng] hoặc [Sai] ở cuối mỗi phát biểu a, b, c, d.
+   - Nếu là Trắc nghiệm Đúng/Sai: Trình bày đúng cấu trúc gồm "Tình huống X: [Mức độ - Mã tiêu chí] <Mô tả tình huống cụ thể từ tài liệu nguồn>", dòng tiếp theo "Câu X. Xác định tính đúng hoặc sai của các phát biểu sau:", tiếp theo là 4 ý a), b), c), d) và ghi [Đúng] hoặc [Sai] ở cuối mỗi phát biểu a, b, c, d.
    - Nếu là Trả lời ngắn / Điền khuyết: Xuống dòng ghi "Đáp án: <câu trả lời>".
    - Nếu là Tự luận: Đầu câu có nhãn [TL], xuống dòng ghi "Hướng dẫn chấm: <nội dung đáp án>".
 
-MẪU ĐẦU RA CHUẨN (HÃY XUẤT ĐÚNG Y HỆT CẤU TRÚC NÀY):
+KHUNG CÚ PHÁP TRÌNH BÀY MẪU (CHỈ MINH HỌA CẤU TRÚC, HÃY THAY THẾ PHẦN TRONG NGOẶC VUÔNG BẰNG NỘI DUNG TỪ TÀI LIỆU NGUỒN):
 
 ${formatExample}`;
   };
@@ -2775,35 +2779,39 @@ ${formatExample}`;
                                                 ...getCriteriaOptionsForLevel('VD').map(c => `- [VD] ${c}`),
                                                 ...getCriteriaOptionsForLevel('VDC').map(c => `- [VDC] ${c}`)
                                             ].join('\n');
-                                            const promptText = `Hãy đóng vai chuyên gia biên soạn đề kiểm tra môn Tin học theo Công văn 7991/BGDĐT. Dựa vào tài liệu/file đính kèm${lesson ? ` của bài học "${lesson}" (Khối ${grade || ''})` : ''}, hãy tạo danh sách câu hỏi theo ĐÚNG định dạng chuẩn dưới đây để tôi dán trực tiếp vào chức năng "Nhập hàng loạt (AI Scan)":
+                                            const promptText = `Hãy đóng vai chuyên gia biên soạn đề kiểm tra môn Tin học theo Công văn 7991/BGDĐT. Dựa sát 100% vào nội dung nguồn tài liệu/file đính kèm${lesson ? ` của bài học "${lesson}" (Khối ${grade || ''})` : ''}, hãy tạo danh sách câu hỏi theo ĐÚNG định dạng chuẩn dưới đây để tôi dán trực tiếp vào chức năng "Nhập hàng loạt (AI Scan)":
 
-${allCrit ? `YÊU CẦU CẦN ĐẠT (TIÊU CHÍ) CỦA BÀI HỌC:\n${allCrit}\n\n` : ''}QUY TẮC ĐỊNH DẠNG BẮT BUỘC (KHÔNG DÙNG BẢNG, KHÔNG DÙNG ĐỊNH DẠNG ĐẬM/NGHIÊNG MARKDOWN **):
+${allCrit ? `YÊU CẦU CẦN ĐẠT (TIÊU CHÍ) CỦA BÀI HỌC:\n${allCrit}\n\n` : ''}YÊU CẦU CỐT LÕI VỀ NỘI DUNG TÌNH HUỐNG & CÂU HỎI:
+- Toàn bộ nội dung Tình huống và các phát biểu/lựa chọn BẮT BUỘC phải trích xuất, khai thác trực tiếp từ kiến thức, dữ kiện, ví dụ thực tế có trong TÀI LIỆU NGUỒN ĐÍNH KÈM và Yêu cầu cần đạt của bài học.
+- Mỗi Tình huống phải là một bối cảnh cụ thể, riêng biệt gắn với nội dung tài liệu nguồn để học sinh phân tích.
+
+QUY TẮC ĐỊNH DẠNG BẮT BUỘC (KHÔNG DÙNG BẢNG, KHÔNG DÙNG ĐỊNH DẠNG ĐẬM/NGHIÊNG MARKDOWN **):
 1. Đầu mỗi câu hỏi (hoặc ngay sau chữ "Tình huống X:") BẮT BUỘC gắn nhãn mức độ nhận thức trong ngoặc vuông: [NB] (Nhận biết), [TH] (Thông hiểu), [VD] (Vận dụng) hoặc [VDC] (Vận dụng cao). Có thể kèm mã tiêu chí như [NB - 1.1], [TH - 2.1], [VD - 3.1].
 2. Dạng 1 - Trắc nghiệm 4 lựa chọn: Đặt dấu sao (*) ngay trước chữ cái của phương án đúng (ví dụ: *B. Nội dung đáp án đúng).
-3. Dạng 2 - Trắc nghiệm Đúng/Sai theo Tình huống: Trình bày đúng mẫu gồm dòng "Tình huống X: [Mức độ - Mã tiêu chí] <Mô tả tình huống cụ thể>", dòng tiếp theo "Câu X. Xác định tính đúng hoặc sai của các phát biểu sau:", tiếp theo là 4 dòng a), b), c), d) có gắn nhãn [Đúng] hoặc [Sai] ở cuối mỗi phát biểu.
+3. Dạng 2 - Trắc nghiệm Đúng/Sai theo Tình huống: Trình bày đúng mẫu gồm dòng "Tình huống X: [Mức độ - Mã tiêu chí] <Mô tả tình huống cụ thể từ nguồn tài liệu>", dòng tiếp theo "Câu X. Xác định tính đúng hoặc sai của các phát biểu sau:", tiếp theo là 4 dòng a), b), c), d) có gắn nhãn [Đúng] hoặc [Sai] ở cuối mỗi phát biểu.
 4. Dạng 3 - Trả lời ngắn / Điền khuyết: Xuống dòng ghi rõ "Đáp án: <nội dung đáp án ngắn gọn>".
 5. Dạng 4 - Tự luận: Đầu câu gắn nhãn [TL][VD] hoặc [TL][VDC], xuống dòng ghi "Hướng dẫn chấm: <nội dung đáp án>".
 
-MẪU ĐẦU RA CHUẨN (HÃY XUẤT Y HỆT CẤU TRÚC NÀY):
+KHUNG CÚ PHÁP TRÌNH BÀY MẪU (CHỈ MINH HỌA CẤU TRÚC, HÃY THAY THẾ PHẦN TRONG NGOẶC VUÔNG BẰNG NỘI DUNG TỪ TÀI LIỆU NGUỒN):
 
-Câu 1: [NB - 1.1] Thiết bị nào sau đây là thiết bị vào cơ bản của máy tính?
-A. Màn hình.
-*B. Bàn phím.
-C. Máy in.
-D. Loa.
+Câu 1: [NB - 1.1] [Nội dung câu hỏi trắc nghiệm 4 lựa chọn bám sát tài liệu nguồn?]
+A. [Phương án nhiễu 1.]
+*B. [Phương án đúng.]
+C. [Phương án nhiễu 2.]
+D. [Phương án nhiễu 3.]
 
-Tình huống 1: [TH - 2.1] Bạn An sử dụng mạng xã hội để trao đổi bài tập nhóm và nhận được tin nhắn lạ kèm đường link trúng thưởng.
+Tình huống 1: [TH - 2.1] [Mô tả tình huống cụ thể khai thác trực tiếp từ tài liệu nguồn, đủ thông tin để học sinh phân tích.]
 Câu 2. Xác định tính đúng hoặc sai của các phát biểu sau:
-a) Mạng xã hội giúp An kết nối và trao đổi thông tin nhanh chóng với các bạn. [Đúng]
-b) An nên nhấn ngay vào đường link lạ để nhận phần thưởng. [Sai]
-c) An cần bảo mật mật khẩu và bật xác thực hai lớp cho tài khoản. [Đúng]
-d) Mọi thông tin do người lạ gửi trên mạng xã hội đều hoàn toàn chính xác. [Sai]
+a) [Phát biểu thứ nhất bám sát tình huống và nguồn tài liệu] [Đúng]
+b) [Phát biểu thứ hai bám sát tình huống và nguồn tài liệu] [Sai]
+c) [Phát biểu thứ ba bám sát tình huống và nguồn tài liệu] [Đúng]
+d) [Phát biểu thứ tư bám sát tình huống và nguồn tài liệu] [Sai]
 
-Câu 3: [NB - 1.1] Phím tắt dùng để sao chép (Copy) dữ liệu trong Windows là gì?
-Đáp án: Ctrl + C
+Câu 3: [NB - 1.1] [Nội dung câu hỏi trả lời ngắn / điền khuyết bám sát tài liệu nguồn?]
+Đáp án: [Nội dung đáp án ngắn gọn]
 
-Câu 4: [TL][VD - 3.1] Em hãy nêu cách bảo vệ thông tin cá nhân khi sử dụng mạng xã hội?
-Hướng dẫn chấm: Không chia sẻ mật khẩu, bật xác thực 2 lớp (2FA), cẩn trọng khi nhấn vào các đường link lạ.`;
+Câu 4: [TL][VD - 3.1] [Nội dung câu hỏi tự luận bám sát tài liệu nguồn?]
+Hướng dẫn chấm: [Nội dung đáp án và biểu điểm tóm tắt]`;
                                             navigator.clipboard.writeText(promptText);
                                             setAlertMessage("Đã sao chép Prompt mẫu chuẩn AI Scan vào bộ nhớ tạm! Bạn có thể dán (Ctrl+V) kèm file đính kèm vào ChatGPT / Gemini.");
                                         }}

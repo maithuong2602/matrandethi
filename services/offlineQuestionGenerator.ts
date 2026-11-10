@@ -405,7 +405,12 @@ export const generateOfflineQuestions = (
             isCorrect: item.isCorrect
           };
         });
-        const scenarioStem = `Trong giờ thực hành tìm hiểu về chủ đề "${lesson}", một nhóm học sinh đang thảo luận các tình huống thực tế và đưa ra các nhận định chuyên môn dưới đây.`;
+        const vdPool = [...(topic.concepts.vd || []), ...(topic.concepts.th || []), ...(topic.concepts.nb || [])];
+        const baseConcept = vdPool[i % vdPool.length];
+        const cleanCrit = (criteriaText || '').replace(/^\d+(?:\.\d+)*\s*/, '').trim();
+        const scenarioStem = baseConcept
+          ? `${baseConcept.stem.replace(/\?$/, '.')} Trong quá trình xử lý tình huống liên quan đến nội dung "${cleanCrit || lesson}", học sinh đã phân tích và đưa ra các phương án nhận định cụ thể.`
+          : `Khi thực hiện nhiệm vụ thực hành thuộc nội dung "${cleanCrit || lesson}", học sinh gặp tình huống cần vận dụng kiến thức để kiểm chứng các phát biểu.`;
         const answerSummary = options.map(o => `${o.id}-${o.isCorrect ? 'Đ' : 'S'}`).join(', ');
         results.push({
           id: uniqueId,

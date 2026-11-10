@@ -607,22 +607,22 @@ export const generateBulkQuestions = async (
 
             switch (questionType) {
                 case 'true-false':
-                    typeInstruction = "câu hỏi trắc nghiệm Đúng/Sai theo Tình huống (mỗi câu gồm 1 Tình huống cụ thể và 4 phát biểu a, b, c, d để học sinh xác định Đúng hoặc Sai)";
+                    typeInstruction = "câu hỏi trắc nghiệm Đúng/Sai theo Tình huống (mỗi câu gồm 1 Tình huống cụ thể bám sát tài liệu nguồn và 4 phát biểu a, b, c, d để học sinh xác định Đúng hoặc Sai)";
                     jsonSchemaNote = `Định dạng Đúng/Sai theo Tình huống: 'category'='mc', 'questionType'='true-false', 'mcType'='true-false'. 
-                    'content': Mô tả tình huống cụ thể, thực tế, đủ thông tin để học sinh phân tích (không ghi tiền tố 'Tình huống 1:' hay 'Câu 1.' vì hệ thống sẽ tự động đánh số khi in đề).
-                    'options': Mảng gồm ĐÚNG 4 phát biểu với id lần lượt là 'a', 'b', 'c', 'd':
+                    'content': Mô tả tình huống cụ thể, đủ thông tin để học sinh phân tích, ĐƯỢC XÂY DỰNG TRỰC TIẾP TỪ KIẾN THỨC, DỮ KIỆN, VÍ DỤ TRONG TÀI LIỆU NGUỒN / BÀI HỌC "${lesson}" và Tiêu chí "${criteriaText}" (không ghi tiền tố 'Tình huống 1:' hay 'Câu 1.' vì hệ thống sẽ tự động đánh số khi in đề).
+                    'options': Mảng gồm ĐÚNG 4 phát biểu với id lần lượt là 'a', 'b', 'c', 'd' xoay quanh và khai thác trực tiếp tình huống ở trên:
                     [
-                        {"id": "a", "text": "Phát biểu thứ nhất.", "isCorrect": true},
-                        {"id": "b", "text": "Phát biểu thứ hai.", "isCorrect": false},
-                        {"id": "c", "text": "Phát biểu thứ ba.", "isCorrect": true},
-                        {"id": "d", "text": "Phát biểu thứ tư.", "isCorrect": false}
+                        {"id": "a", "text": "Phát biểu thứ nhất bám sát tình huống và tài liệu nguồn.", "isCorrect": true},
+                        {"id": "b", "text": "Phát biểu thứ hai bám sát tình huống và tài liệu nguồn.", "isCorrect": false},
+                        {"id": "c", "text": "Phát biểu thứ ba bám sát tình huống và tài liệu nguồn.", "isCorrect": true},
+                        {"id": "d", "text": "Phát biểu thứ tư bám sát tình huống và tài liệu nguồn.", "isCorrect": false}
                     ] (trong đó 'isCorrect'=true nếu phát biểu Đúng, 'isCorrect'=false nếu phát biểu Sai).
                     'answer': Chuỗi tóm tắt đáp án dạng 'a-Đ, b-S, c-Đ, d-S'.`;
                     extraConstraints = `
-                    QUY ĐỊNH CÂU HỎI ĐÚNG / SAI THEO TÌNH HUỐNG:
-                    - Mỗi câu hỏi PHẢI có phần dẫn là một Tình huống thực tế cụ thể ('content') gắn liền với bài học "${lesson}".
-                    - Kèm theo đúng 4 phát biểu a, b, c, d trong mảng 'options' (với id là 'a', 'b', 'c', 'd').
-                    - Trong 4 phát biểu a, b, c, d phải có cả phát biểu Đúng (isCorrect: true) và phát biểu Sai (isCorrect: false) để phân loại học sinh.
+                    QUY ĐỊNH BẮT BUỘC CHO CÂU HỎI ĐÚNG / SAI THEO TÌNH HUỐNG:
+                    - Nội dung Tình huống ('content') và cả 4 phát biểu a, b, c, d BẮT BUỘC phải bám sát 100% vào nguồn tài liệu cung cấp (File PDF đính kèm nếu có, hoặc nội dung kiến thức trọng tâm của bài "${lesson}" và yêu cầu cần đạt "${criteriaText}").
+                    - Tuyệt đối KHÔNG dùng tình huống chung chung hoặc ngoài phạm vi bài học. Mỗi câu hỏi phải là một tình huống cụ thể khác nhau khai thác các khía cạnh/ví dụ thực tế trong nguồn tài liệu.
+                    - Kèm theo đúng 4 phát biểu a, b, c, d trong mảng 'options' (với id là 'a', 'b', 'c', 'd') có cả phát biểu Đúng (isCorrect: true) và phát biểu Sai (isCorrect: false) để học sinh phân tích dựa trên tình huống đó.
                     `;
                     break;
 
