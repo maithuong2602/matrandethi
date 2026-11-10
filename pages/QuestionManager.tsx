@@ -24,7 +24,8 @@ import {
   FileText, 
   CheckCircle2,
   CheckSquare,
-  Pencil
+  Pencil,
+  Copy
 } from 'lucide-react';
 import { ExerciseQuestion, BankScope, UserProfile } from '../types';
 import { CURRICULUM } from '../data/curriculum';
@@ -250,9 +251,11 @@ const QuestionManager: React.FC = () => {
   // Generation Modal State
   const [genLevel, setGenLevel] = useState('NB');
   const [genCriteriaCode, setGenCriteriaCode] = useState('');
-  const [genQuantity, setGenQuantity] = useState(1);
+  const [genQuantity, setGenQuantity] = useState(8);
   const [genType, setGenType] = useState('multiple-choice');
   const [genPdf, setGenPdf] = useState<{ name: string; size: string; base64: string } | null>(null);
+  const [showPromptPreview, setShowPromptPreview] = useState(false);
+  const [copiedPromptSuccess, setCopiedPromptSuccess] = useState(false);
 
   // Custom criteria store synced with Matrix & Specification tables
   const [customCriteriaStore, setCustomCriteriaStore] = useState(() => loadCustomCriteriaStore());
@@ -983,15 +986,104 @@ const QuestionManager: React.FC = () => {
     }
   };
 
+  const buildExternalAIPrompt = () => {
+      const levelNames: Record<string, string> = {
+          NB: 'Nhận biết [NB]',
+          TH: 'Thông hiểu [TH]',
+          VD: 'Vận dụng [VD]',
+          VDC: 'Vận dụng cao [VDC]',
+          ALL: 'Phân bổ đều các mức độ Nhận biết [NB], Thông hiểu [TH], Vận dụng [VD]'
+      };
+      const typeNames: Record<string, string> = {
+          'multiple-choice': 'Trắc nghiệm nhiều lựa chọn (4 phương án A, B, C, D - chỉ 1 phương án đúng)',
+          'multiple-answer': 'Trắc nghiệm nhiều đáp án (4 phương án A, B, C, D - có từ 2 phương án đúng trở lên)',
+          'true-false': 'Trắc nghiệm Đúng / Sai (mỗi câu là 1 phát biểu nhận định độc lập)',
+          'short-answer': 'Trắc nghiệm Trả lời ngắn',
+          'fill-blank': 'Trắc nghiệm Điền khuyết / Trả lời ngắn',
+          'essay': 'Tự luận (kèm Hướng dẫn chấm chi tiết)'
+      };
+
+      const targetLevels = genLevel === 'ALL' ? ['NB', 'TH', 'VD', 'VDC'] : [genLevel];
+      let criteriaBlock = '';
+      if (genCriteriaCode) {
+          const list = getCriteriaOptionsForLevel(genLevel === 'ALL' ? 'NB' : genLevel);
+          const found = list.find(c => c.startsWith(genCriteriaCode)) || genCriteriaCode;
+          criteriaBlock = `- Tiêu chí (Yêu cầu cần đạt) trọng tâm cần bám sát: [${genLevel === 'ALL' ? 'NB' : genLevel} - ${genCriteriaCode}] ${found}`;
+      } else {
+          const lines: string[] = [];
+          targetLevels.forEach(lvl => {
+              const opts = getCriteriaOptionsForLevel(lvl);
+              opts.forEach(c => {
+                  const code = c.split(' ')[0];
+                  lines.push(`  + [${lvl} - ${code}] ${c}`);
+              });
+          });
+          if (lines.length > 0) {
+              criteriaBlock = `- Danh sách Yêu cầu cần đạt (Tiêu chí) của bài học (hãy gắn đúng mã này vào đầu mỗi câu hỏi):\n${lines.join('\n')}`;
+          }
+      }
+
+      let formatExample = '';
+      const tagSample = genCriteriaCode
+          ? `[${genLevel === 'ALL' ? 'NB' : genLevel} - ${genCriteriaCode}]`
+          : `[${genLevel === 'ALL' ? 'NB' : genLevel} - 1.1]`;
+
+      if (genType === 'true-false') {
+          formatExample = `Câu 1: ${tagSample} Nội dung phát biểu nhận định thứ nhất... [Đúng]\n\nCâu 2: ${genLevel === 'ALL' ? '[TH - 2.1]' : tagSample} Nội dung phát biểu nhận định thứ hai... [Sai]`;
+      } else if (genType === 'short-answer' || genType === 'fill-blank') {
+          formatExample = `Câu 1: ${tagSample} Nội dung câu hỏi trả lời ngắn / điền khuyết?\nĐáp án: Nội dung đáp án ngắn gọn`;
+      } else if (genType === 'essay') {
+          formatExample = `Câu 1: [TL]${tagSample} Nội dung câu hỏi tự luận?\nHướng dẫn chấm: Nội dung đáp án và biểu điểm tóm tắt.`;
+      } else {
+          formatExample = `Câu 1: ${tagSample} Nội dung câu hỏi trắc nghiệm?\nA. Phương án nhiễu 1.\n*B. Phương án đúng (có dấu * ngay trước chữ cái đầu dòng).\nC. Phương án nhiễu 2.\nD. Phương án nhiễu 3.`;
+      }
+
+      return `Hãy đóng vai chuyên gia biên soạn đề kiểm tra môn Tin học theo Công văn 7991/BGDĐT (Chương trình GDPT 2018).
+Dựa sát vào nội dung tài liệu/file đính kèm${genPdf ? ` ("${genPdf.name}")` : ''} của bài học "${lesson || 'Tin học'}" (Khối ${grade || 'THCS'}), hãy tạo đúng ${genQuantity} câu hỏi với thông số sau:
+- Số lượng: ${genQuantity} câu hỏi
+- Mức độ nhận thức: ${levelNames[genLevel] || genLevel}
+- Dạng câu hỏi: ${typeNames[genType] || genType}
+${criteriaBlock}
+
+QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC ĐỂ PHẦN MỀM "NHẬP HÀNG LOẠT (AI SCAN)" TỰ ĐỘNG NHẬN DIỆN 100%:
+1. Tuyệt đối KHÔNG xuất dạng bảng (Table), KHÔNG dùng dấu in đậm/in nghiêng Markdown (** hoặc * quanh chữ). Chỉ xuất văn bản thuần.
+2. Đầu mỗi câu hỏi BẮT BUỘC gắn nhãn mức độ nhận thức và mã tiêu chí trong ngoặc vuông, ví dụ: [NB - 1.1], [TH - 2.1], [VD - 3.1].
+3. Cách đánh dấu đáp án đúng:
+   - Nếu là Trắc nghiệm 4 lựa chọn: Đặt dấu sao (*) ngay trước chữ cái của phương án đúng (ví dụ: *A. hoặc *B. hoặc *C. hoặc *D.).
+   - Nếu là Trắc nghiệm Đúng/Sai: Ghi [Đúng] hoặc [Sai] ở ngay cuối câu phát biểu nhận định.
+   - Nếu là Trả lời ngắn / Điền khuyết: Xuống dòng ghi "Đáp án: <câu trả lời>".
+   - Nếu là Tự luận: Đầu câu có nhãn [TL], xuống dòng ghi "Hướng dẫn chấm: <nội dung đáp án>".
+
+MẪU ĐẦU RA CHUẨN (HÃY XUẤT ĐÚNG Y HỆT CẤU TRÚC NÀY):
+
+${formatExample}`;
+  };
+
+  const handleCopyExternalPrompt = (openBulkAfterCopy = false) => {
+      const promptText = buildExternalAIPrompt();
+      navigator.clipboard.writeText(promptText);
+      setCopiedPromptSuccess(true);
+      setTimeout(() => setCopiedPromptSuccess(false), 3000);
+      if (openBulkAfterCopy) {
+          setIsGenModalOpen(false);
+          setBulkTab('text');
+          setIsBulkModalOpen(true);
+          setAlertMessage("Đã sao chép Prompt chuẩn vào bộ nhớ tạm! Hãy dán (Ctrl+V) vào ChatGPT/Gemini kèm file đính kèm, sau đó dán kết quả AI trả về vào ô bên dưới.");
+      } else {
+          setAlertMessage("Đã sao chép Prompt! Bạn hãy dán (Ctrl+V) vào ChatGPT/Gemini kèm file đính kèm, rồi copy kết quả đưa vào 'Nhập hàng loạt (AI Scan)'.");
+      }
+  };
+
   const handleGenerateQuestion = async () => {
       if (!grade || !lesson) {
           setAlertMessage("Vui lòng chọn Khối và Bài học trước.");
           return;
       }
       
+      const effectiveLevel = genLevel === 'ALL' ? 'NB' : genLevel;
       let criteriaText = lesson;
       if (currentCriteriaData && genCriteriaCode) {
-          const list = getCriteriaOptionsForLevel(genLevel);
+          const list = getCriteriaOptionsForLevel(effectiveLevel);
           const found = list?.find(c => c.startsWith(genCriteriaCode));
           if (found) criteriaText = found;
       }
@@ -1001,7 +1093,7 @@ const QuestionManager: React.FC = () => {
           const results = await generateBulkQuestions(
               grade, 
               lesson, 
-              genLevel, 
+              effectiveLevel, 
               criteriaText, 
               genQuantity, 
               genType,
@@ -1041,11 +1133,12 @@ const QuestionManager: React.FC = () => {
                       ? (q.answer === 'Sai' ? 'Sai' : 'Đúng')
                       : options?.filter((o: any) => o.isCorrect).map((o: any) => o.id).join(', ');
 
+                  const defaultCrit = getCriteriaOptionsForLevel(effectiveLevel)[0]?.split(' ')[0] || '';
                   return {
                     id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
                     category: category,
-                    level: genLevel,
-                    criteria: genCriteriaCode,
+                    level: effectiveLevel as any,
+                    criteria: genCriteriaCode || defaultCrit,
                     content: q.content || 'Câu hỏi tự động',
                     grade: grade || '',
                     lesson: lesson || '',
@@ -1054,7 +1147,11 @@ const QuestionManager: React.FC = () => {
                     options: options,
                     answer: genType === 'true-false' ? (q.answer === 'Sai' ? 'Sai' : 'Đúng') : (q.answer || correctAnswers || ''),
                     essayType: 'explanation',
-                    points: genType === 'essay' ? 1.0 : 0.25
+                    points: genType === 'essay' ? 1.0 : 0.25,
+                    bankScope: activeScope === 'shared' && canApproveBank ? 'shared' : 'personal',
+                    ownerEmail: userEmail,
+                    ownerName: userName,
+                    contentHash: computeQuestionContentHash(q.content || '', lesson || '')
                   };
               });
 
@@ -1075,14 +1172,14 @@ const QuestionManager: React.FC = () => {
                   setIsGenModalOpen(false);
               }
           } else {
-              const fallbackResults = generateOfflineQuestions(grade || '7', lesson || 'Tin học', genLevel, criteriaText, genQuantity, genType);
+              const fallbackResults = generateOfflineQuestions(grade || '7', lesson || 'Tin học', effectiveLevel, criteriaText, genQuantity, genType);
               setQuestions(prev => [...prev, ...fallbackResults]);
               setAlertMessage(`Đã tạo thành công ${fallbackResults.length} câu hỏi chuẩn xác (Kích hoạt Bộ sinh Dự phòng GDPT 2018).`);
               setIsGenModalOpen(false);
           }
       } catch (error) {
           try {
-              const fallbackResults = generateOfflineQuestions(grade || '7', lesson || 'Tin học', genLevel, criteriaText, genQuantity, genType);
+              const fallbackResults = generateOfflineQuestions(grade || '7', lesson || 'Tin học', effectiveLevel, criteriaText, genQuantity, genType);
               setQuestions(prev => [...prev, ...fallbackResults]);
               setAlertMessage(`Đã tạo thành công ${fallbackResults.length} câu hỏi chuẩn xác (Kích hoạt Bộ sinh Dự phòng GDPT 2018).`);
               setIsGenModalOpen(false);
@@ -2202,7 +2299,7 @@ const QuestionManager: React.FC = () => {
       {/* AI Generate Question Modal */}
       {isGenModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-            <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
                 <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50 shrink-0">
                     <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
                         <Wand2 className="text-purple-600" /> Tạo câu hỏi bằng AI ({activeSection === 'mc' ? 'Trắc nghiệm' : 'Tự luận'})
@@ -2224,9 +2321,10 @@ const QuestionManager: React.FC = () => {
                             <option value="TH">Thông hiểu</option>
                             <option value="VD">Vận dụng</option>
                             <option value="VDC">Vận dụng cao</option>
+                            <option value="ALL">Tất cả mức độ (NB, TH, VD - Tự động phân bổ)</option>
                         </select>
                          {/* Warning Block */}
-                        {currentCriteriaData && (!currentCriteriaData[genLevel] || currentCriteriaData[genLevel].length === 0) && (
+                        {genLevel !== 'ALL' && currentCriteriaData && (!currentCriteriaData[genLevel] || currentCriteriaData[genLevel].length === 0) && (
                              <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800 flex gap-2 items-start">
                                 <AlertCircle size={14} className="mt-0.5 flex-shrink-0" />
                                 <span>
@@ -2263,7 +2361,7 @@ const QuestionManager: React.FC = () => {
                             onChange={(e) => setGenCriteriaCode(e.target.value)}
                         >
                             <option value="">-- Mặc định (Theo bài học) --</option>
-                            {getCriteriaOptionsForLevel(genLevel).map((c, i) => {
+                            {getCriteriaOptionsForLevel(genLevel === 'ALL' ? 'NB' : genLevel).map((c, i) => {
                                 const code = c.split(' ')[0];
                                 return <option key={i} value={code}>{c}</option>
                             })}
@@ -2323,12 +2421,61 @@ const QuestionManager: React.FC = () => {
                         <input 
                             type="number" 
                             min="1" 
-                            max="10" 
+                            max="50" 
                             className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 outline-none"
                             value={genQuantity}
                             onChange={(e) => setGenQuantity(parseInt(e.target.value) || 1)}
                         />
                     </div>
+
+                    {/* Chức năng Sinh Prompt để Copy sang ChatGPT / Gemini ngoài */}
+                    <div className="bg-indigo-50/90 border border-indigo-200 rounded-xl p-3.5 space-y-2.5">
+                        <div className="flex items-center justify-between gap-2">
+                            <div className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                                <Copy size={14} className="text-indigo-600" />
+                                Sinh Prompt chuẩn để Copy sang ChatGPT / Gemini
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setShowPromptPreview(prev => !prev)}
+                                className="text-[11px] font-semibold text-indigo-700 hover:text-indigo-900 underline cursor-pointer"
+                            >
+                                {showPromptPreview ? 'Ẩn nội dung Prompt' : 'Xem nội dung Prompt'}
+                            </button>
+                        </div>
+                        <p className="text-[11px] text-indigo-800 leading-relaxed">
+                            Tự động kết xuất Prompt theo đúng <strong>Bài học</strong>, <strong>Mức độ ({genLevel})</strong>, <strong>Tiêu chí</strong> và <strong>Số lượng ({genQuantity} câu)</strong> bạn chọn ở trên. Copy kèm file đính kèm đưa vào AI ngoài để nhận kết quả khớp 100% với <strong>Nhập hàng loạt (AI Scan)</strong>.
+                        </p>
+                        {showPromptPreview && (
+                            <textarea
+                                readOnly
+                                rows={7}
+                                value={buildExternalAIPrompt()}
+                                onClick={(e) => (e.target as HTMLTextAreaElement).select()}
+                                className="w-full p-2.5 bg-white border border-indigo-200 rounded-lg text-[11px] font-mono text-slate-700 focus:outline-none"
+                            />
+                        )}
+                        <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                            <button
+                                type="button"
+                                onClick={() => handleCopyExternalPrompt(false)}
+                                className="flex-1 py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+                            >
+                                {copiedPromptSuccess ? <Check size={14} /> : <Copy size={14} />}
+                                {copiedPromptSuccess ? 'Đã Copy Prompt!' : 'Copy Prompt'}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => handleCopyExternalPrompt(true)}
+                                className="flex-1 py-2 px-3 bg-white hover:bg-indigo-100 text-indigo-700 border border-indigo-300 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                                title="Copy Prompt và chuyển ngay sang cửa sổ Nhập hàng loạt (AI Scan) để chờ dán kết quả"
+                            >
+                                <Layers size={14} />
+                                Copy & Mở AI Scan
+                            </button>
+                        </div>
+                    </div>
+
                     <div className="text-xs text-emerald-800 bg-emerald-50/80 border border-emerald-200 p-3 rounded-xl space-y-1">
                         <p className="font-bold flex items-center gap-1.5 text-emerald-900">
                             <Sparkles size={14} className="text-emerald-600" /> Hệ thống bảo đảm 100% không gián đoạn:
@@ -2339,16 +2486,26 @@ const QuestionManager: React.FC = () => {
                     </div>
                 </div>
 
-                <div className="p-4 border-t border-gray-100 flex justify-end gap-3 bg-gray-50 shrink-0">
-                    <button onClick={() => setIsGenModalOpen(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-200 rounded-lg transition-colors font-medium">Hủy bỏ</button>
-                    <button 
-                        onClick={handleGenerateQuestion} 
-                        disabled={isGenerating}
-                        className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium flex items-center gap-2 disabled:opacity-70"
+                <div className="p-4 border-t border-gray-100 flex justify-between items-center gap-2 bg-gray-50 shrink-0">
+                    <button
+                        type="button"
+                        onClick={() => handleCopyExternalPrompt(false)}
+                        className="px-3.5 py-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-colors font-bold text-xs flex items-center gap-1.5 cursor-pointer"
                     >
-                        {isGenerating ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
-                        Tạo ngay
+                        <Copy size={15} />
+                        {copiedPromptSuccess ? 'Đã Copy!' : 'Copy Prompt'}
                     </button>
+                    <div className="flex items-center gap-2">
+                        <button onClick={() => setIsGenModalOpen(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-200 rounded-lg transition-colors font-medium text-sm">Hủy bỏ</button>
+                        <button 
+                            onClick={handleGenerateQuestion} 
+                            disabled={isGenerating}
+                            className="px-5 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium text-sm flex items-center gap-2 disabled:opacity-70"
+                        >
+                            {isGenerating ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
+                            Tạo ngay
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
