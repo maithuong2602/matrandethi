@@ -36,8 +36,8 @@ export const normalizeCriterionText = (text: string): string => {
  */
 export const getLevelCodeFromTitle = (title: string): string => {
     const t = (title || '').toLowerCase().trim();
-    if (t.includes('nhận biết') || t.startsWith('nb')) return 'NB';
-    if (t.includes('thông hiểu') || t.startsWith('th')) return 'TH';
+    if (t.includes('nhận biết') || t.startsWith('biết') || t.startsWith('nb') || t === 'b') return 'NB';
+    if (t.includes('thông hiểu') || t.startsWith('hiểu') || t.startsWith('th') || t === 'h') return 'TH';
     if (t.includes('vận dụng cao') || t.startsWith('vdc')) return 'VDC';
     if (t.includes('vận dụng') || t.startsWith('vd')) return 'VD';
     return title.trim().toUpperCase() || 'NB';

@@ -306,6 +306,32 @@ const QuestionManager: React.FC = () => {
     return getMergedCriteria(grade, lesson, customCriteriaStore);
   }, [grade, lesson, customCriteriaStore]);
 
+  // Lấy danh sách Tiêu chí (YCCĐ) theo mức độ; nếu bài học chỉ có YCCĐ ở mức độ khác (VD/VDC), tự động hiển thị toàn bộ YCCĐ của bài để không bị trống dropdown
+  const getCriteriaOptionsForLevel = (targetLevel: string): string[] => {
+    if (!currentCriteriaData) return [];
+    const exactList = currentCriteriaData[targetLevel];
+    if (Array.isArray(exactList) && exactList.length > 0) {
+      return exactList;
+    }
+    const allItems: string[] = [];
+    ['NB', 'TH', 'VD', 'VDC'].forEach(lvl => {
+      const arr = currentCriteriaData[lvl];
+      if (Array.isArray(arr)) {
+        arr.forEach(item => {
+          if (!allItems.includes(item)) allItems.push(item);
+        });
+      }
+    });
+    Object.entries(currentCriteriaData).forEach(([k, arr]) => {
+      if (k !== '__deleted' && Array.isArray(arr)) {
+        arr.forEach(item => {
+          if (!allItems.includes(item)) allItems.push(item);
+        });
+      }
+    });
+    return allItems;
+  };
+
   const handleAddCustomCriterion = () => {
     if (!grade || !lesson) {
       setAlertMessage("Vui lòng chọn Khối và Bài học trước khi bổ sung YCCĐ.");
@@ -497,11 +523,23 @@ const QuestionManager: React.FC = () => {
   // Handlers
   const handleAddQuestion = (type: 'mc' | 'essay') => {
     const userCanApprove = canApproveExam(currentUser);
+    let defaultLevel = 'NB';
+    let defaultCriteria = '';
+    if (currentCriteriaData) {
+      const firstAvailLvl = ['NB', 'TH', 'VD', 'VDC'].find(
+        lvl => Array.isArray(currentCriteriaData[lvl]) && currentCriteriaData[lvl].length > 0
+      );
+      if (firstAvailLvl) {
+        defaultLevel = firstAvailLvl;
+        const firstCrit = currentCriteriaData[firstAvailLvl]?.[0] || '';
+        defaultCriteria = firstCrit.split(' ')[0] || '';
+      }
+    }
     const newQuestion: ExerciseQuestion = {
       id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
       category: type,
-      level: 'NB',
-      criteria: '',
+      level: defaultLevel,
+      criteria: defaultCriteria,
       content: '',
       grade: grade || '',
       lesson: lesson || '',
@@ -684,6 +722,17 @@ const QuestionManager: React.FC = () => {
       }
       setActiveSection(section);
       setGenType(section === 'essay' ? 'essay' : 'multiple-choice');
+      if (currentCriteriaData) {
+          const hasCurrentLevel = Array.isArray(currentCriteriaData[genLevel]) && currentCriteriaData[genLevel].length > 0;
+          if (!hasCurrentLevel) {
+              const firstAvailableLevel = ['NB', 'TH', 'VD', 'VDC'].find(
+                  lvl => Array.isArray(currentCriteriaData[lvl]) && currentCriteriaData[lvl].length > 0
+              );
+              if (firstAvailableLevel) {
+                  setGenLevel(firstAvailableLevel);
+              }
+          }
+      }
       setIsGenModalOpen(true);
   };
 
@@ -911,7 +960,7 @@ const QuestionManager: React.FC = () => {
       
       let criteriaText = lesson;
       if (currentCriteriaData && genCriteriaCode) {
-          const list = currentCriteriaData[genLevel];
+          const list = getCriteriaOptionsForLevel(genLevel);
           const found = list?.find(c => c.startsWith(genCriteriaCode));
           if (found) criteriaText = found;
       }
@@ -1463,7 +1512,7 @@ const QuestionManager: React.FC = () => {
                                         onChange={(e) => handleUpdateQuestion(q.id, 'criteria', e.target.value)}
                                     >
                                         <option value="">-- Chọn tiêu chí --</option>
-                                        {currentCriteriaData && currentCriteriaData[q.level]?.map((c, i) => {
+                                        {getCriteriaOptionsForLevel(q.level).map((c, i) => {
                                             const code = c.split(' ')[0];
                                             return <option key={i} value={code}>{c}</option>
                                         })}
@@ -1784,7 +1833,7 @@ const QuestionManager: React.FC = () => {
                                         onChange={(e) => handleUpdateQuestion(q.id, 'criteria', e.target.value)}
                                     >
                                         <option value="">-- Chọn tiêu chí --</option>
-                                        {currentCriteriaData && currentCriteriaData[q.level]?.map((c, i) => {
+                                        {getCriteriaOptionsForLevel(q.level).map((c, i) => {
                                             const code = c.split(' ')[0];
                                             return <option key={i} value={code}>{c}</option>
                                         })}
@@ -2122,9 +2171,9 @@ const QuestionManager: React.FC = () => {
       {/* AI Generate Question Modal */}
       {isGenModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-            <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col">
-                <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-                    <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+            <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+                <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50 shrink-0">
+                    <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
                         <Wand2 className="text-purple-600" /> Tạo câu hỏi bằng AI ({activeSection === 'mc' ? 'Trắc nghiệm' : 'Tự luận'})
                     </h3>
                     <button onClick={() => setIsGenModalOpen(false)} className="text-gray-400 hover:text-gray-600 transition-colors">
@@ -2132,7 +2181,7 @@ const QuestionManager: React.FC = () => {
                     </button>
                 </div>
                 
-                <div className="p-6 space-y-4">
+                <div className="p-5 space-y-4 flex-1 overflow-y-auto">
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Mức độ nhận thức</label>
                         <select 
@@ -2150,7 +2199,7 @@ const QuestionManager: React.FC = () => {
                              <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800 flex gap-2 items-start">
                                 <AlertCircle size={14} className="mt-0.5 flex-shrink-0" />
                                 <span>
-                                    <strong>Lưu ý:</strong> Bài "<strong>{lesson}</strong>" không có yêu cầu cần đạt cho mức độ này trong dữ liệu chương trình. AI sẽ tự suy luận nội dung.
+                                    <strong>Lưu ý:</strong> Bài "<strong>{lesson}</strong>" không có YCCĐ riêng ở mức này, hệ thống đã tự động hiển thị toàn bộ YCCĐ của bài bên dưới để bạn chọn.
                                 </span>
                              </div>
                         )}
@@ -2183,7 +2232,7 @@ const QuestionManager: React.FC = () => {
                             onChange={(e) => setGenCriteriaCode(e.target.value)}
                         >
                             <option value="">-- Mặc định (Theo bài học) --</option>
-                            {currentCriteriaData && currentCriteriaData[genLevel]?.map((c, i) => {
+                            {getCriteriaOptionsForLevel(genLevel).map((c, i) => {
                                 const code = c.split(' ')[0];
                                 return <option key={i} value={code}>{c}</option>
                             })}
@@ -2259,7 +2308,7 @@ const QuestionManager: React.FC = () => {
                     </div>
                 </div>
 
-                <div className="p-6 border-t border-gray-100 flex justify-end gap-3 bg-gray-50">
+                <div className="p-4 border-t border-gray-100 flex justify-end gap-3 bg-gray-50 shrink-0">
                     <button onClick={() => setIsGenModalOpen(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-200 rounded-lg transition-colors font-medium">Hủy bỏ</button>
                     <button 
                         onClick={handleGenerateQuestion} 
@@ -2433,7 +2482,7 @@ const QuestionManager: React.FC = () => {
                     )}
                 </div>
 
-                <div className="p-6 border-t border-gray-100 flex justify-end gap-3 bg-gray-50">
+                <div className="p-4 border-t border-gray-100 flex justify-end gap-3 bg-gray-50 shrink-0">
                     <button onClick={() => setIsBulkModalOpen(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-200 rounded-lg transition-colors font-medium">Hủy bỏ</button>
                     
                     <button 
