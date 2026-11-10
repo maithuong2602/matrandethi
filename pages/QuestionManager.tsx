@@ -897,32 +897,63 @@ const QuestionManager: React.FC = () => {
 
         const newQuestions: ExerciseQuestion[] = aiQuestions.map((q: any) => {
             const isMulti = q.questionType === 'multiple-answer' || q.mcType === 'multiple-answer';
-            const options = Array.isArray(q.options) && q.options.length > 0 ? q.options.map((opt: any, idx: number) => ({
-                id: ['A', 'B', 'C', 'D'][idx] || idx.toString(),
-                text: opt.text || '',
-                isCorrect: opt.isCorrect || false
-            })) : [
-                { id: 'A', text: '', isCorrect: false },
-                { id: 'B', text: '', isCorrect: false },
-                { id: 'C', text: '', isCorrect: false },
-                { id: 'D', text: '', isCorrect: false },
-            ];
+            const isTF = q.questionType === 'true-false';
+            const isShort = q.questionType === 'short-answer' || q.mcType === 'fill-blank';
+            const isEssay = q.category === 'essay' || q.questionType === 'essay';
+
+            let options: Option[] = [];
+            if (isTF) {
+                const isTrue = Array.isArray(q.options) && q.options.length > 0
+                    ? Boolean(q.options[0]?.isCorrect)
+                    : String(q.answer || '').trim().toLowerCase().startsWith('đ');
+                options = [
+                    { id: 'Đúng', text: 'Đúng', isCorrect: isTrue },
+                    { id: 'Sai', text: 'Sai', isCorrect: !isTrue }
+                ];
+            } else if (!isShort && !isEssay) {
+                options = Array.isArray(q.options) && q.options.length > 0 ? q.options.map((opt: any, idx: number) => ({
+                    id: ['A', 'B', 'C', 'D'][idx] || idx.toString(),
+                    text: opt.text || '',
+                    isCorrect: opt.isCorrect || false
+                })) : [
+                    { id: 'A', text: '', isCorrect: false },
+                    { id: 'B', text: '', isCorrect: false },
+                    { id: 'C', text: '', isCorrect: false },
+                    { id: 'D', text: '', isCorrect: false },
+                ];
+            }
+
             const correctAnswers = options.filter(o => o.isCorrect).map(o => o.id).join(', ');
+            const resolvedLevel = (['NB', 'TH', 'VD', 'VDC'].includes(String(q.level || '').toUpperCase())
+                ? String(q.level).toUpperCase()
+                : 'NB') as 'NB' | 'TH' | 'VD' | 'VDC';
+
+            const levelCriteriaOpts = getCriteriaOptionsForLevel(resolvedLevel);
+            const defaultCriterionCode = levelCriteriaOpts.length > 0 ? levelCriteriaOpts[0].split(' ')[0] : '';
+            const resolvedCriteria = q.criteria && levelCriteriaOpts.some(c => c.startsWith(q.criteria))
+                ? q.criteria
+                : (q.criteria || defaultCriterionCode);
+
+            const targetScope = activeScope === 'shared' && canApproveBank ? 'shared' : 'personal';
 
             return {
                 id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-                category: q.category || 'mc',
-                questionType: q.questionType || (isMulti ? 'multiple-answer' : (q.category === 'essay' ? 'essay' : 'multiple-choice')),
-                level: q.level || 'NB',
-                criteria: q.criteria || '',
+                category: isEssay ? 'essay' : (q.category || 'mc'),
+                questionType: q.questionType || (isMulti ? 'multiple-answer' : (isEssay ? 'essay' : 'multiple-choice')),
+                level: resolvedLevel,
+                criteria: resolvedCriteria,
                 content: q.content || '',
                 grade: grade || '',
                 lesson: lesson || '',
-                mcType: isMulti ? 'multiple-answer' : (q.mcType || 'multiple-choice'),
+                mcType: isMulti ? 'multiple-answer' : (isShort ? 'fill-blank' : (q.mcType || 'multiple-choice')),
                 options: options,
                 answer: q.answer || correctAnswers || '',
                 essayType: 'explanation',
-                originalNumber: q.criteria ? `${q.criteria}` : undefined
+                originalNumber: resolvedCriteria ? `${resolvedCriteria}` : undefined,
+                bankScope: targetScope,
+                ownerEmail: userEmail,
+                ownerName: userName,
+                contentHash: computeQuestionContentHash(q.content || '', lesson || '')
             };
         });
 
@@ -2427,11 +2458,54 @@ const QuestionManager: React.FC = () => {
 
                     {bulkTab === 'text' ? (
                         <div className="space-y-3">
-                            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-700 space-y-1">
-                                <div className="font-bold text-slate-800">Mẹo cú pháp nhận diện nhanh đáp án đúng (100% chính xác):</div>
+                            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-700 space-y-1.5">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div className="font-bold text-slate-800">Mẹo cú pháp nhận diện nhanh đáp án & mức độ (100% chính xác):</div>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            const allCrit = [
+                                                ...getCriteriaOptionsForLevel('NB').map(c => `- [NB] ${c}`),
+                                                ...getCriteriaOptionsForLevel('TH').map(c => `- [TH] ${c}`),
+                                                ...getCriteriaOptionsForLevel('VD').map(c => `- [VD] ${c}`),
+                                                ...getCriteriaOptionsForLevel('VDC').map(c => `- [VDC] ${c}`)
+                                            ].join('\n');
+                                            const promptText = `Hãy đóng vai chuyên gia biên soạn đề kiểm tra môn Tin học theo Công văn 7991/BGDĐT. Dựa vào tài liệu/file đính kèm${lesson ? ` của bài học "${lesson}" (Khối ${grade || ''})` : ''}, hãy tạo danh sách câu hỏi theo ĐÚNG định dạng chuẩn dưới đây để tôi dán trực tiếp vào chức năng "Nhập hàng loạt (AI Scan)":
+
+${allCrit ? `YÊU CẦU CẦN ĐẠT (TIÊU CHÍ) CỦA BÀI HỌC:\n${allCrit}\n\n` : ''}QUY TẮC ĐỊNH DẠNG BẮT BUỘC (KHÔNG DÙNG BẢNG, KHÔNG DÙNG ĐỊNH DẠNG ĐẬM/NGHIÊNG MARKDOWN **):
+1. Đầu mỗi câu hỏi BẮT BUỘC gắn nhãn mức độ nhận thức trong ngoặc vuông: [NB] (Nhận biết), [TH] (Thông hiểu), [VD] (Vận dụng) hoặc [VDC] (Vận dụng cao). Có thể kèm mã tiêu chí như [NB - 1.1], [TH - 2.1], [VD - 3.1].
+2. Dạng 1 - Trắc nghiệm 4 lựa chọn: Đặt dấu sao (*) ngay trước chữ cái của phương án đúng (ví dụ: *B. Nội dung đáp án đúng).
+3. Dạng 2 - Trắc nghiệm Đúng/Sai (từng nhận định độc lập): Ghi nhãn [Đúng] hoặc [Sai] ở ngay cuối câu phát biểu.
+4. Dạng 3 - Trả lời ngắn / Điền khuyết: Xuống dòng ghi rõ "Đáp án: <nội dung đáp án ngắn gọn>".
+5. Dạng 4 - Tự luận: Đầu câu gắn nhãn [TL][VD] hoặc [TL][VDC], xuống dòng ghi "Hướng dẫn chấm: <nội dung đáp án>".
+
+MẪU ĐẦU RA CHUẨN (HÃY XUẤT Y HỆT CẤU TRÚC NÀY):
+
+Câu 1: [NB - 1.1] Thiết bị nào sau đây là thiết bị vào cơ bản của máy tính?
+A. Màn hình.
+*B. Bàn phím.
+C. Máy in.
+D. Loa.
+
+Câu 2: [TH - 2.1] Hệ điều hành Windows là phần mềm hệ thống giúp quản lí phần cứng và phần mềm. [Đúng]
+
+Câu 3: [NB - 1.1] Phím tắt dùng để sao chép (Copy) dữ liệu trong Windows là gì?
+Đáp án: Ctrl + C
+
+Câu 4: [TL][VD - 3.1] Em hãy nêu cách bảo vệ thông tin cá nhân khi sử dụng mạng xã hội?
+Hướng dẫn chấm: Không chia sẻ mật khẩu, bật xác thực 2 lớp (2FA), cẩn trọng khi nhấn vào các đường link lạ.`;
+                                            navigator.clipboard.writeText(promptText);
+                                            setAlertMessage("Đã sao chép Prompt mẫu chuẩn AI Scan vào bộ nhớ tạm! Bạn có thể dán (Ctrl+V) kèm file đính kèm vào ChatGPT / Gemini.");
+                                        }}
+                                        className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold text-[11px] flex items-center gap-1 shadow-sm transition-colors cursor-pointer"
+                                    >
+                                        <Sparkles size={12} /> Copy Prompt mẫu đưa cho AI
+                                    </button>
+                                </div>
+                                <div>• <b>Mức độ & Tiêu chí:</b> Ghi <code className="bg-white px-1 border rounded font-bold text-indigo-700">[NB]</code>, <code className="bg-white px-1 border rounded font-bold text-indigo-700">[TH]</code>, <code className="bg-white px-1 border rounded font-bold text-indigo-700">[VD]</code>, <code className="bg-white px-1 border rounded font-bold text-indigo-700">[VDC]</code> (hoặc <code className="bg-white px-1 border rounded">[NB - 1.1]</code>) ngay đầu câu hỏi.</div>
                                 <div>• <b>Trắc nghiệm 4 lựa chọn:</b> Đặt dấu <code className="bg-amber-100 text-amber-900 px-1 rounded font-bold">*</code> trước đáp án đúng (VD: <code className="bg-white px-1 border rounded">*B. Bàn phím.</code> hoặc <code className="bg-white px-1 border rounded">B. *Bàn phím.</code>) hoặc ghi <code className="bg-white px-1 border rounded">Đáp án: B</code> ở dòng cuối.</div>
                                 <div>• <b>Đúng / Sai:</b> Ghi <code className="bg-white px-1 border rounded">[Đúng]</code> hoặc <code className="bg-white px-1 border rounded">[Sai]</code> ở cuối câu nhận định (hoặc dòng <code className="bg-white px-1 border rounded">Đáp án: Đúng</code>).</div>
-                                <div>• <b>Mức độ (tùy chọn):</b> Ghi <code className="bg-white px-1 border rounded">[NB]</code>, <code className="bg-white px-1 border rounded">[TH]</code>, <code className="bg-white px-1 border rounded">[VD]</code> ở đầu câu hỏi.</div>
+                                <div>• <b>Trả lời ngắn / Tự luận:</b> Ghi <code className="bg-white px-1 border rounded">Đáp án: ...</code> (Trả lời ngắn) hoặc gắn <code className="bg-white px-1 border rounded">[TL]</code> đầu câu kèm <code className="bg-white px-1 border rounded">Hướng dẫn chấm: ...</code> (Tự luận).</div>
                             </div>
                             <textarea 
                                 className="w-full h-60 p-4 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-transparent resize-none font-mono text-sm shadow-inner"

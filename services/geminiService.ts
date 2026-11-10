@@ -158,14 +158,28 @@ export const standardizeQuestionText = async (rawText: string): Promise<string> 
 
 export const parseStructuredTextQuestions = (rawText: string): any[] => {
     if (!rawText || !rawText.trim()) return [];
-    const blocks = rawText
+    const cleanedRaw = rawText
         .replace(/\r\n/g, '\n')
+        .split('\n')
+        .filter(line => !/^\s*(?:PHẦN\s+[I|V|X|\d]+|[I|V|X]+\.\s*(?:TRẮC\s*NGHIỆM|TỰ\s*LUẬN)|---\s*)/i.test(line.trim()))
+        .join('\n');
+
+    const blocks = cleanedRaw
         .split(/(?=(?:^|\n)\s*(?:Câu\s*\d+|Bài\s*\d+|\d+\s*[.):]))/i)
         .map(b => b.trim())
         .filter(Boolean);
 
-    const targetBlocks = blocks.length > 0 ? blocks : [rawText.trim()];
+    const targetBlocks = blocks.length > 0 ? blocks : [cleanedRaw.trim()];
     const parsed: any[] = [];
+
+    const normalizeLevelTag = (rawLvl: string): 'NB' | 'TH' | 'VD' | 'VDC' => {
+        const u = rawLvl.trim().toUpperCase();
+        if (u === 'NB' || u.includes('NHẬN BIẾT') || u === 'BIẾT') return 'NB';
+        if (u === 'TH' || u.includes('THÔNG HIỂU') || u === 'HIỂU') return 'TH';
+        if (u === 'VDC' || u.includes('VẬN DỤNG CAO')) return 'VDC';
+        if (u === 'VD' || u.includes('VẬN DỤNG')) return 'VD';
+        return 'NB';
+    };
 
     targetBlocks.forEach(block => {
         const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
@@ -173,19 +187,49 @@ export const parseStructuredTextQuestions = (rawText: string): any[] => {
 
         let stem = lines[0].replace(/^(?:Câu\s*\d+|Bài\s*\d+|\d+)\s*[.):\-]?\s*/i, '').trim();
         let explicitAnswer = '';
-        let level = 'NB';
+        let isExplicitEssay = false;
+        let level: 'NB' | 'TH' | 'VD' | 'VDC' = 'NB';
+        let criteria = '';
 
-        const lvlMatch = stem.match(/^\[(NB|TH|VD|VDC)\]\s*/i) || stem.match(/^\((NB|TH|VD|VDC)\)\s*/i);
-        if (lvlMatch) {
-            level = lvlMatch[1].toUpperCase();
-            stem = stem.slice(lvlMatch[0].length).trim();
+        // Hỗ trợ các tag ở đầu câu: [NB], [TH - 2.1], [VD: 3.1], [Tự luận], [TL], (NB)...
+        let tagMatched = true;
+        while (tagMatched) {
+            tagMatched = false;
+            const essayTag = stem.match(/^(?:\[\s*(?:TL|Tự\s*luận)\s*\]|\(\s*(?:TL|Tự\s*luận)\s*\))\s*/i);
+            if (essayTag) {
+                isExplicitEssay = true;
+                stem = stem.slice(essayTag[0].length).trim();
+                tagMatched = true;
+            }
+            const lvlCritMatch = stem.match(/^(?:\[\s*(NB|TH|VD|VDC|Nhận\s*biết|Thông\s*hiểu|Vận\s*dụng\s*cao|Vận\s*dụng|Biết|Hiểu)(?:\s*[-–:|,]\s*(\d+\.\d+))?\s*\]|\(\s*(NB|TH|VD|VDC|Nhận\s*biết|Thông\s*hiểu|Vận\s*dụng\s*cao|Vận\s*dụng|Biết|Hiểu)(?:\s*[-–:|,]\s*(\d+\.\d+))?\s*\))\s*/i);
+            if (lvlCritMatch) {
+                level = normalizeLevelTag(lvlCritMatch[1] || lvlCritMatch[3]);
+                if (lvlCritMatch[2] || lvlCritMatch[4]) {
+                    criteria = (lvlCritMatch[2] || lvlCritMatch[4]).trim();
+                }
+                stem = stem.slice(lvlCritMatch[0].length).trim();
+                tagMatched = true;
+            }
+            const critOnlyMatch = stem.match(/^\[\s*(\d+\.\d+)\s*\]\s*/);
+            if (critOnlyMatch) {
+                criteria = critOnlyMatch[1].trim();
+                if (criteria.startsWith('1.')) level = 'NB';
+                else if (criteria.startsWith('2.')) level = 'TH';
+                else if (criteria.startsWith('3.')) level = 'VD';
+                else if (criteria.startsWith('4.')) level = 'VDC';
+                stem = stem.slice(critOnlyMatch[0].length).trim();
+                tagMatched = true;
+            }
         }
 
         const optLines: string[] = [];
         for (let i = 1; i < lines.length; i++) {
             const line = lines[i];
-            const ansMatch = line.match(/^(?:Đáp\s*án|ĐA|Trả\s*lời|Hướng\s*dẫn\s*chấm)\s*[:=]\s*(.+)$/i);
+            const ansMatch = line.match(/^(?:Đáp\s*án|ĐA|Trả\s*lời|Hướng\s*dẫn\s*chấm|HDC)\s*[:=]\s*(.+)$/i);
             if (ansMatch) {
+                if (/^(?:Hướng\s*dẫn\s*chấm|HDC)/i.test(line)) {
+                    isExplicitEssay = true;
+                }
                 explicitAnswer = ansMatch[1].trim();
                 continue;
             }
@@ -209,7 +253,7 @@ export const parseStructuredTextQuestions = (rawText: string): any[] => {
                 questionType: 'true-false',
                 mcType: 'multiple-choice',
                 level,
-                criteria: '',
+                criteria,
                 content: stem,
                 options: [
                     { id: 'Đúng', text: 'Đúng', isCorrect: isTrue },
@@ -248,10 +292,23 @@ export const parseStructuredTextQuestions = (rawText: string): any[] => {
                 questionType: isMulti ? 'multiple-answer' : 'multiple-choice',
                 mcType: isMulti ? 'multiple-answer' : 'multiple-choice',
                 level,
-                criteria: '',
+                criteria,
                 content: stem,
                 options,
                 answer: correctIds.join(', ')
+            });
+            return;
+        }
+
+        if (isExplicitEssay) {
+            parsed.push({
+                category: 'essay',
+                questionType: 'essay',
+                level,
+                criteria,
+                content: stem,
+                options: [],
+                answer: explicitAnswer
             });
             return;
         }
@@ -262,7 +319,7 @@ export const parseStructuredTextQuestions = (rawText: string): any[] => {
                 questionType: 'short-answer',
                 mcType: 'fill-blank',
                 level,
-                criteria: '',
+                criteria,
                 content: stem,
                 options: [],
                 answer: explicitAnswer
