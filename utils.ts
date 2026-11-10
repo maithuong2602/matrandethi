@@ -384,14 +384,33 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
         }
         answerGridHtml += '</table>';
 
+        let tfScenarioCounter = 0;
         const questionContent = tracNghiemQuestions.map((q, index) => {
             const displayContent = (q.content || '').replace(/\n/g, '<br/>');
-            let questionHtml = `<p style="margin-top: 6pt; margin-bottom: 0; font-size: 13pt; text-align: justify;"><strong>Câu ${index + 1}.</strong> ${displayContent}</p>`;
             
-            // True/False questions: do NOT render options underneath
             if (q.questionType === 'true-false') {
-                return questionHtml;
+                const hasFourStatements = Array.isArray(q.options) && q.options.some((o: any) => ['a', 'b', 'c', 'd'].includes(String(o.id || '').toLowerCase()));
+                if (hasFourStatements) {
+                    tfScenarioCounter++;
+                    const cleanScenario = (q.content || '')
+                        .replace(/^Tình\s*huống\s*\d*\s*[:.]\s*/i, '')
+                        .replace(/\s*(?:Câu\s*\d+\s*[.):\-]?\s*)?Xác\s*định\s*tính\s*đúng\s*hoặc\s*sai\s*của\s*các\s*phát\s*biểu\s*sau\s*[:.]?\s*$/i, '')
+                        .trim()
+                        .replace(/\n/g, '<br/>');
+                    const subStatementsHtml = '<div style="margin-left: 0.5cm;">' + q.options.map((opt: any, sIdx: number) => {
+                        const subLabel = opt.id || ['a', 'b', 'c', 'd'][sIdx] || String.fromCharCode(97 + sIdx);
+                        return `<p style="padding: 2pt 0; font-size: 13pt; margin: 0; text-align: justify;">${subLabel}) ${opt.text}</p>`;
+                    }).join('') + '</div>';
+                    return `
+                        <p style="margin-top: 8pt; margin-bottom: 3pt; font-size: 13pt; text-align: justify;"><strong>Tình huống ${tfScenarioCounter}:</strong> ${cleanScenario}</p>
+                        <p style="margin-top: 3pt; margin-bottom: 3pt; font-size: 13pt; text-align: justify;"><strong>Câu ${index + 1}.</strong> Xác định tính đúng hoặc sai của các phát biểu sau:</p>
+                        ${subStatementsHtml}
+                    `;
+                }
+                return `<p style="margin-top: 6pt; margin-bottom: 0; font-size: 13pt; text-align: justify;"><strong>Câu ${index + 1}.</strong> ${displayContent}</p>`;
             }
+
+            let questionHtml = `<p style="margin-top: 6pt; margin-bottom: 0; font-size: 13pt; text-align: justify;"><strong>Câu ${index + 1}.</strong> ${displayContent}</p>`;
 
             if (q.options && q.options.length > 0) {
                 // Modified heuristic: If any option is > 25 chars, assume it might wrap in a 2-col table, so switch to vertical.
@@ -569,7 +588,11 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                     const q = tracNghiemQuestions[idx];
                     let correctOpt = '';
                     if (q.questionType === 'true-false') {
-                        correctOpt = q.answer === 'Sai' || q.options?.find((o: any) => o.isCorrect)?.id === 'Sai' ? 'S' : 'Đ';
+                        if (Array.isArray(q.options) && q.options.some((o: any) => ['a', 'b', 'c', 'd'].includes(String(o.id || '').toLowerCase()))) {
+                            correctOpt = q.options.map((o: any, sIdx: number) => `${o.id || ['a', 'b', 'c', 'd'][sIdx]}-${o.isCorrect ? 'Đ' : 'S'}`).join('<br/>');
+                        } else {
+                            correctOpt = q.answer === 'Sai' || q.options?.find((o: any) => o.isCorrect)?.id === 'Sai' ? 'S' : 'Đ';
+                        }
                     } else {
                         correctOpt = q.options?.filter((o: any) => o.isCorrect).map((o: any) => o.id).join(', ') || q.answer || '';
                     }
@@ -608,7 +631,11 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                         if (isHskt(q)) {
                             let correctOpt = '';
                             if (q.questionType === 'true-false') {
-                                correctOpt = q.answer === 'Sai' || q.options?.find((o: any) => o.isCorrect)?.id === 'Sai' ? 'S' : 'Đ';
+                                if (Array.isArray(q.options) && q.options.some((o: any) => ['a', 'b', 'c', 'd'].includes(String(o.id || '').toLowerCase()))) {
+                                    correctOpt = q.options.map((o: any, sIdx: number) => `${o.id || ['a', 'b', 'c', 'd'][sIdx]}-${o.isCorrect ? 'Đ' : 'S'}`).join('<br/>');
+                                } else {
+                                    correctOpt = q.answer === 'Sai' || q.options?.find((o: any) => o.isCorrect)?.id === 'Sai' ? 'S' : 'Đ';
+                                }
                             } else {
                                 correctOpt = q.options?.filter((o: any) => o.isCorrect).map((o: any) => o.id).join(', ') || q.answer || '';
                             }

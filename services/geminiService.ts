@@ -158,11 +158,49 @@ export const standardizeQuestionText = async (rawText: string): Promise<string> 
 
 export const parseStructuredTextQuestions = (rawText: string): any[] => {
     if (!rawText || !rawText.trim()) return [];
-    const cleanedRaw = rawText
+    const cleanedLines = rawText
         .replace(/\r\n/g, '\n')
         .split('\n')
-        .filter(line => !/^\s*(?:PHẦN\s+[I|V|X|\d]+|[I|V|X]+\.\s*(?:TRẮC\s*NGHIỆM|TỰ\s*LUẬN)|---\s*)/i.test(line.trim()))
-        .join('\n');
+        .filter(line => !/^\s*(?:PHẦN\s+[I|V|X|\d]+|[I|V|X]+\.\s*(?:TRẮC\s*NGHIỆM|TỰ\s*LUẬN)|---\s*|Tiếp\s*tục\s*tương\s*tự)/i.test(line.trim()));
+
+    // Gộp dòng "Tình huống X: ..." và dòng "Câu Y. Xác định tính đúng hoặc sai..." liền kề thành 1 khối duy nhất
+    const mergedLines: string[] = [];
+    for (let i = 0; i < cleanedLines.length; i++) {
+        const cur = cleanedLines[i].trim();
+        if (/^Tình\s*huống\s*\d*\s*[:.]/i.test(cur)) {
+            let combinedScenario = cur.replace(/^Tình\s*huống\s*\d*\s*[:.]\s*/i, '').trim();
+            while (i + 1 < cleanedLines.length) {
+                const nextLine = cleanedLines[i + 1].trim();
+                if (!nextLine) {
+                    i++;
+                    continue;
+                }
+                if (/^(?:Câu\s*\d+\s*[.):\-]?\s*)?Xác\s*định\s*tính\s*đúng\s*hoặc\s*sai/i.test(nextLine)) {
+                    i++;
+                    break;
+                }
+                if (/^(?:Câu\s*\d+|Bài\s*\d+)\s*[.):\-]?\s*(.+)$/i.test(nextLine)) {
+                    const restAfterCau = nextLine.replace(/^(?:Câu\s*\d+|Bài\s*\d+)\s*[.):\-]?\s*/i, '').trim();
+                    const cleanedRest = restAfterCau.replace(/^Xác\s*định\s*tính\s*đúng\s*hoặc\s*sai\s*của\s*các\s*phát\s*biểu\s*sau\s*[:.]?\s*/i, '').trim();
+                    if (cleanedRest) {
+                        combinedScenario += ' ' + cleanedRest;
+                    }
+                    i++;
+                    break;
+                }
+                if (/^\*?[A-Da-d][.)]\s+/.test(nextLine)) {
+                    break;
+                }
+                combinedScenario += ' ' + nextLine;
+                i++;
+            }
+            mergedLines.push(`Câu 1: [TF_SCENARIO] ${combinedScenario}`);
+        } else {
+            mergedLines.push(cleanedLines[i]);
+        }
+    }
+
+    const cleanedRaw = mergedLines.join('\n');
 
     const blocks = cleanedRaw
         .split(/(?=(?:^|\n)\s*(?:Câu\s*\d+|Bài\s*\d+|\d+\s*[.):]))/i)
@@ -188,8 +226,14 @@ export const parseStructuredTextQuestions = (rawText: string): any[] => {
         let stem = lines[0].replace(/^(?:Câu\s*\d+|Bài\s*\d+|\d+)\s*[.):\-]?\s*/i, '').trim();
         let explicitAnswer = '';
         let isExplicitEssay = false;
+        let isScenarioTF = false;
         let level: 'NB' | 'TH' | 'VD' | 'VDC' = 'NB';
         let criteria = '';
+
+        if (stem.startsWith('[TF_SCENARIO]')) {
+            isScenarioTF = true;
+            stem = stem.replace(/^\[TF_SCENARIO\]\s*/, '').trim();
+        }
 
         // Hỗ trợ các tag ở đầu câu: [NB], [TH - 2.1], [VD: 3.1], [Tự luận], [TL], (NB)...
         let tagMatched = true;
@@ -222,9 +266,18 @@ export const parseStructuredTextQuestions = (rawText: string): any[] => {
             }
         }
 
+        stem = stem
+            .replace(/^Tình\s*huống\s*\d*\s*[:.]\s*/i, '')
+            .replace(/\s*(?:Câu\s*\d+\s*[.):\-]?\s*)?Xác\s*định\s*tính\s*đúng\s*hoặc\s*sai\s*của\s*các\s*phát\s*biểu\s*sau\s*[:.]?\s*$/i, '')
+            .trim();
+
         const optLines: string[] = [];
         for (let i = 1; i < lines.length; i++) {
             const line = lines[i];
+            if (/^(?:Câu\s*\d+\s*[.):\-]?\s*)?Xác\s*định\s*tính\s*đúng\s*hoặc\s*sai/i.test(line)) {
+                isScenarioTF = true;
+                continue;
+            }
             const ansMatch = line.match(/^(?:Đáp\s*án|ĐA|Trả\s*lời|Hướng\s*dẫn\s*chấm|HDC)\s*[:=]\s*(.+)$/i);
             if (ansMatch) {
                 if (/^(?:Hướng\s*dẫn\s*chấm|HDC)/i.test(line)) {
@@ -236,8 +289,62 @@ export const parseStructuredTextQuestions = (rawText: string): any[] => {
             if (/^\*?[A-Da-d][.)]\s*/.test(line) || /^[A-Da-d][.)]\s*\*/.test(line)) {
                 optLines.push(line);
             } else if (optLines.length === 0) {
-                stem += ' ' + line;
+                const cleanedCont = line.replace(/^Xác\s*định\s*tính\s*đúng\s*hoặc\s*sai\s*của\s*các\s*phát\s*biểu\s*sau\s*[:.]?\s*/i, '').trim();
+                if (cleanedCont) {
+                    stem += (stem ? ' ' : '') + cleanedCont;
+                }
             }
+        }
+
+        // Kiểm tra câu hỏi Đúng/Sai dạng Tình huống + 4 phát biểu a), b), c), d)
+        const hasLowercaseParen = optLines.length >= 2 && optLines.every(l => /^\*?[a-d]\)/i.test(l) && (/^\*?[a-d]\)/.test(l) || isScenarioTF));
+        const hasInlineTfInOptions = optLines.some(l => /(?:\[\s*(?:\*?Đúng|\*?Sai|Đ|S)\s*\]|\(\s*(?:\*?Đúng|\*?Sai|Đ|S)\s*\)|[-–:]\s*(?:Đúng|Sai)\s*$)/i.test(l));
+        const hasTfAnswerPattern = /[a-d]\s*[-–:=)]\s*(?:Đúng|Sai|Đ|S)/i.test(explicitAnswer) || /^(?:(?:Đúng|Sai|Đ|S)\s*[,;-]\s*){2,}(?:Đúng|Sai|Đ|S)$/i.test(explicitAnswer);
+
+        if (optLines.length >= 2 && (isScenarioTF || hasInlineTfInOptions || hasTfAnswerPattern || hasLowercaseParen)) {
+            const subIds = ['a', 'b', 'c', 'd'];
+            const options = subIds.map((id, idx) => {
+                const rawLine = optLines[idx] || '';
+                const hasStar = rawLine.startsWith('*') || /^[A-Da-d][.)]\s*\*/.test(rawLine);
+                const inlineTf = rawLine.match(/(?:\[\s*(\*?Đúng|\*?Sai|Đ|S)\s*\]|\(\s*(\*?Đúng|\*?Sai|Đ|S)\s*\)|[-–:]\s*(Đúng|Sai)\s*$)\s*$/i);
+                let isCorrect = hasStar;
+
+                if (inlineTf) {
+                    const tfToken = (inlineTf[1] || inlineTf[2] || inlineTf[3] || '').replace('*', '').trim().toLowerCase();
+                    isCorrect = tfToken.startsWith('đ') || tfToken === 'true';
+                } else if (explicitAnswer) {
+                    const pairMatch = explicitAnswer.match(new RegExp(`${id}\\s*[-–:=)]\\s*(Đúng|Sai|Đ|S)`, 'i'));
+                    if (pairMatch) {
+                        isCorrect = pairMatch[1].trim().toLowerCase().startsWith('đ');
+                    } else {
+                        const seqTokens = explicitAnswer.split(/[,;\s-]+/).map(s => s.trim().toLowerCase()).filter(s => ['đúng', 'sai', 'đ', 's'].includes(s));
+                        if (seqTokens[idx]) {
+                            isCorrect = seqTokens[idx].startsWith('đ');
+                        }
+                    }
+                }
+
+                const cleanText = rawLine
+                    .replace(/^\*\s*/, '')
+                    .replace(/^[A-Da-d][.)]\s*\*?\s*/, '')
+                    .replace(/(?:\[\s*(?:\*?Đúng|\*?Sai|Đ|S)\s*\]|\(\s*(?:\*?Đúng|\*?Sai|Đ|S)\s*\)|[-–:]\s*(?:Đúng|Sai)\s*$)\s*$/i, '')
+                    .trim();
+
+                return { id, text: cleanText, isCorrect };
+            });
+
+            const answerSummary = options.map(o => `${o.id}-${o.isCorrect ? 'Đ' : 'S'}`).join(', ');
+            parsed.push({
+                category: 'mc',
+                questionType: 'true-false',
+                mcType: 'true-false',
+                level,
+                criteria,
+                content: stem,
+                options,
+                answer: answerSummary
+            });
+            return;
         }
 
         // Kiểm tra câu hỏi Đúng/Sai 1 nhận định (VD: có [Đúng]/[Sai] hoặc *Đúng/*Sai ở cuối câu hoặc dòng Đáp án: Đúng/Sai)
@@ -500,21 +607,22 @@ export const generateBulkQuestions = async (
 
             switch (questionType) {
                 case 'true-false':
-                    typeInstruction = "câu hỏi trắc nghiệm Đúng/Sai đơn lẻ (mỗi câu hỏi là MỘT nhận định hoàn chỉnh độc lập để học sinh xác định Đúng hoặc Sai)";
-                    jsonSchemaNote = `Định dạng Đúng/Sai: 'category'='mc', 'questionType'='true-false', 'mcType'='multiple-choice'. 
-                    'content': Là DUY NHẤT MỘT nhận định/phát biểu hoàn chỉnh, ngắn gọn, rõ nghĩa để học sinh chọn Đúng hoặc Sai. TUYỆT ĐỐI KHÔNG chia thành các ý con a, b, c, d. TUYỆT ĐỐI KHÔNG có các lựa chọn A, B, C, D.
-                    'options': [
-                        {"id": "Đúng", "text": "Đúng", "isCorrect": true},
-                        {"id": "Sai", "text": "Sai", "isCorrect": false}
-                    ] (trong đó đúng 1 lựa chọn có 'isCorrect'=true).
-                    'answer': 'Đúng' hoặc 'Sai' (trùng khớp với lựa chọn có isCorrect=true).`;
+                    typeInstruction = "câu hỏi trắc nghiệm Đúng/Sai theo Tình huống (mỗi câu gồm 1 Tình huống cụ thể và 4 phát biểu a, b, c, d để học sinh xác định Đúng hoặc Sai)";
+                    jsonSchemaNote = `Định dạng Đúng/Sai theo Tình huống: 'category'='mc', 'questionType'='true-false', 'mcType'='true-false'. 
+                    'content': Mô tả tình huống cụ thể, thực tế, đủ thông tin để học sinh phân tích (không ghi tiền tố 'Tình huống 1:' hay 'Câu 1.' vì hệ thống sẽ tự động đánh số khi in đề).
+                    'options': Mảng gồm ĐÚNG 4 phát biểu với id lần lượt là 'a', 'b', 'c', 'd':
+                    [
+                        {"id": "a", "text": "Phát biểu thứ nhất.", "isCorrect": true},
+                        {"id": "b", "text": "Phát biểu thứ hai.", "isCorrect": false},
+                        {"id": "c", "text": "Phát biểu thứ ba.", "isCorrect": true},
+                        {"id": "d", "text": "Phát biểu thứ tư.", "isCorrect": false}
+                    ] (trong đó 'isCorrect'=true nếu phát biểu Đúng, 'isCorrect'=false nếu phát biểu Sai).
+                    'answer': Chuỗi tóm tắt đáp án dạng 'a-Đ, b-S, c-Đ, d-S'.`;
                     extraConstraints = `
-                    QUY ĐỊNH CÂU HỎI ĐÚNG / SAI:
-                    - KHÔNG tạo một câu gồm 4 mệnh đề a, b, c, d.
-                    - Mỗi mệnh đề phải được tách thành MỘT CÂU HỎI ĐỘC LẬP.
-                    - Mỗi câu chỉ có DUY NHẤT MỘT nhận định hoàn chỉnh để học sinh xác định Đúng hoặc Sai.
-                    - Không có các phương án A, B, C, D hoặc a, b, c, d.
-                    - 'answer' là "Đúng" hoặc "Sai".
+                    QUY ĐỊNH CÂU HỎI ĐÚNG / SAI THEO TÌNH HUỐNG:
+                    - Mỗi câu hỏi PHẢI có phần dẫn là một Tình huống thực tế cụ thể ('content') gắn liền với bài học "${lesson}".
+                    - Kèm theo đúng 4 phát biểu a, b, c, d trong mảng 'options' (với id là 'a', 'b', 'c', 'd').
+                    - Trong 4 phát biểu a, b, c, d phải có cả phát biểu Đúng (isCorrect: true) và phát biểu Sai (isCorrect: false) để phân loại học sinh.
                     `;
                     break;
 

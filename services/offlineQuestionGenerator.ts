@@ -396,24 +396,30 @@ export const generateOfflineQuestions = (
     switch (questionType) {
       case 'true-false': {
         const pool = topic.concepts.tf;
-        const item = pool[i % pool.length];
-        const isCorrect = item.isCorrect;
+        const subIds = ['a', 'b', 'c', 'd'];
+        const options = subIds.map((id, idx) => {
+          const item = pool[(i + idx) % pool.length];
+          return {
+            id,
+            text: item.statement.endsWith('.') ? item.statement : `${item.statement}.`,
+            isCorrect: item.isCorrect
+          };
+        });
+        const scenarioStem = `Trong giờ thực hành tìm hiểu về chủ đề "${lesson}", một nhóm học sinh đang thảo luận các tình huống thực tế và đưa ra các nhận định chuyên môn dưới đây.`;
+        const answerSummary = options.map(o => `${o.id}-${o.isCorrect ? 'Đ' : 'S'}`).join(', ');
         results.push({
           id: uniqueId,
-          content: item.statement,
+          content: scenarioStem,
           category: 'mc',
           questionType: 'true-false',
-          mcType: 'multiple-choice',
+          mcType: 'true-false',
           level: normalizedLevel,
-          criteria: criteriaText ? criteriaText.slice(0, 3) : '',
+          criteria: criteriaText ? criteriaText.split(' ')[0] : '',
           grade: grade,
           lesson: lesson,
-          options: [
-            { id: 'Đúng', text: 'Đúng.', isCorrect: isCorrect },
-            { id: 'Sai', text: 'Sai.', isCorrect: !isCorrect }
-          ],
-          answer: isCorrect ? 'Đúng' : 'Sai',
-          points: 0.25
+          options,
+          answer: answerSummary,
+          points: 1.0
         });
         break;
       }

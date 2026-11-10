@@ -1859,7 +1859,24 @@ const ExamGenerator: React.FC = () => {
                                                     </span>
                                                     <span className="text-xs text-gray-400">({q.lesson})</span>
                                                 </div>
-                                                <p className="text-gray-800 text-sm font-medium whitespace-pre-wrap">{q.content}</p>
+                                                {q.questionType === 'true-false' && q.options && q.options.some((o: any) => ['a', 'b', 'c', 'd'].includes(String(o.id || '').toLowerCase())) ? (
+                                                    <div className="space-y-2 text-sm text-gray-800">
+                                                        <p className="font-medium whitespace-pre-wrap">
+                                                            <strong className="text-indigo-950">
+                                                                Tình huống {activeQuestions.slice(0, idx + 1).filter(item => item.questionType === 'true-false').length}:
+                                                            </strong>{' '}
+                                                            {(q.content || '')
+                                                                .replace(/^Tình\s*huống\s*\d*\s*[:.]\s*/i, '')
+                                                                .replace(/\s*(?:Câu\s*\d+\s*[.):\-]?\s*)?Xác\s*định\s*tính\s*đúng\s*hoặc\s*sai\s*của\s*các\s*phát\s*biểu\s*sau\s*[:.]?\s*$/i, '')
+                                                                .trim()}
+                                                        </p>
+                                                        <p className="font-bold text-gray-900">
+                                                            Câu {idx + 1}. Xác định tính đúng hoặc sai của các phát biểu sau:
+                                                        </p>
+                                                    </div>
+                                                ) : (
+                                                    <p className="text-gray-800 text-sm font-medium whitespace-pre-wrap">{q.content}</p>
+                                                )}
 
                                                 {q.image && (
                                                     <div className="mt-3">
@@ -1868,15 +1885,37 @@ const ExamGenerator: React.FC = () => {
                                                 )}
 
                                                 {q.questionType === 'true-false' && (
-                                                    <div className="mt-2.5 flex items-center gap-2">
-                                                        <span className="text-xs font-semibold text-gray-500">Đáp án chuẩn:</span>
-                                                        <span className={`px-3 py-1 rounded text-xs font-extrabold ${q.answer === 'Sai' || q.options?.find(o => o.isCorrect)?.id === 'Sai'
-                                                            ? 'bg-rose-100 text-rose-800 border border-rose-300'
-                                                            : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                                                            }`}>
-                                                            {q.answer === 'Sai' || q.options?.find(o => o.isCorrect)?.id === 'Sai' ? '✗ SAI' : '✓ ĐÚNG'}
-                                                        </span>
-                                                    </div>
+                                                    q.options && q.options.some((o: any) => ['a', 'b', 'c', 'd'].includes(String(o.id || '').toLowerCase())) ? (
+                                                        <div className="mt-3 space-y-1.5">
+                                                            {q.options.map((opt: any, i: number) => {
+                                                                const subLabel = opt.id || ['a', 'b', 'c', 'd'][i] || String.fromCharCode(97 + i);
+                                                                return (
+                                                                    <div key={i} className="flex items-center justify-between gap-3 text-xs p-2.5 rounded-lg border bg-slate-50 border-slate-200 text-gray-800">
+                                                                        <div>
+                                                                            <strong className="text-indigo-900">{subLabel})</strong> {opt.text}
+                                                                        </div>
+                                                                        <span className={`px-2.5 py-0.5 rounded font-extrabold shrink-0 ${
+                                                                            opt.isCorrect
+                                                                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                                                                : 'bg-rose-100 text-rose-800 border border-rose-300'
+                                                                        }`}>
+                                                                            {opt.isCorrect ? '✓ ĐÚNG' : '✗ SAI'}
+                                                                        </span>
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    ) : (
+                                                        <div className="mt-2.5 flex items-center gap-2">
+                                                            <span className="text-xs font-semibold text-gray-500">Đáp án chuẩn:</span>
+                                                            <span className={`px-3 py-1 rounded text-xs font-extrabold ${q.answer === 'Sai' || q.options?.find(o => o.isCorrect)?.id === 'Sai'
+                                                                ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                                                                : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                                                }`}>
+                                                                {q.answer === 'Sai' || q.options?.find(o => o.isCorrect)?.id === 'Sai' ? '✗ SAI' : '✓ ĐÚNG'}
+                                                            </span>
+                                                        </div>
+                                                    )
                                                 )}
 
                                                 {q.questionType !== 'true-false' && q.category !== 'essay' && q.options && q.options.length > 0 && (
