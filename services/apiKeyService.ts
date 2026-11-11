@@ -7,10 +7,9 @@ const STORAGE_FALLBACK_SETTING = 'matrandethi_enable_offline_fallback';
 const STORAGE_SELECTED_MODEL = 'gemini_model';
 
 export const FALLBACK_MODELS = [
-  'gemini-3.8-flash',
   'gemini-2.5-flash',
-  'gemini-1.5-flash',
-  'gemini-2.0-flash'
+  'gemini-2.0-flash',
+  'gemini-3.8-flash'
 ];
 
 /**

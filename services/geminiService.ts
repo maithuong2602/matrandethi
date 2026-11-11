@@ -27,7 +27,7 @@ export const setCustomApiKey = (key: string) => {
     }
 };
 
-export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
+export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 
 export const getGeminiModel = (): string => {
     if (typeof window !== 'undefined') {
@@ -36,6 +36,92 @@ export const getGeminiModel = (): string => {
     }
     return DEFAULT_GEMINI_MODEL;
 };
+
+/**
+ * Bộ giải mã JSON an toàn (Safe JSON Parser & Truncated Stream Recovery):
+ * Khắc phục triệt để lỗi "Unterminated string in JSON at position ..." khi Gemini sinh chuỗi quá dài
+ * hoặc bị ngắt giữa chừng (maxOutputTokens / lặp ký tự).
+ * Tự động thu hồi toàn bộ các đối tượng câu hỏi { ... } đã hoàn chỉnh trước vị trí bị ngắt.
+ */
+function safeParseJsonArray(rawText: string | undefined): any[] {
+    if (!rawText) return [];
+    let cleaned = rawText
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
+
+    // Thu gọn chuỗi ký tự lặp bất thường (>30 lần liên tiếp) do lỗi lặp token của LLM
+    cleaned = cleaned.replace(/(.)\1{40,}/g, '$1$1$1');
+
+    try {
+        const parsed = JSON.parse(cleaned);
+        if (Array.isArray(parsed)) return parsed;
+        if (parsed && typeof parsed === 'object') return [parsed];
+    } catch (_firstErr) {
+        // Phục hồi các object JSON hoàn chỉnh ở cấp phần tử mảng [{...}, {...}, ...]
+        const startBracket = cleaned.indexOf('[');
+        if (startBracket !== -1) {
+            const recovered: any[] = [];
+            let depth = 0;
+            let inString = false;
+            let escapeNext = false;
+            let objStart = -1;
+
+            for (let i = startBracket + 1; i < cleaned.length; i++) {
+                const ch = cleaned[i];
+                if (escapeNext) {
+                    escapeNext = false;
+                    continue;
+                }
+                if (ch === '\\' && inString) {
+                    escapeNext = true;
+                    continue;
+                }
+                if (ch === '"') {
+                    inString = !inString;
+                    continue;
+                }
+                if (!inString) {
+                    if (ch === '{') {
+                        if (depth === 0) objStart = i;
+                        depth++;
+                    } else if (ch === '}') {
+                        depth--;
+                        if (depth === 0 && objStart !== -1) {
+                            const candidate = cleaned.slice(objStart, i + 1);
+                            try {
+                                recovered.push(JSON.parse(candidate));
+                            } catch {
+                                // Bỏ qua phần tử lỗi
+                            }
+                            objStart = -1;
+                        }
+                    }
+                }
+            }
+            if (recovered.length > 0) {
+                console.info(`[geminiService] Đã phục hồi an toàn ${recovered.length} câu hỏi từ chuỗi JSON bị ngắt.`);
+                return recovered;
+            }
+        }
+    }
+    return [];
+}
+
+function safeParseJsonObject(rawText: string | undefined): any {
+    if (!rawText) return {};
+    const cleaned = rawText
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .replace(/(.)\1{40,}/g, '$1$1$1')
+        .trim();
+    try {
+        return JSON.parse(cleaned);
+    } catch {
+        const arr = safeParseJsonArray(`[${cleaned}]`);
+        return arr[0] || {};
+    }
+}
 
 const getGenAIClientWithKey = (explicitKey?: string) => {
     const apiKey = explicitKey || getActiveApiKey();
@@ -76,9 +162,20 @@ async function callGeminiWithFailover<T>(
             const errMsg = err?.message || String(err);
             console.warn(`[geminiService] Model ${model} gặp lỗi:`, errMsg);
 
-            // Kiểm tra lỗi hạn ngạch (429) hoặc lỗi xác thực (401, 403) để xoay key
+            // Kiểm tra lỗi hạn ngạch (429), lỗi máy chủ quá tải tạm thời (503) hoặc lỗi xác thực (401, 403)
             const isQuotaError = errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('Quota');
             const isAuthError = errMsg.includes('403') || errMsg.includes('401') || errMsg.includes('API_KEY_INVALID');
+            const isServerOverloaded = errMsg.includes('503') || errMsg.includes('UNAVAILABLE') || errMsg.includes('overloaded');
+
+            if (isServerOverloaded) {
+                await new Promise(resolve => setTimeout(resolve, 600));
+                try {
+                    const aiRetry = getGenAIClientWithKey(activeKey);
+                    return await operation(aiRetry, model);
+                } catch {
+                    // Chuyển sang model tiếp theo trong FALLBACK_MODELS
+                }
+            }
 
             if (isQuotaError || isAuthError) {
                 const nextKey = rotateToNextAvailableKey(activeKey, isQuotaError ? 'rate_limited' : 'invalid');
@@ -508,12 +605,15 @@ export const parseQuestionsWithAI = async (
                 model: model,
                 contents: contents,
                 config: {
-                    responseMimeType: "application/json"
+                    responseMimeType: "application/json",
+                    temperature: 0.3,
+                    maxOutputTokens: 8192
                 }
             });
             
-            const result = JSON.parse(response.text || "[]");
-            return Array.isArray(result) ? result : [];
+            const result = safeParseJsonArray(response.text);
+            if (result.length > 0) return result;
+            throw new Error("Empty or unparsable JSON array from model");
         },
         () => {
             const offlineParsed = parseStructuredTextQuestions(text);
@@ -561,27 +661,12 @@ export const generateSingleQuestion = async (
                 contents: prompt,
                 config: {
                     responseMimeType: "application/json",
-                    responseSchema: {
-                        type: Type.OBJECT,
-                        properties: {
-                            content: { type: Type.STRING },
-                            options: {
-                                type: Type.ARRAY,
-                                items: {
-                                    type: Type.OBJECT,
-                                    properties: {
-                                        id: { type: Type.STRING },
-                                        text: { type: Type.STRING },
-                                        isCorrect: { type: Type.BOOLEAN }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    temperature: 0.35,
+                    maxOutputTokens: 2048
                 }
             });
 
-            return JSON.parse(response.text || "{}");
+            return safeParseJsonObject(response.text);
         },
         () => {
             const qs = generateOfflineQuestions(grade, lesson, level, criteriaText, 1, 'multiple-choice');
@@ -714,38 +799,16 @@ export const generateBulkQuestions = async (
                 contents: contents,
                 config: {
                     responseMimeType: "application/json",
-                    responseSchema: {
-                        type: Type.ARRAY,
-                        items: {
-                            type: Type.OBJECT,
-                            properties: {
-                                content: { type: Type.STRING },
-                                category: { type: Type.STRING },
-                                questionType: { type: Type.STRING },
-                                answer: { type: Type.STRING },
-                                options: {
-                                    type: Type.ARRAY,
-                                    items: {
-                                        type: Type.OBJECT,
-                                        properties: {
-                                            id: { type: Type.STRING },
-                                            text: { type: Type.STRING },
-                                            isCorrect: { type: Type.BOOLEAN }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    temperature: 0.35,
+                    maxOutputTokens: 8192
                 }
             });
 
-            const parsed = JSON.parse(response.text || "[]");
+            const parsed = safeParseJsonArray(response.text);
             if (Array.isArray(parsed) && parsed.length > 0) {
                 return parsed;
             }
-            // Fallback nếu AI trả về mảng rỗng
-            return generateOfflineQuestions(grade, lesson, level, criteriaText, quantity, questionType);
+            throw new Error("Model returned empty or invalid JSON array");
         },
         () => {
             return generateOfflineQuestions(grade, lesson, level, criteriaText, quantity, questionType);

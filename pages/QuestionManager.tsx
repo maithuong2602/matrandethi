@@ -526,11 +526,65 @@ const QuestionManager: React.FC = () => {
         defaultCriteria = firstCrit.split(' ')[0] || '';
       }
     }
+
+    // Kế thừa Mức độ nhận thức, Tiêu chí (YCCĐ) và Loại câu hỏi từ câu hỏi liền trước cùng phân mục
+    const lastSameCategoryQ = [...filteredQuestions].reverse().find(q => q.category === type);
+    const inheritedLevel = lastSameCategoryQ?.level || defaultLevel;
+    let inheritedCriteria = lastSameCategoryQ?.criteria || defaultCriteria;
+
+    if (!inheritedCriteria && currentCriteriaData && Array.isArray(currentCriteriaData[inheritedLevel])) {
+      const firstCritOfLevel = currentCriteriaData[inheritedLevel]?.[0] || '';
+      inheritedCriteria = firstCritOfLevel.split(' ')[0] || '';
+    }
+
+    const inheritedQuestionType =
+      type === 'essay'
+        ? 'essay'
+        : (lastSameCategoryQ?.questionType ||
+          (lastSameCategoryQ?.mcType === 'fill-blank'
+            ? 'fill-blank'
+            : lastSameCategoryQ?.mcType === 'multiple-answer'
+            ? 'multiple-answer'
+            : lastSameCategoryQ?.mcType === 'true-false'
+            ? 'true-false'
+            : 'multiple-choice'));
+
+    const inheritedMcType: ExerciseQuestion['mcType'] =
+      inheritedQuestionType === 'true-false'
+        ? 'true-false'
+        : inheritedQuestionType === 'multiple-answer'
+        ? 'multiple-answer'
+        : inheritedQuestionType === 'fill-blank' || inheritedQuestionType === 'short-answer'
+        ? 'fill-blank'
+        : 'multiple-choice';
+
+    const defaultOptions =
+      type === 'essay' || inheritedQuestionType === 'short-answer' || inheritedQuestionType === 'fill-blank'
+        ? []
+        : inheritedQuestionType === 'true-false'
+        ? [
+            { id: 'a', text: '', isCorrect: true },
+            { id: 'b', text: '', isCorrect: false },
+            { id: 'c', text: '', isCorrect: true },
+            { id: 'd', text: '', isCorrect: false },
+          ]
+        : [
+            { id: 'A', text: '', isCorrect: false },
+            { id: 'B', text: '', isCorrect: false },
+            { id: 'C', text: '', isCorrect: false },
+            { id: 'D', text: '', isCorrect: false },
+          ];
+
+    const defaultAnswer =
+      inheritedQuestionType === 'true-false'
+        ? 'a-Đ, b-S, c-Đ, d-S'
+        : '';
+
     const newQuestion: ExerciseQuestion = {
       id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
       category: type,
-      level: defaultLevel,
-      criteria: defaultCriteria,
+      level: inheritedLevel,
+      criteria: inheritedCriteria,
       content: '',
       grade: grade || '',
       lesson: lesson || '',
@@ -539,16 +593,11 @@ const QuestionManager: React.FC = () => {
       ownerName: currentUser.name,
       version: 1,
       updatedAt: new Date().toISOString(),
-      // MC defaults
-      mcType: 'multiple-choice',
-      options: [
-        { id: 'A', text: '', isCorrect: false },
-        { id: 'B', text: '', isCorrect: false },
-        { id: 'C', text: '', isCorrect: false },
-        { id: 'D', text: '', isCorrect: false },
-      ],
-      // Essay defaults
-      essayType: 'explanation'
+      questionType: inheritedQuestionType as any,
+      mcType: inheritedMcType,
+      options: defaultOptions,
+      answer: defaultAnswer,
+      essayType: lastSameCategoryQ?.essayType || 'explanation'
     };
     setQuestions(prev => [...prev, newQuestion]);
   };
@@ -606,12 +655,20 @@ const QuestionManager: React.FC = () => {
   const handleUpdateQuestion = (id: string, field: keyof ExerciseQuestion, value: any) => {
     setQuestions(prev => prev.map(q => {
       if (q.id !== id) return q;
-      return {
+      const updated: ExerciseQuestion = {
         ...q,
         [field]: value,
         grade: q.grade || grade || '',
         lesson: q.lesson || lesson || ''
       };
+      if (field === 'level') {
+        const levelOpts = getCriteriaOptionsForLevel(value);
+        const validCodes = levelOpts.map(c => c.split(' ')[0]);
+        if (validCodes.length > 0 && (!q.criteria || !validCodes.includes(q.criteria))) {
+          updated.criteria = validCodes[0];
+        }
+      }
+      return updated;
     }));
   };
 
@@ -735,7 +792,12 @@ const QuestionManager: React.FC = () => {
             });
 
             const correctCount = parsedOptions.filter(o => o.isCorrect).length;
-            const mcType = correctCount > 1 ? 'multiple-answer' : 'multiple-choice';
+            const mcType =
+                correctCount > 1
+                    ? 'multiple-answer'
+                    : (correctCount === 0 && targetQ?.questionType === 'multiple-answer')
+                    ? 'multiple-answer'
+                    : 'multiple-choice';
             const correctAnswers = parsedOptions.filter(o => o.isCorrect).map(o => o.id).join(', ');
 
             setQuestions(prev => prev.map(q => q.id === id ? { 
@@ -759,8 +821,26 @@ const QuestionManager: React.FC = () => {
           return;
       }
       setActiveSection(section);
-      setGenType(section === 'essay' ? 'essay' : 'multiple-choice');
-      if (currentCriteriaData) {
+      const lastSameCategoryQ = [...filteredQuestions].reverse().find(q => q.category === section);
+      if (section === 'essay') {
+          setGenType('essay');
+      } else if (lastSameCategoryQ?.questionType && lastSameCategoryQ.questionType !== 'essay') {
+          setGenType(lastSameCategoryQ.questionType);
+      } else if (genType === 'essay') {
+          setGenType('multiple-choice');
+      }
+
+      if (lastSameCategoryQ?.level && currentCriteriaData && Array.isArray(currentCriteriaData[lastSameCategoryQ.level]) && currentCriteriaData[lastSameCategoryQ.level].length > 0) {
+          setGenLevel(lastSameCategoryQ.level);
+          if (lastSameCategoryQ.criteria) {
+              const matchedFullCrit = currentCriteriaData[lastSameCategoryQ.level].find(
+                  (c: string) => c.split(' ')[0] === lastSameCategoryQ.criteria || c === lastSameCategoryQ.criteria
+              );
+              if (matchedFullCrit) {
+                  setGenCriteria(matchedFullCrit);
+              }
+          }
+      } else if (currentCriteriaData) {
           const hasCurrentLevel = Array.isArray(currentCriteriaData[genLevel]) && currentCriteriaData[genLevel].length > 0;
           if (!hasCurrentLevel) {
               const firstAvailableLevel = ['NB', 'TH', 'VD', 'VDC'].find(
