@@ -2678,7 +2678,8 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
             {/* * Ghi chú Section (hiển thị ngay dưới Bảng Ma trận và được xuất ra file Word) */}
             {(() => {
                 const notesSummary = buildMatrixNotesSummary(data, examName);
-                if (notesSummary.items.length === 0) return null;
+                const noteItems = notesSummary?.items || notesSummary?.topicItems || [];
+                if (noteItems.length === 0) return null;
 
                 return (
                     <div className="bg-amber-50/50 border border-amber-200 rounded-xl p-4 sm:p-5 shadow-sm text-sm text-slate-800">
@@ -2711,7 +2712,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                         if (!isEditingCustomNote) {
                                             const defaultLines = data.customNote
                                                 ? data.customNote
-                                                : notesSummary.items.map(it => `${it.lineText}\n   + Chi tiết: ${it.lessonDetails.join('; ')}`).join('\n');
+                                                : noteItems.map(it => `${it.lineText || it.formattedLine}\n   + Chi tiết: ${(it.lessonDetails || []).join('; ')}`).join('\n');
                                             setCustomNoteDraft(defaultLines);
                                             setIsEditingCustomNote(true);
                                         } else {
@@ -2765,14 +2766,14 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                         ) : (
                             <div className="bg-white rounded-lg border border-amber-200/80 p-3.5 space-y-2.5">
                                 <div className="space-y-1.5">
-                                    {notesSummary.items.map((it, idx) => (
+                                    {noteItems.map((it, idx) => (
                                         <div key={idx} className="pb-1.5 border-b border-slate-100 last:border-none last:pb-0">
                                             <div className="font-bold text-slate-900 text-sm">
-                                                {it.lineText}
+                                                {it.lineText || it.formattedLine}
                                             </div>
-                                            {it.lessonDetails.length > 0 && (
+                                            {(it.lessonDetails || []).length > 0 && (
                                                 <div className="text-xs text-slate-600 mt-0.5 pl-3 border-l-2 border-indigo-200">
-                                                    Chi tiết bài: {it.lessonDetails.join(' • ')}
+                                                    Chi tiết bài: {(it.lessonDetails || []).join(' • ')}
                                                 </div>
                                             )}
                                         </div>
@@ -2783,13 +2784,13 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                     <div className="pt-2 border-t border-amber-200/70 text-xs text-slate-700 flex flex-wrap gap-x-6 gap-y-1 bg-amber-50/40 p-2 rounded">
                                         <div>
                                             <span className="font-bold text-orange-800">- Nội dung đã kiểm tra (Giữa kì):</span>{' '}
-                                            {notesSummary.totalExaminedPeriods}/{notesSummary.totalPeriods} tiết ({notesSummary.actualOldPercent.toFixed(1)}% thời lượng)
-                                            {' ➝ '}Giảm tỷ lệ còn <b>{notesSummary.realizedOldPercent.toFixed(1)}%</b> (mục tiêu {notesSummary.targetOldPercent.toFixed(0)}%).
+                                            {notesSummary.totalExaminedPeriods}/{notesSummary.totalPeriods} tiết ({(notesSummary.actualOldPercent || 0).toFixed(1)}% thời lượng)
+                                            {' ➝ '}Giảm tỷ lệ còn <b>{(notesSummary.realizedOldPercent || 0).toFixed(1)}%</b> (mục tiêu {(notesSummary.targetOldPercent || 0).toFixed(0)}%).
                                         </div>
                                         <div>
                                             <span className="font-bold text-emerald-800">- Nội dung mới:</span>{' '}
-                                            {notesSummary.totalNewPeriods}/{notesSummary.totalPeriods} tiết ({notesSummary.actualNewPercent.toFixed(1)}% thời lượng)
-                                            {' ➝ '}Tỷ lệ điểm <b>{notesSummary.realizedNewPercent.toFixed(1)}%</b> (mục tiêu {notesSummary.targetNewPercent.toFixed(0)}%).
+                                            {notesSummary.totalNewPeriods}/{notesSummary.totalPeriods} tiết ({(notesSummary.actualNewPercent || 0).toFixed(1)}% thời lượng)
+                                            {' ➝ '}Tỷ lệ điểm <b>{(notesSummary.realizedNewPercent || 0).toFixed(1)}%</b> (mục tiêu {(notesSummary.targetNewPercent || 0).toFixed(0)}%).
                                         </div>
                                     </div>
                                 )}

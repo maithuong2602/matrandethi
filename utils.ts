@@ -888,6 +888,7 @@ export interface MatrixTopicNoteItem {
     targetPercent: number;
     status: 'reduced' | 'kept' | 'new' | 'adjusted';
     formattedLine: string;
+    lineText: string;
     lessonDetails: string[];
 }
 
@@ -1091,6 +1092,7 @@ export const buildMatrixNotesSummary = (data: MatrixData, examName: string = '')
             targetPercent: tTargetPct,
             status,
             formattedLine,
+            lineText: formattedLine,
             lessonDetails
         };
     });
@@ -1112,12 +1114,23 @@ export const buildMatrixNotesSummary = (data: MatrixData, examName: string = '')
         totalSoTiet,
         sumSoTietChecked,
         sumSoTietUnchecked,
+        totalPeriods: totalSoTiet,
+        totalExaminedPeriods: sumSoTietChecked,
+        totalNewPeriods: sumSoTietUnchecked,
+        hasExamined: sumSoTietChecked > 0,
         grandPoints,
         actualOldPct,
         actualNewPct,
+        actualOldPercent: actualOldPct,
+        actualNewPercent: actualNewPct,
         realizedOldPct,
         realizedNewPct,
+        realizedOldPercent: realizedOldPct,
+        realizedNewPercent: realizedNewPct,
+        targetOldPercent: targetPercentOldPool,
+        targetNewPercent: targetPercentNewPool,
         topicItems,
+        items: topicItems,
         defaultText: defaultLines.join('\n')
     };
 };
