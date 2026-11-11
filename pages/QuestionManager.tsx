@@ -837,7 +837,7 @@ const QuestionManager: React.FC = () => {
                   (c: string) => c.split(' ')[0] === lastSameCategoryQ.criteria || c === lastSameCategoryQ.criteria
               );
               if (matchedFullCrit) {
-                  setGenCriteria(matchedFullCrit);
+                  setGenCriteriaCode(matchedFullCrit.split(' ')[0]);
               }
           }
       } else if (currentCriteriaData) {
