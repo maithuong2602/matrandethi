@@ -17,6 +17,7 @@ import {
 import { reviewExamWithAI, autoFillMissingQuestions } from '../services/geminiService';
 import { splitLegacyTrueFalseQuestions, autoTagQuestion } from './QuestionManager';
 import { CURRICULUM } from '../data/curriculum';
+import { CANONICAL_REQUIREMENTS, KNTT_LESSON_MAPPINGS } from '../data/curriculum/index';
 import { loadQuestionBank, saveQuestionBank } from '../services/storage/questionBankStorage';
 import {
     getSavedExams,
@@ -585,6 +586,11 @@ const ExamGenerator: React.FC = () => {
                 tenKyThi: data.thongTinChung.tenDe,
                 monHoc: `MÔN: TIN HỌC – LỚP ${detectedG}`
             }));
+            // Đảm bảo nạp đầy đủ câu hỏi của khối tương ứng với Ma trận nếu bộ lọc trước đó đang ở khối khác
+            if (selectedGradeFilter !== 'all' && selectedGradeFilter !== detectedG) {
+                setSelectedGradeFilter(detectedG);
+                loadInternalQuestionBank(detectedG, false);
+            }
         }
     };
 
@@ -633,49 +639,231 @@ const ExamGenerator: React.FC = () => {
             return q.category === 'essay' || q.questionType === 'essay';
         };
 
+        // Chuẩn hóa chuỗi để so khớp tên bài / đơn vị kiến thức chính xác bất kể dấu chấm, hai chấm, gạch ngang
+        const normalizeTextKey = (str: string) =>
+            (str || '')
+                .toLowerCase()
+                .replace(/^(chủ đề\s+[a-z0-9]+[\.\:\-]?\s*)/i, '')
+                .replace(/^(\d+[\.\)]\s*)/, '')
+                .replace(/[:\.\-–—,;()]/g, ' ')
+                .replace(/\bthông dụng\b/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+
+        const extractLessonCode = (str: string): string | null => {
+            const m = (str || '').match(/\bbài\s*(\d+[ab]?)\b/i);
+            return m ? m[1].toLowerCase() : null;
+        };
+
+        const targetGrade = detectGradeFromContext(bank, headerInfo, importedMatrix);
+
+        // Nếu state `bank` đang thiếu câu hỏi của khối mục tiêu (do lọc khối khác), lấy trực tiếp từ kho lưu trữ
+        let activeBank: BankQuestion[] = bank.filter(q => !q.grade || String(q.grade) === targetGrade);
+        if (activeBank.length === 0) {
+            const res = loadQuestionBank();
+            if (res.data && res.data.length > 0) {
+                const tagged = splitLegacyTrueFalseQuestions(res.data.map(autoTagQuestion));
+                const byGrade = tagged.filter(q => !q.grade || String(q.grade) === targetGrade);
+                activeBank = (byGrade.length > 0 ? byGrade : tagged).map(q => ({
+                    ...q,
+                    level: normalizeLevel(q.level),
+                    lesson: q.lesson || 'Bài chung',
+                    uniqueId: Math.random()
+                }));
+            } else {
+                activeBank = bank;
+            }
+        }
+
+        // Xây dựng tập hợp các Bài học (KNTT) tương ứng với một dòng Ma trận (dựa trên cả `bai`, `noiDung` và `chuong`)
+        const getMatchedLessonsForRow = (lessonName: string, subTopicName?: string, mainTopicName?: string): {
+            lessonTitles: Set<string>;
+            lessonCodes: Set<string>;
+            reqIds: Set<string>;
+        } => {
+            const lessonTitles = new Set<string>();
+            const lessonCodes = new Set<string>();
+            const reqIds = new Set<string>();
+
+            const candidates = [lessonName, subTopicName].filter(Boolean) as string[];
+            candidates.forEach(c => {
+                lessonTitles.add(normalizeTextKey(c));
+                const code = extractLessonCode(c);
+                if (code) lessonCodes.add(code);
+            });
+
+            const normSub = normalizeTextKey(subTopicName || lessonName);
+            const normMain = normalizeTextKey(mainTopicName || '');
+
+            // Tìm trong CANONICAL_REQUIREMENTS các YCCĐ thuộc đơn vị kiến thức (`subTopicName`) này
+            CANONICAL_REQUIREMENTS.forEach(req => {
+                if (String(req.grade) !== String(targetGrade)) return;
+                const reqSubNorm = normalizeTextKey(req.subTopicName);
+                if (
+                    reqSubNorm &&
+                    normSub &&
+                    (reqSubNorm.includes(normSub) || normSub.includes(reqSubNorm))
+                ) {
+                    reqIds.add(req.id);
+                }
+            });
+
+            // Từ reqIds suy ra các bài học trong KNTT_LESSON_MAPPINGS
+            if (reqIds.size > 0) {
+                KNTT_LESSON_MAPPINGS.forEach(m => {
+                    if (String(m.grade) !== String(targetGrade)) return;
+                    if (m.requirementIds.some(id => reqIds.has(id))) {
+                        lessonTitles.add(normalizeTextKey(m.lessonTitle));
+                        const code = extractLessonCode(m.lessonNumber) || extractLessonCode(m.lessonTitle);
+                        if (code) lessonCodes.add(code);
+                    }
+                });
+            }
+
+            // Nếu vẫn chưa ánh xạ được qua subTopic, thử ánh xạ theo Chủ đề lớn (topicName)
+            if (reqIds.size === 0 && normMain) {
+                const topicReqIds = new Set<string>();
+                CANONICAL_REQUIREMENTS.forEach(req => {
+                    if (String(req.grade) !== String(targetGrade)) return;
+                    const reqTopicNorm = normalizeTextKey(req.topicName);
+                    if (reqTopicNorm && (reqTopicNorm.includes(normMain) || normMain.includes(reqTopicNorm))) {
+                        topicReqIds.add(req.id);
+                    }
+                });
+                KNTT_LESSON_MAPPINGS.forEach(m => {
+                    if (String(m.grade) !== String(targetGrade)) return;
+                    if (m.requirementIds.some(id => topicReqIds.has(id))) {
+                        lessonTitles.add(normalizeTextKey(m.lessonTitle));
+                        const code = extractLessonCode(m.lessonNumber) || extractLessonCode(m.lessonTitle);
+                        if (code) lessonCodes.add(code);
+                    }
+                });
+            }
+
+            return { lessonTitles, lessonCodes, reqIds };
+        };
+
+        const doesQuestionMatchRow = (
+            q: BankQuestion,
+            lessonName: string,
+            subTopicName?: string,
+            mainTopicName?: string
+        ): boolean => {
+            const qLessonRaw = (q.lesson || '').trim();
+            const qLessonNorm = normalizeTextKey(qLessonRaw);
+            const qLessonCode = extractLessonCode(qLessonRaw);
+
+            const { lessonTitles, lessonCodes, reqIds } = getMatchedLessonsForRow(lessonName, subTopicName, mainTopicName);
+
+            if (q.curriculum?.requirementId && reqIds.has(q.curriculum.requirementId)) {
+                return true;
+            }
+            if (qLessonCode && lessonCodes.has(qLessonCode)) {
+                return true;
+            }
+            for (const targetNorm of lessonTitles) {
+                if (!targetNorm) continue;
+                if (qLessonNorm.includes(targetNorm) || targetNorm.includes(qLessonNorm)) {
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        const isLevelMatch = (qLevel: string, targetLevel: string): boolean => {
+            if (qLevel === targetLevel) return true;
+            // Trong cấu trúc mới 3 mức độ (Biết, Hiểu, Vận dụng), mức Vận dụng (VD) bao gồm cả Vận dụng cao (VDC)
+            if (targetLevel === 'VD' && qLevel === 'VDC') return true;
+            if (targetLevel === 'VDC' && qLevel === 'VD') return true;
+            return false;
+        };
+
         const findQuestions = (
             lessonName: string,
             level: string,
             category: 'mc'|'essay',
             count: number,
-            preferredQuestionType?: 'multiple-choice' | 'true-false' | 'short-answer' | 'essay'
+            preferredQuestionType?: 'multiple-choice' | 'true-false' | 'short-answer' | 'essay',
+            subTopicName?: string,
+            mainTopicName?: string
         ) => {
-            const normalizedTarget = lessonName.toLowerCase().trim();
-            const pool = bank.filter(q => {
+            const effectiveLabel = lessonName || subTopicName || mainTopicName || 'Bài chung';
+
+            // Các câu hỏi chưa dùng thuộc đúng bài học / đơn vị kiến thức của dòng ma trận
+            const rowPool = activeBank.filter(q => {
                 if (usedIds.has(q.id)) return false;
-                const normalizedSource = q.lesson.toLowerCase().trim();
-                const lessonMatch = normalizedSource.includes(normalizedTarget) || normalizedTarget.includes(normalizedSource);
-                if (!lessonMatch || q.level !== level) return false;
-                if (preferredQuestionType) {
-                    if (matchesPreferredType(q, preferredQuestionType)) return true;
-                    return q.category === category;
-                }
-                return q.category === category;
+                return doesQuestionMatchRow(q, effectiveLabel, subTopicName, mainTopicName);
             });
 
-            // Nếu yêu cầu câu Điền khuyết / Trả lời ngắn nhưng kho không có (hoặc thiếu), tự động đẩy số lượng thiếu sang câu hỏi Đúng/Sai
-            let sortedPool: BankQuestion[] = [];
-            if (preferredQuestionType === 'short-answer') {
-                const exactSA = pool.filter(q => matchesPreferredType(q, 'short-answer')).sort(() => 0.5 - Math.random());
-                const fallbackTF = pool.filter(q => !matchesPreferredType(q, 'short-answer') && matchesPreferredType(q, 'true-false')).sort(() => 0.5 - Math.random());
-                const fallbackOther = pool.filter(q => !matchesPreferredType(q, 'short-answer') && !matchesPreferredType(q, 'true-false')).sort(() => 0.5 - Math.random());
-                sortedPool = [...exactSA, ...fallbackTF, ...fallbackOther];
-            } else if (preferredQuestionType) {
-                sortedPool = [
-                    ...pool.filter(q => matchesPreferredType(q, preferredQuestionType)).sort(() => 0.5 - Math.random()),
-                    ...pool.filter(q => !matchesPreferredType(q, preferredQuestionType)).sort(() => 0.5 - Math.random())
-                ];
-            } else {
-                sortedPool = [...pool].sort(() => 0.5 - Math.random());
+            const shuffle = (arr: BankQuestion[]) => [...arr].sort(() => 0.5 - Math.random());
+
+            // Phân tầng ưu tiên (Multi-tier fallback) để đảm bảo luôn lấy đủ số câu theo ma trận khi ngân hàng có câu hỏi:
+            // Tier 1: Đúng bài + Đúng mức độ (VD gồm cả VDC) + Đúng loại câu hỏi (multiple-choice / true-false / short-answer / essay)
+            // Tier 2: Đúng bài + Đúng mức độ + Cùng nhóm (TNKQ / Tự luận)
+            // Tier 3: Đúng bài + Mức độ lân cận trong cùng bài + Đúng loại câu hỏi
+            // Tier 4: Đúng bài + Mức độ lân cận trong cùng bài + Cùng nhóm (TNKQ / Tự luận)
+            // Tier 5: Cùng Chủ đề lớn (mainTopic) + Đúng mức độ + Cùng nhóm (TNKQ / Tự luận)
+            const tier1: BankQuestion[] = [];
+            const tier2: BankQuestion[] = [];
+            const tier3: BankQuestion[] = [];
+            const tier4: BankQuestion[] = [];
+
+            rowPool.forEach(q => {
+                const lvlOk = isLevelMatch(q.level, level);
+                const catOk = q.category === category;
+                const typeOk = preferredQuestionType
+                    ? matchesPreferredType(q, preferredQuestionType) ||
+                      (preferredQuestionType === 'short-answer' && matchesPreferredType(q, 'true-false'))
+                    : catOk;
+
+                if (lvlOk && typeOk) {
+                    tier1.push(q);
+                } else if (lvlOk && catOk) {
+                    tier2.push(q);
+                } else if (typeOk) {
+                    tier3.push(q);
+                } else if (catOk) {
+                    tier4.push(q);
+                }
+            });
+
+            // Nếu yêu cầu short-answer, ưu tiên exact short-answer trước rồi mới tới true-false trong tier1
+            const sortByPreferred = (arr: BankQuestion[]) => {
+                if (preferredQuestionType === 'short-answer') {
+                    return [
+                        ...shuffle(arr.filter(q => matchesPreferredType(q, 'short-answer'))),
+                        ...shuffle(arr.filter(q => !matchesPreferredType(q, 'short-answer')))
+                    ];
+                }
+                return shuffle(arr);
+            };
+
+            let combinedCandidates = [
+                ...sortByPreferred(tier1),
+                ... shuffle(tier2),
+                ...sortByPreferred(tier3),
+                ...shuffle(tier4)
+            ];
+
+            // Tier 5: Nếu trong bài vẫn chưa đủ số câu, tìm thêm các câu chưa dùng thuộc cùng Chủ đề lớn (mainTopicName)
+            if (combinedCandidates.length < count && mainTopicName) {
+                const candidateIds = new Set(combinedCandidates.map(q => q.id));
+                const topicPool = activeBank.filter(q => {
+                    if (usedIds.has(q.id) || candidateIds.has(q.id)) return false;
+                    return doesQuestionMatchRow(q, mainTopicName, mainTopicName, mainTopicName) && q.category === category;
+                });
+                const topicExactLvl = shuffle(topicPool.filter(q => isLevelMatch(q.level, level)));
+                const topicOtherLvl = shuffle(topicPool.filter(q => !isLevelMatch(q.level, level)));
+                combinedCandidates = [...combinedCandidates, ...topicExactLvl, ...topicOtherLvl];
             }
 
-            const picked = sortedPool.slice(0, count);
+            const picked = combinedCandidates.slice(0, count);
             picked.forEach(q => usedIds.add(q.id));
 
             if (picked.length < count) {
                 const diff = count - picked.length;
                 missing.push({
-                    lesson: lessonName,
+                    lesson: effectiveLabel,
                     level,
                     count: diff,
                     questionType: preferredQuestionType === 'short-answer'
@@ -686,6 +874,7 @@ const ExamGenerator: React.FC = () => {
 
             return picked.map(q => ({
                 ...q,
+                level: level === 'VD' && q.level === 'VDC' ? 'VD' : q.level,
                 points: category === 'essay' ? 1.0 : matchesPreferredType(q, 'true-false') ? 1.0 : matchesPreferredType(q, 'short-answer') ? 0.5 : 0.25,
                 uniqueId: Math.random()
             }));
@@ -716,9 +905,19 @@ const ExamGenerator: React.FC = () => {
             const extractCnt = (val: any): number => (typeof val === 'number' ? val : (val?.count || 0));
 
             importedMatrix.chiTiet.forEach(row => {
-                const lessonName = row.thongTinChung.bai;
-                if (importedMatrix.thongTinChung?.matrixFormat === 'new_4part' && row.chiTiet4Phan) {
-                    const p4 = row.chiTiet4Phan;
+                const lessonName = row.thongTinChung.bai || row.thongTinChung.noiDung;
+                const subTopicName = row.thongTinChung.noiDung;
+                const mainTopicName = row.thongTinChung.chuong;
+
+                const p4 = row.chiTiet4Phan;
+                const p4Sum = p4
+                    ? extractCnt(p4.nhieuLuaChon?.B) + extractCnt(p4.nhieuLuaChon?.H) + extractCnt(p4.nhieuLuaChon?.VD) +
+                      extractCnt(p4.dungSai?.B) + extractCnt(p4.dungSai?.H) + extractCnt(p4.dungSai?.VD) +
+                      extractCnt(p4.traLoiNgan?.B) + extractCnt(p4.traLoiNgan?.H) + extractCnt(p4.traLoiNgan?.VD) +
+                      extractCnt(p4.tuLuan?.B) + extractCnt(p4.tuLuan?.H) + extractCnt(p4.tuLuan?.VD)
+                    : 0;
+
+                if (importedMatrix.thongTinChung?.matrixFormat === 'new_4part' && p4 && p4Sum > 0) {
                     const mcB = extractCnt(p4.nhieuLuaChon?.B);
                     const mcH = extractCnt(p4.nhieuLuaChon?.H);
                     const mcVD = extractCnt(p4.nhieuLuaChon?.VD);
@@ -740,35 +939,35 @@ const ExamGenerator: React.FC = () => {
                     const esH = extractCnt(p4.tuLuan?.H);
                     const esVD = extractCnt(p4.tuLuan?.VD);
 
-                    if (mcB > 0) selected.push(...findQuestions(lessonName, 'NB', 'mc', mcB, 'multiple-choice'));
-                    if (mcH > 0) selected.push(...findQuestions(lessonName, 'TH', 'mc', mcH, 'multiple-choice'));
-                    if (mcVD > 0) selected.push(...findQuestions(lessonName, 'VD', 'mc', mcVD, 'multiple-choice'));
+                    if (mcB > 0) selected.push(...findQuestions(lessonName, 'NB', 'mc', mcB, 'multiple-choice', subTopicName, mainTopicName));
+                    if (mcH > 0) selected.push(...findQuestions(lessonName, 'TH', 'mc', mcH, 'multiple-choice', subTopicName, mainTopicName));
+                    if (mcVD > 0) selected.push(...findQuestions(lessonName, 'VD', 'mc', mcVD, 'multiple-choice', subTopicName, mainTopicName));
 
-                    if (tfB > 0) selected.push(...findQuestions(lessonName, 'NB', 'mc', tfB, 'true-false'));
-                    if (tfH > 0) selected.push(...findQuestions(lessonName, 'TH', 'mc', tfH, 'true-false'));
-                    if (tfVD > 0) selected.push(...findQuestions(lessonName, 'VD', 'mc', tfVD, 'true-false'));
+                    if (tfB > 0) selected.push(...findQuestions(lessonName, 'NB', 'mc', tfB, 'true-false', subTopicName, mainTopicName));
+                    if (tfH > 0) selected.push(...findQuestions(lessonName, 'TH', 'mc', tfH, 'true-false', subTopicName, mainTopicName));
+                    if (tfVD > 0) selected.push(...findQuestions(lessonName, 'VD', 'mc', tfVD, 'true-false', subTopicName, mainTopicName));
 
-                    if (saB > 0) selected.push(...findQuestions(lessonName, 'NB', 'mc', saB, 'short-answer'));
-                    if (saH > 0) selected.push(...findQuestions(lessonName, 'TH', 'mc', saH, 'short-answer'));
-                    if (saVD > 0) selected.push(...findQuestions(lessonName, 'VD', 'mc', saVD, 'short-answer'));
+                    if (saB > 0) selected.push(...findQuestions(lessonName, 'NB', 'mc', saB, 'short-answer', subTopicName, mainTopicName));
+                    if (saH > 0) selected.push(...findQuestions(lessonName, 'TH', 'mc', saH, 'short-answer', subTopicName, mainTopicName));
+                    if (saVD > 0) selected.push(...findQuestions(lessonName, 'VD', 'mc', saVD, 'short-answer', subTopicName, mainTopicName));
 
-                    if (esB > 0) selected.push(...findQuestions(lessonName, 'NB', 'essay', esB, 'essay'));
-                    if (esH > 0) selected.push(...findQuestions(lessonName, 'TH', 'essay', esH, 'essay'));
-                    if (esVD > 0) selected.push(...findQuestions(lessonName, 'VD', 'essay', esVD, 'essay'));
+                    if (esB > 0) selected.push(...findQuestions(lessonName, 'NB', 'essay', esB, 'essay', subTopicName, mainTopicName));
+                    if (esH > 0) selected.push(...findQuestions(lessonName, 'TH', 'essay', esH, 'essay', subTopicName, mainTopicName));
+                    if (esVD > 0) selected.push(...findQuestions(lessonName, 'VD', 'essay', esVD, 'essay', subTopicName, mainTopicName));
                 } else {
                     const tnCounts = row.tracNghiem;
                     if (tnCounts) {
-                        if (tnCounts.NB > 0) selected.push(...findQuestions(lessonName, 'NB', 'mc', tnCounts.NB));
-                        if (tnCounts.TH > 0) selected.push(...findQuestions(lessonName, 'TH', 'mc', tnCounts.TH));
-                        if (tnCounts.VD > 0) selected.push(...findQuestions(lessonName, 'VD', 'mc', tnCounts.VD));
-                        if (tnCounts.VDC > 0) selected.push(...findQuestions(lessonName, 'VDC', 'mc', tnCounts.VDC));
+                        if (tnCounts.NB > 0) selected.push(...findQuestions(lessonName, 'NB', 'mc', tnCounts.NB, undefined, subTopicName, mainTopicName));
+                        if (tnCounts.TH > 0) selected.push(...findQuestions(lessonName, 'TH', 'mc', tnCounts.TH, undefined, subTopicName, mainTopicName));
+                        if (tnCounts.VD > 0) selected.push(...findQuestions(lessonName, 'VD', 'mc', tnCounts.VD, undefined, subTopicName, mainTopicName));
+                        if (tnCounts.VDC > 0) selected.push(...findQuestions(lessonName, 'VDC', 'mc', tnCounts.VDC, undefined, subTopicName, mainTopicName));
                     }
                     const tlCounts = row.tuLuan;
                     if (tlCounts) {
-                        if (tlCounts.NB > 0) selected.push(...findQuestions(lessonName, 'NB', 'essay', tlCounts.NB));
-                        if (tlCounts.TH > 0) selected.push(...findQuestions(lessonName, 'TH', 'essay', tlCounts.TH));
-                        if (tlCounts.VD > 0) selected.push(...findQuestions(lessonName, 'VD', 'essay', tlCounts.VD));
-                        if (tlCounts.VDC > 0) selected.push(...findQuestions(lessonName, 'VDC', 'essay', tlCounts.VDC));
+                        if (tlCounts.NB > 0) selected.push(...findQuestions(lessonName, 'NB', 'essay', tlCounts.NB, undefined, subTopicName, mainTopicName));
+                        if (tlCounts.TH > 0) selected.push(...findQuestions(lessonName, 'TH', 'essay', tlCounts.TH, undefined, subTopicName, mainTopicName));
+                        if (tlCounts.VD > 0) selected.push(...findQuestions(lessonName, 'VD', 'essay', tlCounts.VD, undefined, subTopicName, mainTopicName));
+                        if (tlCounts.VDC > 0) selected.push(...findQuestions(lessonName, 'VDC', 'essay', tlCounts.VDC, undefined, subTopicName, mainTopicName));
                     }
                 }
             });

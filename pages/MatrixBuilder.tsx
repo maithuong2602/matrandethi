@@ -1076,7 +1076,7 @@ const MatrixBuilder: React.FC = () => {
                         stt: row[0],
                         chuong: row[1],
                         noiDung: row[2],
-                        bai: row[3],
+                        bai: row[3] || row[2],
                         soTiet: parseFloat(row[4]) || 0,
                         daThi: (parseFloat(row[14]) || 0) > 0,
                         soTietDaThi: parseFloat(row[14]) || 0
