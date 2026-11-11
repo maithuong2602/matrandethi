@@ -681,6 +681,34 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
         });
     });
 
+    // 3. Process New 4-Part Format Question Positions (by row and level B, H, VD)
+    const newFormatPosMap: Record<string, string[]> = {};
+    const partShortLabel: Record<'mc' | 'tf' | 'sa' | 'essay', string> = {
+        mc: 'NLC',
+        tf: 'Đ-S',
+        sa: 'TLN',
+        essay: 'TL'
+    };
+    activeParts.forEach(pKey => {
+        let pCounter = 1;
+        (['B', 'H', 'VD'] as const).forEach(lKey => {
+            data.matrix.rows.forEach((_, rIdx) => {
+                const cfg = getRowNewFormatConfig(rIdx);
+                const c = cfg[pKey][lKey]?.count || 0;
+                if (c > 0) {
+                    const start = pCounter;
+                    const end = pCounter + c - 1;
+                    const prefix = pKey === 'tf' ? 'Ý' : 'Câu';
+                    const rangeStr = start === end ? `${prefix} ${start} (${partShortLabel[pKey]})` : `${prefix} ${start}-${end} (${partShortLabel[pKey]})`;
+                    const mapKey = `${rIdx}-${lKey}`;
+                    if (!newFormatPosMap[mapKey]) newFormatPosMap[mapKey] = [];
+                    newFormatPosMap[mapKey].push(rangeStr);
+                    pCounter += c;
+                }
+            });
+        });
+    });
+
 
     const handleQuestionCellSave = (
         rowIndex: number,
@@ -1308,10 +1336,23 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                 VD: subRows.find(sr => sr.type === 'level_header' && sr.levelKey === 'VD')?.subRowId || subRows[0]?.subRowId || 'header_0'
             };
 
+            const rowPosSummary: string[] = [];
+            if ((newFormatPosMap[`${rowIndex}-B`] || []).length > 0) {
+                rowPosSummary.push(`Biết: ${newFormatPosMap[`${rowIndex}-B`].join(', ')}`);
+            }
+            if ((newFormatPosMap[`${rowIndex}-H`] || []).length > 0) {
+                rowPosSummary.push(`Hiểu: ${newFormatPosMap[`${rowIndex}-H`].join(', ')}`);
+            }
+            if ((newFormatPosMap[`${rowIndex}-VD`] || []).length > 0) {
+                rowPosSummary.push(`Vận dụng: ${newFormatPosMap[`${rowIndex}-VD`].join(', ')}`);
+            }
+
             return (
                 <React.Fragment key={`spec-new-frag-${rowIndex}`}>
                     {subRows.map((subRow, subIdx) => {
                         const isFirstSubRow = subIdx === 0;
+                        const isLastSubRow = subIdx === subRows.length - 1;
+                        const levelPosArr = newFormatPosMap[`${rowIndex}-${subRow.levelKey}`] || [];
 
                         return (
                             <tr key={`spec-new-${rowIndex}-${subRow.subRowId}`} className="hover:bg-slate-50/70">
@@ -1348,11 +1389,18 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                     </td>
                                 )}
 
-                                {/* Cột Yêu cầu cần đạt: Mỗi dòng là 1 ô <td> riêng biệt */}
+                                {/* Cột Mức độ đánh giá / Yêu cầu cần đạt: Mỗi dòng là 1 ô <td> riêng biệt */}
                                 <td className="bg-white text-left border border-slate-400 px-2.5 py-1.5 min-w-[340px] align-middle">
                                     {subRow.type === 'level_header' && (
-                                        <div className="flex items-center justify-between">
-                                            <span className="font-bold text-slate-900 text-sm">{subRow.displayTitle}</span>
+                                        <div className="flex items-center justify-between flex-wrap gap-1">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <span className="font-bold text-slate-900 text-sm">{subRow.displayTitle}</span>
+                                                {levelPosArr.length > 0 && (
+                                                    <span className="text-[11px] font-semibold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">
+                                                        Vị trí: {levelPosArr.join('; ')}
+                                                    </span>
+                                                )}
+                                            </div>
                                             <div className="flex items-center gap-1">
                                                 <button
                                                     type="button"
@@ -1510,6 +1558,12 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                             >
                                                 <X size={13} />
                                             </button>
+                                        </div>
+                                    )}
+                                    {isLastSubRow && rowPosSummary.length > 0 && (
+                                        <div className="mt-2 pt-1.5 border-t border-dashed border-slate-300 text-xs text-blue-700">
+                                            <strong>Vị trí câu hỏi: </strong>
+                                            <span className="font-medium">{rowPosSummary.join(' • ')}</span>
                                         </div>
                                     )}
                                 </td>
@@ -2812,7 +2866,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                  <th rowSpan={4} className="border border-slate-400 p-2 min-w-[130px]">Chủ đề/<br/>Chương</th>
                                  <th rowSpan={4} className="border border-slate-400 p-2 min-w-[150px]">Nội dung/đơn vị kiến thức</th>
                                  <th rowSpan={4} className="border border-slate-400 p-2 min-w-[110px]">Bài</th>
-                                 <th rowSpan={4} className="border border-slate-400 p-2 min-w-[340px]">Yêu cầu cần đạt</th>
+                                 <th rowSpan={4} className="border border-slate-400 p-2 min-w-[340px]">Mức độ đánh giá</th>
                                  <th colSpan={useShortAnswer ? 12 : 9} className="border border-slate-400 p-2 bg-indigo-50/60">Số câu hỏi ở các mức độ đánh giá</th>
                              </tr>
                              <tr className="bg-gray-100 text-gray-800 font-bold text-xs">

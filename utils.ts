@@ -1046,28 +1046,28 @@ export const buildMatrixNotesSummary = (data: MatrixData, examName: string = '')
             if (tExamined > 0) {
                 if (realizedPct < priorPct - 0.5) {
                     status = 'reduced';
-                    formattedLine = `${fullLabel}: ${fmtPct(priorPct)}% giảm còn ${fmtPct(realizedPct)}% - giữ ${tQuestions} câu (${formatDiem(tPoints)} điểm; ${tSoTiet} tiết, đã kiểm tra ${tExamined} tiết)`;
+                    formattedLine = `${fullLabel}: ${fmtPct(priorPct)}% giảm còn ${fmtPct(realizedPct)}% - giữ ${tQuestions}`;
                 } else if (Math.abs(realizedPct - priorPct) <= 0.5) {
                     status = 'kept';
-                    formattedLine = `${fullLabel}: ${fmtPct(priorPct)}% giữ nguyên – giữ ${tQuestions} câu (${formatDiem(tPoints)} điểm; ${tSoTiet} tiết, đã kiểm tra ${tExamined} tiết)`;
+                    formattedLine = `${fullLabel}: ${fmtPct(priorPct)}% giữ nguyên – giữ ${tQuestions}`;
                 } else {
                     status = 'adjusted';
-                    formattedLine = `${fullLabel}: ${fmtPct(priorPct)}% điều chỉnh thành ${fmtPct(realizedPct)}% – giữ ${tQuestions} câu (${formatDiem(tPoints)} điểm; ${tSoTiet} tiết, đã kiểm tra ${tExamined} tiết)`;
+                    formattedLine = `${fullLabel}: ${fmtPct(priorPct)}% điều chỉnh thành ${fmtPct(realizedPct)}% – giữ ${tQuestions}`;
                 }
             } else {
                 status = 'new';
-                formattedLine = `${fullLabel}: ${fmtPct(realizedPct)}% – ${tQuestions} câu (${formatDiem(tPoints)} điểm; ${tSoTiet} tiết mới, chưa kiểm tra)`;
+                formattedLine = `${fullLabel}: ${fmtPct(realizedPct)}%`;
             }
         } else {
             if (Math.abs(realizedPct - naturalPct) <= 0.5) {
                 status = 'kept';
-                formattedLine = `${fullLabel}: ${fmtPct(realizedPct)}% giữ nguyên – giữ ${tQuestions} câu (${formatDiem(tPoints)} điểm; ${tSoTiet} tiết)`;
+                formattedLine = `${fullLabel}: ${fmtPct(realizedPct)}% giữ nguyên – giữ ${tQuestions}`;
             } else if (realizedPct < naturalPct - 0.5) {
                 status = 'reduced';
-                formattedLine = `${fullLabel}: ${fmtPct(naturalPct)}% giảm còn ${fmtPct(realizedPct)}% - giữ ${tQuestions} câu (${formatDiem(tPoints)} điểm; ${tSoTiet} tiết)`;
+                formattedLine = `${fullLabel}: ${fmtPct(naturalPct)}% giảm còn ${fmtPct(realizedPct)}% - giữ ${tQuestions}`;
             } else {
                 status = 'adjusted';
-                formattedLine = `${fullLabel}: ${fmtPct(realizedPct)}% – giữ ${tQuestions} câu (${formatDiem(tPoints)} điểm; ${tSoTiet} tiết – tỷ lệ tiết ${fmtPct(naturalPct)}%)`;
+                formattedLine = `${fullLabel}: ${fmtPct(realizedPct)}% – giữ ${tQuestions}`;
             }
         }
 
@@ -1104,11 +1104,6 @@ export const buildMatrixNotesSummary = (data: MatrixData, examName: string = '')
     const actualNewPct = totalSoTiet > 0 ? (sumSoTietUnchecked / totalSoTiet) * 100 : 0;
 
     const defaultLines = topicItems.map(t => t.formattedLine);
-    if (sumSoTietChecked > 0) {
-        defaultLines.push(
-            `Tổng hợp: Kiến thức đã kiểm tra (${sumSoTietChecked}/${totalSoTiet} tiết – ${fmtPct(actualOldPct)}% thời lượng) giảm còn ${fmtPct(realizedOldPct)}% điểm số; Kiến thức mới (${sumSoTietUnchecked}/${totalSoTiet} tiết – ${fmtPct(actualNewPct)}% thời lượng) chiếm ${fmtPct(realizedNewPct)}% điểm số.`
-        );
-    }
 
     return {
         totalSoTiet,
@@ -1380,13 +1375,8 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             mainTopicWeightedPercent += getRowTargetPercent(row);
         });
 
-        // Display string for Main Topic Percent
-        let mainTopicDisplay = `<b>${mainTopic}</b><br/>(${mainTopicSoTiet} tiết`;
-        // Condition: Hide % if it's Final Exam
-        if (!isFinalExam) {
-            mainTopicDisplay += ` – ${mainTopicWeightedPercent.toFixed(1).replace('.', ',')}%`;
-        }
-        mainTopicDisplay += ')';
+        // Display string for Main Topic
+        let mainTopicDisplay = `<b>${mainTopic}</b>`;
         
         // Use actual points for the Total column, but weighted % for the label column
         const mainTopicRealizedPercent = totalExamPoints > 0 ? (mainTopicPoints / totalExamPoints * 100) : 0;
@@ -1441,12 +1431,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             if (posGroups.TH.length > 0) positionSummary.push(`TH: Câu ${posGroups.TH.join(', ')}`);
             if (posGroups.VD.length > 0) positionSummary.push(`VD: Câu ${posGroups.VD.join(', ')}`);
             
-            let contentDisplay = `${subTopic}<br/>(${subSoTiet} tiết`;
-            // Condition: Hide % if it's Final Exam
-            if (!isFinalExam) {
-                contentDisplay += ` - ${subWeightedPercent.toFixed(1).replace('.', ',')}%`;
-            }
-            contentDisplay += ')';
+            let contentDisplay = `${subTopic} (${subSoTiet} tiết)`;
 
             // --- MATRIX ROW ---
             matrixBodyHtml += '<tr>';
@@ -1677,6 +1662,40 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             return cfg;
         };
 
+        // Tính vị trí câu hỏi cho Mẫu mới (new_4part) theo từng dòng & từng mức độ (B, H, VD)
+        const newFormatPosMap: Record<string, string[]> = {};
+        const partLabelMap: Record<'mc' | 'tf' | 'sa' | 'essay', string> = {
+            mc: 'NLC',
+            tf: 'Đ-S',
+            sa: 'TLN',
+            essay: 'TL'
+        };
+        activeParts.forEach(pKey => {
+            let pCounter = 1;
+            (['B', 'H', 'VD'] as const).forEach(lKey => {
+                data.matrix.rows.forEach((_, rIdx) => {
+                    const rawCfg = getRowCfg(rIdx);
+                    let c = rawCfg[pKey][lKey]?.count || 0;
+                    if (!useShortAnswer && pKey === 'tf') {
+                        c += rawCfg.sa[lKey]?.count || 0;
+                    }
+                    if (!useShortAnswer && pKey === 'sa') {
+                        c = 0;
+                    }
+                    if (c > 0) {
+                        const start = pCounter;
+                        const end = pCounter + c - 1;
+                        const prefix = pKey === 'tf' ? 'Ý' : 'Câu';
+                        const rangeStr = start === end ? `${prefix} ${start} (${partLabelMap[pKey]})` : `${prefix} ${start}-${end} (${partLabelMap[pKey]})`;
+                        const mapKey = `${rIdx}-${lKey}`;
+                        if (!newFormatPosMap[mapKey]) newFormatPosMap[mapKey] = [];
+                        newFormatPosMap[mapKey].push(rangeStr);
+                        pCounter += c;
+                    }
+                });
+            });
+        });
+
         let newMatrixBody = '';
         let newSpecBody = '';
         const tot = {
@@ -1818,6 +1837,8 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 let subTargetPct = 0;
                 const lessonLabels: string[] = [];
 
+                const subPosByLevel: Record<'B' | 'H' | 'VD', string[]> = { B: [], H: [], VD: [] };
+
                 subRows.forEach((r: any) => {
                     const origIdx = data.matrix.rows.indexOf(r);
                     const st = parseFloat(String(r[4]) || '0');
@@ -1826,8 +1847,15 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                     subExamined += ex;
                     subTargetPct += getRowTargetPercent(r);
                     if (r[3] && String(r[3]).trim() && String(r[3]).trim() !== subTopic) {
-                        lessonLabels.push(`${String(r[3]).trim()} (${st} tiết${ex > 0 ? `, đã KT ${ex}` : ''})`);
+                        lessonLabels.push(`${String(r[3]).trim()} (${st} tiết)`);
                     }
+
+                    (['B', 'H', 'VD'] as const).forEach(lKey => {
+                        const posArr = newFormatPosMap[`${origIdx}-${lKey}`];
+                        if (posArr && posArr.length > 0) {
+                            subPosByLevel[lKey].push(...posArr);
+                        }
+                    });
 
                     const rawCfg = getRowCfg(origIdx);
                     const cfg: NewMatrixFormatRowConfig = JSON.parse(JSON.stringify(rawCfg));
@@ -1881,11 +1909,10 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 const sumRowB = agg.mc.B.count + agg.tf.B.count + agg.sa.B.count + agg.essay.B.count;
                 const sumRowH = agg.mc.H.count + agg.tf.H.count + agg.sa.H.count + agg.essay.H.count;
                 const sumRowVD = agg.mc.VD.count + agg.tf.VD.count + agg.sa.VD.count + agg.essay.VD.count;
-                const subTotalQuestions = sumRowB + sumRowH + sumRowVD;
                 const subPct = (subPts / 10) * 100;
 
-                const mainTopicCellHtml = `<b>${mainTopic}</b><br/><span style="font-size:10pt; font-style:italic;">(${mainTopicSoTiet} tiết${mainTopicExamined > 0 ? ` – đã KT ${mainTopicExamined} tiết` : ''})</span>`;
-                const subTopicCellHtml = `${subTopic}${lessonLabels.length > 1 ? `<br/><span style="font-size:9.5pt; color:#444;">${lessonLabels.join('; ')}</span>` : ''}<br/><span style="font-size:10pt; font-style:italic;">(${subSoTiet} tiết${subExamined > 0 ? `, đã KT ${subExamined} tiết` : ''}${subTargetPct > 0 ? ` – Tỉ lệ: ${formatPercent(subTargetPct)}%` : ''})</span>`;
+                const mainTopicCellHtml = `<b>${mainTopic}</b>`;
+                const subTopicCellHtml = `${subTopic} (${subSoTiet} tiết)`;
 
                 newMatrixBody += '<tr>';
                 newMatrixBody += `<td>${newStt}</td>`;
@@ -1893,8 +1920,6 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                     newMatrixBody += `<td class="text-left align-top" rowspan="${mainSpan}">${mainTopicCellHtml}</td>`;
                 }
                 newMatrixBody += `<td class="text-left">${subTopicCellHtml}</td>`;
-                newMatrixBody += `<td>${subSoTiet}</td>`;
-                newMatrixBody += `<td>${subExamined > 0 ? `<div><b>${subExamined} tiết</b></div><div style="font-size:9.5pt; color:#555;">(${subTotalQuestions} câu)</div>` : `<span style="color:#888;">0</span><div style="font-size:9.5pt; color:#555;">(${subTotalQuestions} câu)</div>`}</td>`;
                 activeParts.forEach(pKey => {
                     (['B', 'H', 'VD'] as const).forEach(lKey => {
                         const c = agg[pKey][lKey].count;
@@ -1916,7 +1941,21 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                     VD: specSubRows.find(sr => sr.isHeader && sr.levelKey === 'VD')?.subRowId || specSubRows[0]?.subRowId || 'header_0'
                 };
 
+                const subPositionSummaryParts: string[] = [];
+                if (subPosByLevel.B.length > 0) subPositionSummaryParts.push(`Biết: ${subPosByLevel.B.join(', ')}`);
+                if (subPosByLevel.H.length > 0) subPositionSummaryParts.push(`Hiểu: ${subPosByLevel.H.join(', ')}`);
+                if (subPosByLevel.VD.length > 0) subPositionSummaryParts.push(`Vận dụng: ${subPosByLevel.VD.join(', ')}`);
+
                 specSubRows.forEach((sr, srIdx) => {
+                    const isLastSubRow = srIdx === specSubRows.length - 1;
+                    const levelPosList = subPosByLevel[sr.levelKey] || [];
+                    const headerPosHtml = sr.isHeader && levelPosList.length > 0
+                        ? ` <span style="font-weight:normal; font-style:italic; color:#0056b3; font-size:10pt;">(Vị trí: ${levelPosList.join('; ')})</span>`
+                        : '';
+                    const footerPosHtml = isLastSubRow && subPositionSummaryParts.length > 0
+                        ? `<div style="margin-top:6px; border-top:1px dashed #ccc; padding-top:4px; font-size:10pt;"><i>Vị trí câu hỏi: </i><span style="color:#0056b3;">${subPositionSummaryParts.join('; ')}</span></div>`
+                        : '';
+
                     newSpecBody += '<tr>';
                     if (srIdx === 0) {
                         newSpecBody += `<td class="align-top" rowspan="${subSpecSpan}">${newStt}</td>`;
@@ -1927,7 +1966,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                     if (srIdx === 0) {
                         newSpecBody += `<td class="text-left align-top" rowspan="${subSpecSpan}"><b>${subTopic}</b></td>`;
                     }
-                    newSpecBody += `<td class="text-left">${sr.isHeader ? `<b>${sr.text}</b>` : sr.text}</td>`;
+                    newSpecBody += `<td class="text-left">${sr.isHeader ? `<b>${sr.text}</b>${headerPosHtml}` : sr.text}${footerPosHtml}</td>`;
 
                     activeParts.forEach(pKey => {
                         (['B', 'H', 'VD'] as const).forEach(lKey => {
@@ -1969,8 +2008,6 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                         <th rowspan="4">TT</th>
                         <th rowspan="4">Chủ đề/Chương</th>
                         <th rowspan="4">Nội dung/đơn vị kiến thức</th>
-                        <th rowspan="4">Số tiết</th>
-                        <th rowspan="4">Đã kiểm tra<br/><span style="font-weight:normal; font-size:9.5pt;">(Số tiết &amp; câu)</span></th>
                         <th colspan="${useShortAnswer ? 12 : 9}">Mức độ đánh giá</th>
                         <th colspan="3" rowspan="3">Tổng</th>
                         <th rowspan="4">Tỷ lệ % điểm</th>
@@ -1996,8 +2033,6 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 <tfoot>
                     <tr>
                         <td colspan="3"><b>Tổng số câu/lệnh hỏi</b></td>
-                        <td><b>${totalSoTiet}</b></td>
-                        <td><b>${sumSoTietChecked > 0 ? `${sumSoTietChecked} tiết` : '0'}</b></td>
                         <td><b>${tot.mc.B || ''}</b></td><td><b>${tot.mc.H || ''}</b></td><td><b>${tot.mc.VD || ''}</b></td>
                         <td><b>${tot.tf.B || ''}</b></td><td><b>${tot.tf.H || ''}</b></td><td><b>${tot.tf.VD || ''}</b></td>
                         ${useShortAnswer ? `<td><b>${tot.sa.B || ''}</b></td><td><b>${tot.sa.H || ''}</b></td><td><b>${tot.sa.VD || ''}</b></td>` : ''}
@@ -2006,7 +2041,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                         <td><b>${totCountB + totCountH + totCountVD}</b></td>
                     </tr>
                     <tr>
-                        <td colspan="5"><b>Tổng số điểm</b></td>
+                        <td colspan="3"><b>Tổng số điểm</b></td>
                         <td colspan="3"><b>${formatDiem(ptMC)}</b></td>
                         <td colspan="3"><b>${formatDiem(ptTF)}</b></td>
                         ${useShortAnswer ? `<td colspan="3"><b>${formatDiem(ptSA)}</b></td>` : ''}
@@ -2015,7 +2050,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                         <td><b>${formatDiem(grandPoints)}</b></td>
                     </tr>
                     <tr>
-                        <td colspan="5"><b>Tỉ lệ %</b></td>
+                        <td colspan="3"><b>Tỉ lệ %</b></td>
                         <td colspan="3"><b>${formatPercent(ptMC * 10)}</b></td>
                         <td colspan="3"><b>${formatPercent(ptTF * 10)}</b></td>
                         ${useShortAnswer ? `<td colspan="3"><b>${formatPercent(ptSA * 10)}</b></td>` : ''}
@@ -2034,7 +2069,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                         <th rowspan="4">TT</th>
                         <th rowspan="4">Chủ đề/Chương</th>
                         <th rowspan="4">Nội dung/đơn vị kiến thức</th>
-                        <th rowspan="4" style="width: 34%;">Yêu cầu cần đạt</th>
+                        <th rowspan="4" style="width: 34%;">Mức độ đánh giá</th>
                         <th colspan="${useShortAnswer ? 12 : 9}">Số câu hỏi ở các mức độ đánh giá</th>
                     </tr>
                     <tr>
