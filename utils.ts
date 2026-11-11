@@ -1665,10 +1665,10 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
         // Tính vị trí câu hỏi cho Mẫu mới (new_4part) theo từng dòng & từng mức độ (B, H, VD)
         const newFormatPosMap: Record<string, string[]> = {};
         const partLabelMap: Record<'mc' | 'tf' | 'sa' | 'essay', string> = {
-            mc: 'NLC',
-            tf: 'Đ-S',
-            sa: 'TLN',
-            essay: 'TL'
+            mc: 'Nhiều lựa chọn',
+            tf: 'Đúng – Sai',
+            sa: 'Trả lời ngắn',
+            essay: 'Tự luận'
         };
         activeParts.forEach(pKey => {
             let pCounter = 1;
@@ -1917,6 +1917,11 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 const subSpecSpan = specSubRows.length;
 
                 specSubRows.forEach((sr, srIdx) => {
+                    const levelPosList = subPosByLevel[sr.levelKey] || [];
+                    const posHtml = levelPosList.length > 0
+                        ? `<div style="margin-top: 3px; font-size: 10.5pt; color: #0056b3;"><i>* Vị trí câu hỏi: ${levelPosList.join('; ')}</i></div>`
+                        : '';
+
                     newSpecBody += '<tr>';
                     if (srIdx === 0) {
                         newSpecBody += `<td class="align-top" rowspan="${subSpecSpan}">${newStt}</td>`;
@@ -1928,7 +1933,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                         newSpecBody += `<td class="text-left align-top" rowspan="${subSpecSpan}">${subTopic}</td>`;
                     }
                     const itemsHtml = sr.items.map(it => `<div>${it}</div>`).join('');
-                    newSpecBody += `<td class="text-left align-top"><div><b>${sr.title}</b></div>${itemsHtml}</td>`;
+                    newSpecBody += `<td class="text-left align-top"><div><b>${sr.title}</b></div>${itemsHtml}${posHtml}</td>`;
 
                     activeParts.forEach(pKey => {
                         (['B', 'H', 'VD'] as const).forEach(lKey => {

@@ -684,10 +684,10 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
     // 3. Process New 4-Part Format Question Positions (by row and level B, H, VD)
     const newFormatPosMap: Record<string, string[]> = {};
     const partShortLabel: Record<'mc' | 'tf' | 'sa' | 'essay', string> = {
-        mc: 'NLC',
-        tf: 'Đ-S',
-        sa: 'TLN',
-        essay: 'TL'
+        mc: 'Nhiều lựa chọn',
+        tf: 'Đúng – Sai',
+        sa: 'Trả lời ngắn',
+        essay: 'Tự luận'
     };
     activeParts.forEach(pKey => {
         let pCounter = 1;
@@ -1272,6 +1272,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                         const isFirstSubRow = subIdx === 0;
                         const isAddingInThisLevel =
                             addingYccdFor?.rowIndex === rowIndex && addingYccdFor?.sectionIdx === subRow.sectionIdx && subRow.sectionIdx !== -1;
+                        const levelPosArr = newFormatPosMap[`${rowIndex}-${subRow.levelKey}`] || [];
 
                         return (
                             <tr key={`spec-new-${rowIndex}-${subRow.subRowId}`} className="hover:bg-slate-50/70">
@@ -1469,6 +1470,13 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                             >
                                                 <X size={13} />
                                             </button>
+                                        </div>
+                                    )}
+
+                                    {levelPosArr.length > 0 && (
+                                        <div className="mt-1.5 pt-1 border-t border-dashed border-slate-200 text-xs text-blue-700">
+                                            <span className="italic font-semibold">* Vị trí câu hỏi: </span>
+                                            <span className="font-medium">{levelPosArr.join('; ')}</span>
                                         </div>
                                     )}
                                 </td>
