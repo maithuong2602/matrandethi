@@ -1708,12 +1708,12 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
         let ptB = 0, ptH = 0, ptVD = 0;
         let newStt = 1;
 
-        // Helper tách các dòng YCCĐ thành từng dòng <tr> riêng biệt cho Bảng đặc tả (không gộp chung vào 1 ô)
+        // Helper gom YCCĐ theo 3 mức độ (- Biết:, - Hiểu:, - Vận dụng:) cho Bản đặc tả (mỗi mức độ 1 dòng <tr>)
         type PrintSpecSubRow = {
             subRowId: string;
-            isHeader: boolean;
             levelKey: 'B' | 'H' | 'VD';
-            text: string;
+            title: string;
+            items: string[];
         };
 
         const parseReqToSpecSubRows = (reqHtmlStr: string): PrintSpecSubRow[] => {
@@ -1721,7 +1721,6 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             if (cleaned.includes('data-unchecked="true"')) {
                 cleaned = cleaned.replace(/<div[^>]*data-unchecked="true"[^>]*>[\s\S]*?<\/div>/gi, '');
             }
-            const result: PrintSpecSubRow[] = [];
             const strongRegex = /<strong[^>]*>([\s\S]*?)<\/strong>/gi;
             const matches: { title: string; index: number; endIndex: number }[] = [];
             let m;
@@ -1733,64 +1732,45 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 });
             }
 
-            if (matches.length === 0) {
-                const defaults: { k: 'B' | 'H' | 'VD'; t: string }[] = [
-                    { k: 'B', t: 'Biết:' },
-                    { k: 'H', t: 'Hiểu:' },
-                    { k: 'VD', t: 'Vận dụng:' }
-                ];
-                defaults.forEach((d, idx) => {
-                    result.push({ subRowId: `header_${idx}`, isHeader: true, levelKey: d.k, text: d.t });
-                    result.push({ subRowId: `empty_${idx}`, isHeader: false, levelKey: d.k, text: '...' });
-                });
-                return result;
-            }
+            const groupedItems: Record<'B' | 'H' | 'VD', string[]> = {
+                B: [],
+                H: [],
+                VD: []
+            };
 
             matches.forEach((sec, sIdx) => {
                 const nextStart = sIdx + 1 < matches.length ? matches[sIdx + 1].index : cleaned.length;
                 const block = cleaned.substring(sec.endIndex, nextStart);
                 const lower = sec.title.toLowerCase();
                 const levelKey: 'B' | 'H' | 'VD' =
-                    lower.startsWith('nhận biết') || lower.startsWith('biết')
+                    lower.startsWith('nhận biết') || lower.startsWith('biết') || lower.startsWith('- biết')
                         ? 'B'
-                        : lower.startsWith('thông hiểu') || lower.startsWith('hiểu')
+                        : lower.startsWith('thông hiểu') || lower.startsWith('hiểu') || lower.startsWith('- hiểu')
                         ? 'H'
                         : 'VD';
-                const displayTitle =
-                    levelKey === 'B' ? 'Biết:' : levelKey === 'H' ? 'Hiểu:' : 'Vận dụng:';
-
-                result.push({
-                    subRowId: `header_${sIdx}`,
-                    isHeader: true,
-                    levelKey,
-                    text: displayTitle
-                });
 
                 const divRegex = /<div[^>]*>([\s\S]*?)<\/div>/gi;
                 let dm;
-                let iIdx = 0;
                 while ((dm = divRegex.exec(block)) !== null) {
                     const txt = dm[1].trim();
                     if (txt) {
-                        result.push({
-                            subRowId: `item_${sIdx}_${iIdx++}`,
-                            isHeader: false,
-                            levelKey,
-                            text: txt
-                        });
+                        groupedItems[levelKey].push(txt);
                     }
-                }
-                if (iIdx === 0) {
-                    result.push({
-                        subRowId: `empty_${sIdx}`,
-                        isHeader: false,
-                        levelKey,
-                        text: '...'
-                    });
                 }
             });
 
-            return result;
+            const levelDefs: { k: 'B' | 'H' | 'VD'; t: string }[] = [
+                { k: 'B', t: '- Biết:' },
+                { k: 'H', t: '- Hiểu:' },
+                { k: 'VD', t: '- Vận dụng:' }
+            ];
+
+            return levelDefs.map((d, idx) => ({
+                subRowId: `header_${idx}`,
+                levelKey: d.k,
+                title: d.t,
+                items: groupedItems[d.k].length > 0 ? groupedItems[d.k] : ['...']
+            }));
         };
 
         Object.keys(groupedByMainTopic).forEach(mainTopic => {
@@ -1932,30 +1912,11 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 newMatrixBody += `<td>${subPct > 0 ? formatPercent(subPct) + '%' : ''}</td>`;
                 newMatrixBody += '</tr>';
 
-                // Specification Rows (mỗi dòng Biết:, Hiểu:, Vận dụng: và từng YCCĐ nằm trên 1 <tr> riêng)
+                // Specification Rows (mỗi mức độ - Biết:, - Hiểu:, - Vận dụng: là 1 dòng <tr> chứa toàn bộ YCCĐ của mức độ đó)
                 const specSubRows = subSpecRowsMap[subTopic] || [];
                 const subSpecSpan = specSubRows.length;
-                const defaultRowForLevel: Record<'B' | 'H' | 'VD', string> = {
-                    B: specSubRows.find(sr => sr.isHeader && sr.levelKey === 'B')?.subRowId || specSubRows[0]?.subRowId || 'header_0',
-                    H: specSubRows.find(sr => sr.isHeader && sr.levelKey === 'H')?.subRowId || specSubRows[0]?.subRowId || 'header_0',
-                    VD: specSubRows.find(sr => sr.isHeader && sr.levelKey === 'VD')?.subRowId || specSubRows[0]?.subRowId || 'header_0'
-                };
-
-                const subPositionSummaryParts: string[] = [];
-                if (subPosByLevel.B.length > 0) subPositionSummaryParts.push(`Biết: ${subPosByLevel.B.join(', ')}`);
-                if (subPosByLevel.H.length > 0) subPositionSummaryParts.push(`Hiểu: ${subPosByLevel.H.join(', ')}`);
-                if (subPosByLevel.VD.length > 0) subPositionSummaryParts.push(`Vận dụng: ${subPosByLevel.VD.join(', ')}`);
 
                 specSubRows.forEach((sr, srIdx) => {
-                    const isLastSubRow = srIdx === specSubRows.length - 1;
-                    const levelPosList = subPosByLevel[sr.levelKey] || [];
-                    const headerPosHtml = sr.isHeader && levelPosList.length > 0
-                        ? ` <span style="font-weight:normal; font-style:italic; color:#0056b3; font-size:10pt;">(Vị trí: ${levelPosList.join('; ')})</span>`
-                        : '';
-                    const footerPosHtml = isLastSubRow && subPositionSummaryParts.length > 0
-                        ? `<div style="margin-top:6px; border-top:1px dashed #ccc; padding-top:4px; font-size:10pt;"><i>Vị trí câu hỏi: </i><span style="color:#0056b3;">${subPositionSummaryParts.join('; ')}</span></div>`
-                        : '';
-
                     newSpecBody += '<tr>';
                     if (srIdx === 0) {
                         newSpecBody += `<td class="align-top" rowspan="${subSpecSpan}">${newStt}</td>`;
@@ -1964,23 +1925,17 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                         newSpecBody += `<td class="text-left align-top" rowspan="${mainSpecRowSpan}"><b>${mainTopic}</b></td>`;
                     }
                     if (srIdx === 0) {
-                        newSpecBody += `<td class="text-left align-top" rowspan="${subSpecSpan}"><b>${subTopic}</b></td>`;
+                        newSpecBody += `<td class="text-left align-top" rowspan="${subSpecSpan}">${subTopic}</td>`;
                     }
-                    newSpecBody += `<td class="text-left">${sr.isHeader ? `<b>${sr.text}</b>${headerPosHtml}` : sr.text}${footerPosHtml}</td>`;
+                    const itemsHtml = sr.items.map(it => `<div>${it}</div>`).join('');
+                    newSpecBody += `<td class="text-left align-top"><div><b>${sr.title}</b></div>${itemsHtml}</td>`;
 
                     activeParts.forEach(pKey => {
                         (['B', 'H', 'VD'] as const).forEach(lKey => {
-                            const suffix = `_${pKey}_${lKey}`;
-                            const subCells = agg.subRowCells || {};
-                            const hasCustom = Object.keys(subCells).some(k => k.endsWith(suffix));
                             let c = 0;
                             let nl = agg[pKey][lKey].competency || defaultNL;
 
-                            if (hasCustom) {
-                                const sc = subCells[`${sr.subRowId}${suffix}`];
-                                c = sc?.count || 0;
-                                if (sc?.competency) nl = sc.competency;
-                            } else if (sr.subRowId === defaultRowForLevel[lKey]) {
+                            if (lKey === sr.levelKey) {
                                 c = agg[pKey][lKey].count;
                                 nl = agg[pKey][lKey].competency || defaultNL;
                             }
@@ -2063,13 +2018,13 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
 
         specTableHtml = `
             <table>
-                <caption>2. BẢNG ĐẶC TẢ KIỂM TRA ĐỊNH KÌ (${examName.toUpperCase()})</caption>
+                <caption>2. BẢN ĐẶC TẢ ĐỀ KIỂM TRA ĐỊNH KÌ (${examName.toUpperCase()})</caption>
                 <thead>
                     <tr>
                         <th rowspan="4">TT</th>
                         <th rowspan="4">Chủ đề/Chương</th>
                         <th rowspan="4">Nội dung/đơn vị kiến thức</th>
-                        <th rowspan="4" style="width: 34%;">Mức độ đánh giá</th>
+                        <th rowspan="4" style="width: 34%;">Yêu cầu cần đạt</th>
                         <th colspan="${useShortAnswer ? 12 : 9}">Số câu hỏi ở các mức độ đánh giá</th>
                     </tr>
                     <tr>
@@ -2096,6 +2051,20 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                         <td><b>${tot.tf.B || ''}</b></td><td><b>${tot.tf.H || ''}</b></td><td><b>${tot.tf.VD || ''}</b></td>
                         ${useShortAnswer ? `<td><b>${tot.sa.B || ''}</b></td><td><b>${tot.sa.H || ''}</b></td><td><b>${tot.sa.VD || ''}</b></td>` : ''}
                         <td><b>${tot.essay.B || ''}</b></td><td><b>${tot.essay.H || ''}</b></td><td><b>${tot.essay.VD || ''}</b></td>
+                    </tr>
+                    <tr>
+                        <td colspan="4"><b>Tổng số điểm</b></td>
+                        <td colspan="3"><b>${formatDiem(ptMC)}</b></td>
+                        <td colspan="3"><b>${formatDiem(ptTF)}</b></td>
+                        ${useShortAnswer ? `<td colspan="3"><b>${formatDiem(ptSA)}</b></td>` : ''}
+                        <td colspan="3"><b>${formatDiem(ptEssay)}</b></td>
+                    </tr>
+                    <tr>
+                        <td colspan="4"><b>Tỉ lệ %</b></td>
+                        <td colspan="3"><b>${formatPercent(ptMC * 10)}</b></td>
+                        <td colspan="3"><b>${formatPercent(ptTF * 10)}</b></td>
+                        ${useShortAnswer ? `<td colspan="3"><b>${formatPercent(ptSA * 10)}</b></td>` : ''}
+                        <td colspan="3"><b>${formatPercent(ptEssay * 10)}</b></td>
                     </tr>
                 </tfoot>
             </table>`;
