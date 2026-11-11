@@ -1662,14 +1662,8 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             return cfg;
         };
 
-        // Tính vị trí câu hỏi cho Mẫu mới (new_4part) theo từng dòng & từng mức độ (B, H, VD)
-        const newFormatPosMap: Record<string, string[]> = {};
-        const partLabelMap: Record<'mc' | 'tf' | 'sa' | 'essay', string> = {
-            mc: 'Nhiều lựa chọn',
-            tf: 'Đúng – Sai',
-            sa: 'Trả lời ngắn',
-            essay: 'Tự luận'
-        };
+        // Tính vị trí câu hỏi cho Mẫu mới (new_4part) theo từng dòng & từng mức độ (B, H, VD) - chỉ ghi vị trí, không ghi loại câu
+        const newFormatPosMap: Record<string, { pKey: 'mc' | 'tf' | 'sa' | 'essay'; prefix: string; start: number; end: number }[]> = {};
         activeParts.forEach(pKey => {
             let pCounter = 1;
             (['B', 'H', 'VD'] as const).forEach(lKey => {
@@ -1686,10 +1680,9 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                         const start = pCounter;
                         const end = pCounter + c - 1;
                         const prefix = pKey === 'tf' ? 'Ý' : 'Câu';
-                        const rangeStr = start === end ? `${prefix} ${start} (${partLabelMap[pKey]})` : `${prefix} ${start}-${end} (${partLabelMap[pKey]})`;
                         const mapKey = `${rIdx}-${lKey}`;
                         if (!newFormatPosMap[mapKey]) newFormatPosMap[mapKey] = [];
-                        newFormatPosMap[mapKey].push(rangeStr);
+                        newFormatPosMap[mapKey].push({ pKey, prefix, start, end });
                         pCounter += c;
                     }
                 });
@@ -1817,7 +1810,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 let subTargetPct = 0;
                 const lessonLabels: string[] = [];
 
-                const subPosByLevel: Record<'B' | 'H' | 'VD', string[]> = { B: [], H: [], VD: [] };
+                const subPosRawByLevel: Record<'B' | 'H' | 'VD', { pKey: 'mc' | 'tf' | 'sa' | 'essay'; prefix: string; start: number; end: number }[]> = { B: [], H: [], VD: [] };
 
                 subRows.forEach((r: any) => {
                     const origIdx = data.matrix.rows.indexOf(r);
@@ -1833,7 +1826,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                     (['B', 'H', 'VD'] as const).forEach(lKey => {
                         const posArr = newFormatPosMap[`${origIdx}-${lKey}`];
                         if (posArr && posArr.length > 0) {
-                            subPosByLevel[lKey].push(...posArr);
+                            subPosRawByLevel[lKey].push(...posArr);
                         }
                     });
 
@@ -1911,6 +1904,33 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 newMatrixBody += `<td>${sumRowVD > 0 ? sumRowVD : ''}</td>`;
                 newMatrixBody += `<td>${subPct > 0 ? formatPercent(subPct) + '%' : ''}</td>`;
                 newMatrixBody += '</tr>';
+
+                const formatMergedPositions = (items: { pKey: 'mc' | 'tf' | 'sa' | 'essay'; prefix: string; start: number; end: number }[]): string[] => {
+                    const res: string[] = [];
+                    activeParts.forEach(pKey => {
+                        const partItems = items.filter(it => it.pKey === pKey).sort((a, b) => a.start - b.start);
+                        if (partItems.length === 0) return;
+                        const merged: { prefix: string; start: number; end: number }[] = [];
+                        partItems.forEach(it => {
+                            const last = merged[merged.length - 1];
+                            if (last && last.end + 1 >= it.start) {
+                                last.end = Math.max(last.end, it.end);
+                            } else {
+                                merged.push({ prefix: it.prefix, start: it.start, end: it.end });
+                            }
+                        });
+                        merged.forEach(m => {
+                            res.push(m.start === m.end ? `${m.prefix} ${m.start}` : `${m.prefix} ${m.start}-${m.end}`);
+                        });
+                    });
+                    return res;
+                };
+
+                const subPosByLevel: Record<'B' | 'H' | 'VD', string[]> = {
+                    B: formatMergedPositions(subPosRawByLevel.B),
+                    H: formatMergedPositions(subPosRawByLevel.H),
+                    VD: formatMergedPositions(subPosRawByLevel.VD)
+                };
 
                 // Specification Rows (mỗi mức độ - Biết:, - Hiểu:, - Vận dụng: là 1 dòng <tr> chứa toàn bộ YCCĐ của mức độ đó)
                 const specSubRows = subSpecRowsMap[subTopic] || [];

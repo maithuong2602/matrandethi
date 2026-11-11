@@ -681,14 +681,8 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
         });
     });
 
-    // 3. Process New 4-Part Format Question Positions (by row and level B, H, VD)
+    // 3. Process New 4-Part Format Question Positions (by row and level B, H, VD) - chỉ ghi vị trí, không ghi loại câu
     const newFormatPosMap: Record<string, string[]> = {};
-    const partShortLabel: Record<'mc' | 'tf' | 'sa' | 'essay', string> = {
-        mc: 'Nhiều lựa chọn',
-        tf: 'Đúng – Sai',
-        sa: 'Trả lời ngắn',
-        essay: 'Tự luận'
-    };
     activeParts.forEach(pKey => {
         let pCounter = 1;
         (['B', 'H', 'VD'] as const).forEach(lKey => {
@@ -699,7 +693,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                     const start = pCounter;
                     const end = pCounter + c - 1;
                     const prefix = pKey === 'tf' ? 'Ý' : 'Câu';
-                    const rangeStr = start === end ? `${prefix} ${start} (${partShortLabel[pKey]})` : `${prefix} ${start}-${end} (${partShortLabel[pKey]})`;
+                    const rangeStr = start === end ? `${prefix} ${start}` : `${prefix} ${start}-${end}`;
                     const mapKey = `${rIdx}-${lKey}`;
                     if (!newFormatPosMap[mapKey]) newFormatPosMap[mapKey] = [];
                     newFormatPosMap[mapKey].push(rangeStr);
