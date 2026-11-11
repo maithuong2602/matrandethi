@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { MatrixData, NewMatrixFormatRowConfig } from '../types';
-import { formatDiem } from '../utils';
+import { formatDiem, buildMatrixNotesSummary } from '../utils';
 import { Trash2, GripVertical, Plus, CheckSquare, Square, X, Pencil, Check, BookOpen, Layers } from 'lucide-react';
 import { 
     syncCriteriaFromMatrixData,
@@ -274,6 +274,8 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
     const [editingNewCell, setEditingNewCell] = useState<EditingNewCellState>(null);
     const [showCompetencyGuide, setShowCompetencyGuide] = useState<boolean>(false);
     const [draggedGroupIndex, setDraggedGroupIndex] = useState<number | null>(null);
+    const [isEditingCustomNote, setIsEditingCustomNote] = useState<boolean>(false);
+    const [customNoteDraft, setCustomNoteDraft] = useState<string>(data.customNote || '');
 
     const isNewFormat = data.matrixFormat === 'new_4part';
     const mcPoint = data.newPointsConfig?.mcPoint ?? 0.25;
@@ -2146,6 +2148,10 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                 <th rowSpan={4} className="border border-slate-400 p-2 min-w-[150px]">Nội dung/đơn vị kiến thức</th>
                                 <th rowSpan={4} className="border border-slate-400 p-2 min-w-[120px]">Bài</th>
                                 <th rowSpan={4} className="border border-slate-400 p-1.5 w-14">Số tiết</th>
+                                <th rowSpan={4} className="border border-slate-400 p-1.5 w-28 bg-orange-50/70 text-orange-950" title="Nhập số tiết đã kiểm tra (Giữa kì) để hệ thống tự động giảm tỷ lệ và gợi ý số lượng câu hỏi phù hợp">
+                                    Đã kiểm tra<br/>
+                                    <span className="text-[10px] font-normal text-orange-800">(Số tiết &amp; câu)</span>
+                                </th>
                                 <th colSpan={useShortAnswer ? 12 : 9} className="border border-slate-400 p-2 bg-indigo-50/60">Mức độ đánh giá</th>
                                 <th colSpan={3} rowSpan={3} className="border border-slate-400 p-2 bg-amber-50/70">Tổng</th>
                                 <th rowSpan={4} className="border border-slate-400 p-2 w-20 bg-emerald-50/60">Tỷ lệ<br/>% điểm</th>
@@ -2207,6 +2213,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                                     const rowSumB = rowCfg.mc.B.count + rowCfg.tf.B.count + rowCfg.sa.B.count + rowCfg.essay.B.count;
                                                     const rowSumH = rowCfg.mc.H.count + rowCfg.tf.H.count + rowCfg.sa.H.count + rowCfg.essay.H.count;
                                                     const rowSumVD = rowCfg.mc.VD.count + rowCfg.tf.VD.count + rowCfg.sa.VD.count + rowCfg.essay.VD.count;
+                                                    const rowTotalQuestions = rowSumB + rowSumH + rowSumVD;
 
                                                     const rowPoints =
                                                         (rowCfg.mc.B.count + rowCfg.mc.H.count + rowCfg.mc.VD.count) * mcPoint +
@@ -2214,6 +2221,14 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                                         (rowCfg.sa.B.count + rowCfg.sa.H.count + rowCfg.sa.VD.count) * saPoint +
                                                         (rowCfg.essay.B.count + rowCfg.essay.H.count + rowCfg.essay.VD.count) * rEssayPt;
                                                     const rowPct = calculatePercentage(rowPoints);
+
+                                                    const rowSoTiet = parseFloat(String(row[4]) || '0') || 0;
+                                                    const examinedPeriods = parseInt(String(row[14]) || '0', 10) || 0;
+                                                    const rowTargetPercentStr = getWeightedRowPercent(row);
+                                                    const rowTargetPercentVal = parseFloat(rowTargetPercentStr) || 0;
+                                                    const naturalPercentVal = totalSoTietAll > 0 ? (rowSoTiet / totalSoTietAll) * 100 : 0;
+                                                    const targetRowPoints = (rowTargetPercentVal / 100) * 10;
+                                                    const suggestedQuestionCount = mcPoint > 0 ? Math.max(0, Math.round(targetRowPoints / mcPoint)) : 0;
 
                                                     const parts = activeParts;
                                                     const levels: ('B' | 'H' | 'VD')[] = ['B', 'H', 'VD'];
@@ -2237,11 +2252,26 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                                                 </td>
                                                             )}
                                                             <td className="bg-white text-left border border-slate-300 p-2 text-xs">
-                                                                {row[3]}
+                                                                <div>{row[3]}</div>
+                                                                <div className="mt-1 flex flex-wrap items-center gap-1">
+                                                                    <span
+                                                                        className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold border ${
+                                                                            examinedPeriods > 0
+                                                                                ? 'bg-orange-50 text-orange-800 border-orange-200'
+                                                                                : 'bg-sky-50 text-sky-700 border-sky-200'
+                                                                        }`}
+                                                                        title="Tỷ lệ % điểm mục tiêu dựa trên số tiết và giảm trừ bài đã thi"
+                                                                    >
+                                                                        {examinedPeriods > 0 && Math.round(naturalPercentVal) > Math.round(rowTargetPercentVal)
+                                                                            ? `${Math.round(naturalPercentVal)}% ➝ giảm còn ${rowTargetPercentStr}%`
+                                                                            : `Mục tiêu: ${rowTargetPercentStr}%`}
+                                                                    </span>
+                                                                </div>
                                                             </td>
                                                             <td
-                                                                className="bg-white text-center cursor-pointer hover:bg-sky-50 border border-slate-300 p-1.5 text-xs"
+                                                                className="bg-white text-center cursor-pointer hover:bg-sky-50 border border-slate-300 p-1.5 text-xs font-semibold text-slate-800"
                                                                 onClick={() => setEditingCell({ table: 'matrix', row: item.index, col: 4 })}
+                                                                title="Nhấn để sửa số tiết của bài"
                                                             >
                                                                 {editingCell?.table === 'matrix' && editingCell.row === item.index && editingCell.col === 4 ? (
                                                                     <input
@@ -2255,7 +2285,51 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                                                             if (e.key === 'Escape') setEditingCell(null);
                                                                         }}
                                                                     />
-                                                                ) : row[4]}
+                                                                ) : (
+                                                                    <div className="flex flex-col items-center">
+                                                                        <span>{row[4]}</span>
+                                                                        <span className="text-[10px] font-normal text-slate-400">tiết</span>
+                                                                    </div>
+                                                                )}
+                                                            </td>
+                                                            <td
+                                                                className={`text-center cursor-pointer hover:bg-orange-50 border border-slate-300 p-1.5 text-xs transition-colors ${
+                                                                    examinedPeriods > 0 ? 'bg-orange-50/40' : 'bg-white'
+                                                                }`}
+                                                                onClick={() => setEditingCell({ table: 'matrix', row: item.index, col: 14 })}
+                                                                title="Nhấn để nhập số tiết đã kiểm tra (Giữa kì). Những bài đã kiểm tra sẽ được giảm tỷ lệ để ưu tiên bài mới."
+                                                            >
+                                                                {editingCell?.table === 'matrix' && editingCell.row === item.index && editingCell.col === 14 ? (
+                                                                    <input
+                                                                        autoFocus
+                                                                        type="number"
+                                                                        step="1"
+                                                                        min="0"
+                                                                        max={rowSoTiet}
+                                                                        className="w-full text-center border border-orange-400 rounded p-0.5 outline-none font-bold text-orange-800 bg-white"
+                                                                        defaultValue={row[14] || '0'}
+                                                                        onBlur={(e) => handleCellChange(item.index, 14, e.target.value)}
+                                                                        onKeyDown={(e) => {
+                                                                            if (e.key === 'Enter') handleCellChange(item.index, 14, e.currentTarget.value);
+                                                                            if (e.key === 'Escape') setEditingCell(null);
+                                                                        }}
+                                                                    />
+                                                                ) : (
+                                                                    <div className="flex flex-col items-center gap-0.5 leading-tight">
+                                                                        <span className={`font-bold ${examinedPeriods > 0 ? 'text-orange-700' : 'text-slate-400'}`}>
+                                                                            {examinedPeriods > 0 ? `${examinedPeriods} tiết đã KT` : '0 tiết'}
+                                                                        </span>
+                                                                        <span
+                                                                            className="text-[10px] font-semibold text-indigo-700 bg-indigo-50/80 px-1.5 py-0.2 rounded border border-indigo-100 whitespace-nowrap"
+                                                                            title={`Tỷ lệ mục tiêu ${rowTargetPercentStr}% (~${formatDiem(targetRowPoints)}đ)`}
+                                                                        >
+                                                                            Gợi ý: ~{suggestedQuestionCount} câu ({formatDiem(targetRowPoints)}đ)
+                                                                        </span>
+                                                                        <span className={`text-[10px] font-medium whitespace-nowrap ${rowTotalQuestions > 0 ? 'text-emerald-700 font-bold' : 'text-slate-400'}`}>
+                                                                            Đang chọn: {rowTotalQuestions} câu
+                                                                        </span>
+                                                                    </div>
+                                                                )}
                                                             </td>
 
                                                             {/* 12 Assessment Cells */}
@@ -2326,7 +2400,9 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                         </tbody>
                         <tfoot className="font-bold bg-slate-50 text-xs sm:text-sm">
                             <tr>
-                                <td colSpan={5} className="text-center p-2 border border-slate-400">Tổng số câu/lệnh hỏi</td>
+                                <td colSpan={4} className="text-center p-2 border border-slate-400">Tổng số câu/lệnh hỏi</td>
+                                <td className="border border-slate-400 p-1.5 text-center bg-sky-50/40" title="Tổng số tiết toàn ma trận">{totalSoTietAll} tiết</td>
+                                <td className="border border-slate-400 p-1.5 text-center bg-orange-50/40 text-orange-800" title="Tổng số tiết đã kiểm tra">{sumSoTietChecked} tiết đã KT</td>
                                 <td className="border border-slate-400 p-1.5 text-center">{newTotals.mc.B || ''}</td>
                                 <td className="border border-slate-400 p-1.5 text-center">{newTotals.mc.H || ''}</td>
                                 <td className="border border-slate-400 p-1.5 text-center">{newTotals.mc.VD || ''}</td>
@@ -2349,7 +2425,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                 <td className="border border-slate-400 p-1.5 text-center bg-emerald-50">{newTotalCountB + newTotalCountH + newTotalCountVD}</td>
                             </tr>
                             <tr>
-                                <td colSpan={5} className="text-center p-2 border border-slate-400">Tổng số điểm</td>
+                                <td colSpan={6} className="text-center p-2 border border-slate-400">Tổng số điểm</td>
                                 <td colSpan={3} className="border border-slate-400 p-1.5 text-center">{formatDiem(newPointsMC)}</td>
                                 <td colSpan={3} className="border border-slate-400 p-1.5 text-center">{formatDiem(newPointsTF)}</td>
                                 {useShortAnswer && (
@@ -2362,7 +2438,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                 <td className="border border-slate-400 p-1.5 text-center text-indigo-700 bg-emerald-50">{formatDiem(newGrandTotalPoints)}</td>
                             </tr>
                             <tr>
-                                <td colSpan={5} className="text-center p-2 border border-slate-400">Tỷ lệ %</td>
+                                <td colSpan={6} className="text-center p-2 border border-slate-400">Tỷ lệ %</td>
                                 <td colSpan={3} className="border border-slate-400 p-1.5 text-center">{(newPointsMC * 10).toFixed(0)}</td>
                                 <td colSpan={3} className="border border-slate-400 p-1.5 text-center">{(newPointsTF * 10).toFixed(0)}</td>
                                 {useShortAnswer && (
@@ -2407,7 +2483,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                             <th rowSpan={2} className="border border-slate-300 p-2">Nội dung/đơn vị kiến thức</th>
                             <th rowSpan={2} className="border border-slate-300 p-2">Bài</th>
                             <th rowSpan={2} className="border border-slate-300 p-2 w-16">Số tiết</th>
-                            <th rowSpan={2} className="border border-slate-300 p-2 w-20" title="Nhập số tiết đã thi (Giữa kỳ)">Số tiết<br/>đã thi</th>
+                            <th rowSpan={2} className="border border-slate-300 p-2 w-28 bg-orange-50/70 text-orange-950" title="Nhập số tiết đã kiểm tra (Giữa kỳ)">Đã kiểm tra<br/><span className="text-[10px] font-normal text-orange-800">(Số tiết &amp; câu)</span></th>
                             <th colSpan={2} className="border border-slate-300 p-2 bg-green-50">Nhận biết</th>
                             <th colSpan={2} className="border border-slate-300 p-2 bg-blue-50">Thông hiểu</th>
                             <th colSpan={2} className="border border-slate-300 p-2 bg-yellow-50">Vận dụng</th>
@@ -2441,12 +2517,16 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                                     // Calculate Actual Score Percent
                                                     const rowTnkq = (parseInt(String(row[5])||'0') + parseInt(String(row[7])||'0') + parseInt(String(row[9])||'0') + parseInt(String(row[11])||'0'));
                                                     const rowTl = (parseInt(String(row[6])||'0') + parseInt(String(row[8])||'0') + parseInt(String(row[10])||'0') + parseInt(String(row[12])||'0'));
+                                                    const rowTotalQuestions = rowTnkq + rowTl;
                                                     const rowPointTL = getRowPointsTL(item.index);
                                                     const rowPoints = (rowTnkq * pointsTNKQ) + (rowTl * rowPointTL);
                                                     const rowScorePercent = calculatePercentage(rowPoints);
 
                                                     // Calculate Weighted Target Percent based on Pool logic
                                                     const rowTargetPercent = getWeightedRowPercent(row);
+                                                    const rowTargetPercentVal = parseFloat(rowTargetPercent) || 0;
+                                                    const targetRowPoints = (rowTargetPercentVal / 100) * 10;
+                                                    const suggestedQuestionCount = pointsTNKQ > 0 ? Math.max(0, Math.round(targetRowPoints / pointsTNKQ)) : 0;
 
                                                     return (
                                                         <tr key={item.index} className="hover:bg-slate-50 group">
@@ -2491,7 +2571,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                                                     <input autoFocus type="number" className="w-full text-center border border-sky-400 rounded p-1 outline-none" defaultValue={row[4]} onBlur={(e) => handleCellChange(item.index, 4, e.target.value)} onKeyDown={(e) => {if (e.key === 'Enter') handleCellChange(item.index, 4, e.currentTarget.value); if (e.key === 'Escape') setEditingCell(null);}} />
                                                                 ) : row[4]}
                                                             </td>
-                                                            <td className="bg-white text-center cursor-pointer hover:bg-sky-50 border border-slate-300 p-2" onClick={() => setEditingCell({ table: 'matrix', row: item.index, col: 14 })}>
+                                                            <td className={`text-center cursor-pointer hover:bg-orange-50 border border-slate-300 p-2 ${examinedPeriods > 0 ? 'bg-orange-50/40' : 'bg-white'}`} onClick={() => setEditingCell({ table: 'matrix', row: item.index, col: 14 })}>
                                                                 {editingCell?.table === 'matrix' && editingCell.row === item.index && editingCell.col === 14 ? (
                                                                     <input 
                                                                         autoFocus 
@@ -2503,7 +2583,17 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                                                         onKeyDown={(e) => {if (e.key === 'Enter') handleCellChange(item.index, 14, e.currentTarget.value); if (e.key === 'Escape') setEditingCell(null);}} 
                                                                     />
                                                                 ) : (
-                                                                    <span className={examinedPeriods > 0 ? 'text-gray-800' : 'text-gray-300'}>{parseInt(String(row[14]) || '0', 10)}</span>
+                                                                    <div className="flex flex-col items-center gap-0.5 text-xs leading-tight">
+                                                                        <span className={`font-bold ${examinedPeriods > 0 ? 'text-orange-700' : 'text-gray-400'}`}>
+                                                                            {examinedPeriods > 0 ? `${parseInt(String(row[14]) || '0', 10)} tiết đã KT` : '0 tiết'}
+                                                                        </span>
+                                                                        <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.2 rounded border border-indigo-100 whitespace-nowrap">
+                                                                            Gợi ý: ~{suggestedQuestionCount} câu ({formatDiem(targetRowPoints)}đ)
+                                                                        </span>
+                                                                        <span className={`text-[10px] whitespace-nowrap ${rowTotalQuestions > 0 ? 'text-emerald-700 font-bold' : 'text-gray-400'}`}>
+                                                                            Đang chọn: {rowTotalQuestions} câu
+                                                                        </span>
+                                                                    </div>
                                                                 )}
                                                             </td>
                                                              {[5,6,7,8,9,10].map(ci => {
@@ -2559,7 +2649,9 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                     </tbody>
                     <tfoot className="font-bold bg-slate-50 text-sm">
                         <tr>
-                            <td colSpan={6} className="text-right p-2 border border-slate-300">Tổng điểm</td>
+                            <td colSpan={4} className="text-right p-2 border border-slate-300">Tổng điểm / Số tiết</td>
+                            <td className="border border-slate-300 p-2 text-center bg-sky-50/40">{totalSoTietAll} tiết</td>
+                            <td className="border border-slate-300 p-2 text-center bg-orange-50/40 text-orange-800">{sumSoTietChecked} tiết đã KT</td>
                             <td colSpan={2} className="border border-slate-300 p-2 text-center">{formatDiem(nbPoints)}</td>
                             <td colSpan={2} className="border border-slate-300 p-2 text-center">{formatDiem(thPoints)}</td>
                             <td colSpan={2} className="border border-slate-300 p-2 text-center">{formatDiem(vdPoints)}</td>
@@ -2583,24 +2675,129 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
             </div>
             )}
 
-            {/* Note Section for Final Exams */}
-            {isFinalExam && sumSoTietChecked > 0 && (
-                <div className="bg-white border border-gray-200 rounded-lg p-5 shadow-sm text-sm text-gray-800">
-                    <h4 className="font-bold mb-3 text-base flex items-center gap-2">
-                        <span className="text-red-500">*</span> Ghi chú phân bổ tỷ lệ:
-                    </h4>
-                    <ul className="space-y-2 list-none pl-0">
-                        <li className="flex items-start gap-2">
-                            <span className="font-medium min-w-[150px]">Nội dung đã thi:</span> 
-                            <span>Chiếm <b>{actualPercentOld.toFixed(1)}%</b> thời lượng thực tế <span className="mx-2">➝</span> Giảm trọng số còn <b>{targetPercentOld.toFixed(1)}%</b> điểm số toàn bài.</span>
-                        </li>
-                        <li className="flex items-start gap-2">
-                            <span className="font-medium min-w-[150px]">Nội dung mới:</span> 
-                            <span>Chiếm <b>{actualPercentNew.toFixed(1)}%</b> thời lượng thực tế <span className="mx-2">➝</span> Trọng số là <b>{targetPercentNew.toFixed(1)}%</b> điểm số toàn bài.</span>
-                        </li>
-                    </ul>
-                </div>
-            )}
+            {/* * Ghi chú Section (hiển thị ngay dưới Bảng Ma trận và được xuất ra file Word) */}
+            {(() => {
+                const notesSummary = buildMatrixNotesSummary(data, examName);
+                if (notesSummary.items.length === 0) return null;
+
+                return (
+                    <div className="bg-amber-50/50 border border-amber-200 rounded-xl p-4 sm:p-5 shadow-sm text-sm text-slate-800">
+                        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                            <h4 className="font-bold text-base text-slate-900 flex items-center gap-1.5">
+                                <span className="text-red-600 text-lg leading-none">*</span>
+                                <span>Ghi chú:</span>
+                                <span className="text-xs font-normal text-slate-500 ml-1">
+                                    (Tự động tính theo số tiết, cột Đã kiểm tra và xuất kèm vào file Word)
+                                </span>
+                            </h4>
+                            <div className="flex items-center gap-2">
+                                {data.customNote && !isEditingCustomNote && (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            const newData = JSON.parse(JSON.stringify(data));
+                                            delete newData.customNote;
+                                            setCustomNoteDraft('');
+                                            handleUpdateMatrixWithSync(newData);
+                                        }}
+                                        className="text-xs text-slate-500 hover:text-red-600 px-2.5 py-1 rounded border border-slate-300 bg-white hover:bg-red-50 transition-colors cursor-pointer"
+                                    >
+                                        Khôi phục tự động
+                                    </button>
+                                )}
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        if (!isEditingCustomNote) {
+                                            const defaultLines = data.customNote
+                                                ? data.customNote
+                                                : notesSummary.items.map(it => `${it.lineText}\n   + Chi tiết: ${it.lessonDetails.join('; ')}`).join('\n');
+                                            setCustomNoteDraft(defaultLines);
+                                            setIsEditingCustomNote(true);
+                                        } else {
+                                            setIsEditingCustomNote(false);
+                                        }
+                                    }}
+                                    className="text-xs font-semibold text-indigo-700 hover:text-indigo-900 bg-white hover:bg-indigo-50 px-3 py-1 rounded-lg border border-indigo-200 flex items-center gap-1 transition-colors cursor-pointer shadow-2xs"
+                                >
+                                    <Pencil size={12} />
+                                    <span>{isEditingCustomNote ? 'Đóng chỉnh sửa' : 'Tùy chỉnh ghi chú'}</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        {isEditingCustomNote ? (
+                            <div className="space-y-2.5 bg-white p-3 rounded-lg border border-indigo-200">
+                                <textarea
+                                    rows={5}
+                                    value={customNoteDraft}
+                                    onChange={(e) => setCustomNoteDraft(e.target.value)}
+                                    placeholder="Nhập nội dung ghi chú tùy chỉnh (ví dụ: Chủ đề 1: 75% giảm còn 30% - giữ 10)..."
+                                    className="w-full text-sm border border-slate-300 rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
+                                />
+                                <div className="flex items-center justify-end gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsEditingCustomNote(false)}
+                                        className="px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
+                                    >
+                                        Hủy
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            const newData = JSON.parse(JSON.stringify(data));
+                                            newData.customNote = customNoteDraft.trim() || undefined;
+                                            handleUpdateMatrixWithSync(newData);
+                                            setIsEditingCustomNote(false);
+                                        }}
+                                        className="px-3.5 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg flex items-center gap-1 cursor-pointer shadow-xs"
+                                    >
+                                        <Check size={14} />
+                                        <span>Lưu ghi chú</span>
+                                    </button>
+                                </div>
+                            </div>
+                        ) : data.customNote && data.customNote.trim() ? (
+                            <div className="bg-white rounded-lg border border-amber-200/80 p-3.5 space-y-1.5 whitespace-pre-line font-medium text-slate-800">
+                                {data.customNote}
+                            </div>
+                        ) : (
+                            <div className="bg-white rounded-lg border border-amber-200/80 p-3.5 space-y-2.5">
+                                <div className="space-y-1.5">
+                                    {notesSummary.items.map((it, idx) => (
+                                        <div key={idx} className="pb-1.5 border-b border-slate-100 last:border-none last:pb-0">
+                                            <div className="font-bold text-slate-900 text-sm">
+                                                {it.lineText}
+                                            </div>
+                                            {it.lessonDetails.length > 0 && (
+                                                <div className="text-xs text-slate-600 mt-0.5 pl-3 border-l-2 border-indigo-200">
+                                                    Chi tiết bài: {it.lessonDetails.join(' • ')}
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {notesSummary.hasExamined && (
+                                    <div className="pt-2 border-t border-amber-200/70 text-xs text-slate-700 flex flex-wrap gap-x-6 gap-y-1 bg-amber-50/40 p-2 rounded">
+                                        <div>
+                                            <span className="font-bold text-orange-800">- Nội dung đã kiểm tra (Giữa kì):</span>{' '}
+                                            {notesSummary.totalExaminedPeriods}/{notesSummary.totalPeriods} tiết ({notesSummary.actualOldPercent.toFixed(1)}% thời lượng)
+                                            {' ➝ '}Giảm tỷ lệ còn <b>{notesSummary.realizedOldPercent.toFixed(1)}%</b> (mục tiêu {notesSummary.targetOldPercent.toFixed(0)}%).
+                                        </div>
+                                        <div>
+                                            <span className="font-bold text-emerald-800">- Nội dung mới:</span>{' '}
+                                            {notesSummary.totalNewPeriods}/{notesSummary.totalPeriods} tiết ({notesSummary.actualNewPercent.toFixed(1)}% thời lượng)
+                                            {' ➝ '}Tỷ lệ điểm <b>{notesSummary.realizedNewPercent.toFixed(1)}%</b> (mục tiêu {notesSummary.targetNewPercent.toFixed(0)}%).
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                );
+            })()}
             
             <div className="overflow-x-auto rounded-lg border border-slate-300 shadow-sm mt-8">
                 <table className="w-full border-collapse matrix-table text-sm bg-white">

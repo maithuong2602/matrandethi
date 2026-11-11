@@ -162,6 +162,7 @@ export interface MatrixData {
         essayPoint?: number; // Điểm mỗi câu Tự luận (mặc định 1.0)
         useShortAnswer?: boolean; // Tùy chọn bật/tắt phần Trả lời ngắn / Điền khuyết theo đặc thù môn học (mặc định true)
     };
+    customNote?: string; // Ghi chú phân bổ tỷ lệ tùy chỉnh dưới bảng Ma trận
 }
 
 // --- IMPORTED MATRIX JSON TYPES ---
@@ -173,6 +174,7 @@ export interface ImportedMatrixDetail {
         bai: string; // Lesson Name to match
         soTiet: number;
         daThi: boolean;
+        soTietDaThi?: number;
     };
     yeuCauCanDat: string;
     tracNghiem: { NB: number; TH: number; VD: number; VDC: number };

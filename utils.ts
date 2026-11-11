@@ -874,6 +874,254 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
     </html>`;
 };
 
+export interface MatrixTopicNoteItem {
+    topicIndex: number;
+    mainTopic: string;
+    shortName: string;
+    soTiet: number;
+    examinedPeriods: number;
+    newPeriods: number;
+    questionCount: number;
+    points: number;
+    priorPercent: number;
+    realizedPercent: number;
+    targetPercent: number;
+    status: 'reduced' | 'kept' | 'new' | 'adjusted';
+    formattedLine: string;
+    lessonDetails: string[];
+}
+
+export const buildMatrixNotesSummary = (data: MatrixData, examName: string = '') => {
+    const isNewFormat = data.matrixFormat === 'new_4part';
+    const pointsTNKQ = data.pointsConfig?.pointsTNKQ ?? 0.25;
+    const pointsTL = data.pointsConfig?.pointsTL ?? 1.0;
+    const rowEssayPoints = data.pointsConfig?.rowEssayPoints ?? {};
+    const getRowPointsTL = (rIdx: number) => rowEssayPoints[rIdx] ?? pointsTL;
+
+    const mcPt = data.newPointsConfig?.mcPoint ?? 0.25;
+    const tfPt = data.newPointsConfig?.tfPoint ?? 0.25;
+    const saPt = data.newPointsConfig?.saPoint ?? 0.25;
+    const useShortAnswer = data.newPointsConfig?.useShortAnswer !== false;
+
+    const fmtPct = (val: number): string => {
+        const rounded = parseFloat(val.toFixed(1));
+        if (rounded % 1 === 0) return rounded.toFixed(0);
+        return rounded.toString().replace('.', ',');
+    };
+
+    const getRowCfg = (rIdx: number): NewMatrixFormatRowConfig => {
+        const existing = data.newFormatRows?.[rIdx];
+        const r = data.matrix.rows[rIdx] || [];
+        const defNL = getDefaultCompetencyForTopic(String(r[1] || ''), String(r[2] || ''));
+        if (existing) {
+            const clone: NewMatrixFormatRowConfig = JSON.parse(JSON.stringify(existing));
+            if (!useShortAnswer) {
+                (['B', 'H', 'VD'] as const).forEach(lKey => {
+                    const saC = clone.sa[lKey]?.count || 0;
+                    if (saC > 0) {
+                        clone.tf[lKey].count = (clone.tf[lKey]?.count || 0) + saC;
+                        clone.sa[lKey].count = 0;
+                    }
+                });
+            }
+            return clone;
+        }
+        const cfg = createEmptyNewFormatRow(defNL);
+        cfg.mc.B.count = parseInt(String(r[5] || '0'), 10) || 0;
+        cfg.mc.H.count = parseInt(String(r[7] || '0'), 10) || 0;
+        cfg.mc.VD.count = parseInt(String(r[9] || '0'), 10) || 0;
+        cfg.essay.B.count = parseInt(String(r[6] || '0'), 10) || 0;
+        cfg.essay.H.count = parseInt(String(r[8] || '0'), 10) || 0;
+        cfg.essay.VD.count = (parseInt(String(r[10] || '0'), 10) || 0) + (parseInt(String(r[12] || '0'), 10) || 0);
+        return cfg;
+    };
+
+    let totalSoTiet = 0;
+    let sumSoTietChecked = 0;
+    let sumSoTietUnchecked = 0;
+    let grandPoints = 0;
+
+    const rowStats = data.matrix.rows.map((row, rIdx) => {
+        const st = parseFloat(String(row[4]) || '0');
+        const rawExamined = parseFloat(String(row[14]) || '0');
+        const examined = Math.min(Math.max(rawExamined, 0), st);
+        const unexamined = Math.max(st - examined, 0);
+
+        totalSoTiet += st;
+        sumSoTietChecked += examined;
+        sumSoTietUnchecked += unexamined;
+
+        let qCount = 0;
+        let pts = 0;
+        const rEssayPt = getRowPointsTL(rIdx);
+
+        if (isNewFormat) {
+            const cfg = getRowCfg(rIdx);
+            const mcC = cfg.mc.B.count + cfg.mc.H.count + cfg.mc.VD.count;
+            const tfC = cfg.tf.B.count + cfg.tf.H.count + cfg.tf.VD.count;
+            const saC = cfg.sa.B.count + cfg.sa.H.count + cfg.sa.VD.count;
+            const esC = cfg.essay.B.count + cfg.essay.H.count + cfg.essay.VD.count;
+            qCount = mcC + tfC + saC + esC;
+            pts = mcC * mcPt + tfC * tfPt + saC * saPt + esC * rEssayPt;
+        } else {
+            const tnkq = (parseInt(String(row[5]) || '0') + parseInt(String(row[7]) || '0') + parseInt(String(row[9]) || '0') + parseInt(String(row[11]) || '0'));
+            const tl = (parseInt(String(row[6]) || '0') + parseInt(String(row[8]) || '0') + parseInt(String(row[10]) || '0') + parseInt(String(row[12]) || '0'));
+            qCount = tnkq + tl;
+            pts = tnkq * pointsTNKQ + tl * rEssayPt;
+        }
+
+        grandPoints += pts;
+
+        return {
+            rIdx,
+            mainTopic: String(row[1] || ''),
+            subTopic: String(row[2] || ''),
+            lesson: String(row[3] || ''),
+            soTiet: st,
+            examined,
+            unexamined,
+            qCount,
+            pts
+        };
+    });
+
+    // Calculate target weight for examined vs new pool
+    let targetPercentOldPool = 0;
+    if (totalSoTiet > 0) {
+        if (sumSoTietChecked > 0 && sumSoTietUnchecked === 0) {
+            targetPercentOldPool = 100;
+        } else if (sumSoTietChecked === 0) {
+            targetPercentOldPool = 0;
+        } else {
+            const naturalOld = (sumSoTietChecked / totalSoTiet) * 100;
+            targetPercentOldPool = Math.max(30, Math.min(40, naturalOld));
+        }
+    }
+    const targetPercentNewPool = 100 - targetPercentOldPool;
+
+    const getRowTargetPct = (st: number, examined: number, unexamined: number) => {
+        if (totalSoTiet <= 0) return 0;
+        if (sumSoTietChecked > 0 && sumSoTietUnchecked > 0) {
+            const pOld = (examined / sumSoTietChecked) * targetPercentOldPool;
+            const pNew = (unexamined / sumSoTietUnchecked) * targetPercentNewPool;
+            return pOld + pNew;
+        }
+        return (st / totalSoTiet) * 100;
+    };
+
+    const topicGroups: Record<string, typeof rowStats> = {};
+    rowStats.forEach(rs => {
+        if (!topicGroups[rs.mainTopic]) topicGroups[rs.mainTopic] = [];
+        topicGroups[rs.mainTopic].push(rs);
+    });
+
+    const topicKeys = Object.keys(topicGroups);
+    const examinedTopicCount = topicKeys.filter(k => topicGroups[k].some(r => r.examined > 0)).length;
+
+    const topicItems: MatrixTopicNoteItem[] = topicKeys.map((mainTopic, idx) => {
+        const items = topicGroups[mainTopic];
+        const tSoTiet = items.reduce((s, r) => s + r.soTiet, 0);
+        const tExamined = items.reduce((s, r) => s + r.examined, 0);
+        const tNew = items.reduce((s, r) => s + r.unexamined, 0);
+        const tQuestions = items.reduce((s, r) => s + r.qCount, 0);
+        const tPoints = items.reduce((s, r) => s + r.pts, 0);
+        const tTargetPct = items.reduce((s, r) => s + getRowTargetPct(r.soTiet, r.examined, r.unexamined), 0);
+
+        const realizedPct = grandPoints > 0 ? (tPoints / grandPoints) * 100 : tTargetPct;
+        const naturalPct = totalSoTiet > 0 ? (tSoTiet / totalSoTiet) * 100 : 0;
+        const midtermSharePct = sumSoTietChecked > 0 ? (tExamined / sumSoTietChecked) * 100 : naturalPct;
+
+        // If at least 2 topics were examined in midterm (e.g., Chủ đề 1 = 75%, Chủ đề 2 = 25% of midterm), use midtermSharePct; otherwise use naturalPct
+        const priorPct = (tExamined > 0 && examinedTopicCount >= 2) ? midtermSharePct : naturalPct;
+
+        const shortMatch = mainTopic.match(/^(Chủ\s*đề\s*[^.:–\-]+)/i);
+        const shortName = shortMatch ? shortMatch[1].trim() : `Chủ đề ${idx + 1}`;
+        const fullLabel = mainTopic.toLowerCase().startsWith('chủ đề') ? mainTopic : `Chủ đề ${idx + 1} (${mainTopic})`;
+
+        let status: 'reduced' | 'kept' | 'new' | 'adjusted' = 'kept';
+        let formattedLine = '';
+
+        if (sumSoTietChecked > 0) {
+            if (tExamined > 0) {
+                if (realizedPct < priorPct - 0.5) {
+                    status = 'reduced';
+                    formattedLine = `${fullLabel}: ${fmtPct(priorPct)}% giảm còn ${fmtPct(realizedPct)}% - giữ ${tQuestions} câu (${formatDiem(tPoints)} điểm; ${tSoTiet} tiết, đã kiểm tra ${tExamined} tiết)`;
+                } else if (Math.abs(realizedPct - priorPct) <= 0.5) {
+                    status = 'kept';
+                    formattedLine = `${fullLabel}: ${fmtPct(priorPct)}% giữ nguyên – giữ ${tQuestions} câu (${formatDiem(tPoints)} điểm; ${tSoTiet} tiết, đã kiểm tra ${tExamined} tiết)`;
+                } else {
+                    status = 'adjusted';
+                    formattedLine = `${fullLabel}: ${fmtPct(priorPct)}% điều chỉnh thành ${fmtPct(realizedPct)}% – giữ ${tQuestions} câu (${formatDiem(tPoints)} điểm; ${tSoTiet} tiết, đã kiểm tra ${tExamined} tiết)`;
+                }
+            } else {
+                status = 'new';
+                formattedLine = `${fullLabel}: ${fmtPct(realizedPct)}% – ${tQuestions} câu (${formatDiem(tPoints)} điểm; ${tSoTiet} tiết mới, chưa kiểm tra)`;
+            }
+        } else {
+            if (Math.abs(realizedPct - naturalPct) <= 0.5) {
+                status = 'kept';
+                formattedLine = `${fullLabel}: ${fmtPct(realizedPct)}% giữ nguyên – giữ ${tQuestions} câu (${formatDiem(tPoints)} điểm; ${tSoTiet} tiết)`;
+            } else if (realizedPct < naturalPct - 0.5) {
+                status = 'reduced';
+                formattedLine = `${fullLabel}: ${fmtPct(naturalPct)}% giảm còn ${fmtPct(realizedPct)}% - giữ ${tQuestions} câu (${formatDiem(tPoints)} điểm; ${tSoTiet} tiết)`;
+            } else {
+                status = 'adjusted';
+                formattedLine = `${fullLabel}: ${fmtPct(realizedPct)}% – giữ ${tQuestions} câu (${formatDiem(tPoints)} điểm; ${tSoTiet} tiết – tỷ lệ tiết ${fmtPct(naturalPct)}%)`;
+            }
+        }
+
+        const lessonDetails = items.map(r => {
+            const rLabel = r.lesson || r.subTopic;
+            const rRealPct = grandPoints > 0 ? (r.pts / grandPoints) * 100 : getRowTargetPct(r.soTiet, r.examined, r.unexamined);
+            const ktText = r.examined > 0 ? `đã kiểm tra ${r.examined}/${r.soTiet} tiết (giảm tỷ lệ)` : `chưa kiểm tra (${r.soTiet} tiết mới)`;
+            return `${rLabel}: ${r.soTiet} tiết (${ktText}) → chọn ${r.qCount} câu (${formatDiem(r.pts)}đ – ${fmtPct(rRealPct)}%)`;
+        });
+
+        return {
+            topicIndex: idx + 1,
+            mainTopic,
+            shortName,
+            soTiet: tSoTiet,
+            examinedPeriods: tExamined,
+            newPeriods: tNew,
+            questionCount: tQuestions,
+            points: tPoints,
+            priorPercent: priorPct,
+            realizedPercent: realizedPct,
+            targetPercent: tTargetPct,
+            status,
+            formattedLine,
+            lessonDetails
+        };
+    });
+
+    const oldPoints = rowStats.filter(r => r.examined > 0).reduce((s, r) => s + (r.soTiet > 0 ? r.pts * (r.examined / r.soTiet) : 0), 0);
+    const realizedOldPct = grandPoints > 0 ? (oldPoints / grandPoints) * 100 : targetPercentOldPool;
+    const realizedNewPct = Math.max(0, 100 - realizedOldPct);
+    const actualOldPct = totalSoTiet > 0 ? (sumSoTietChecked / totalSoTiet) * 100 : 0;
+    const actualNewPct = totalSoTiet > 0 ? (sumSoTietUnchecked / totalSoTiet) * 100 : 0;
+
+    const defaultLines = topicItems.map(t => t.formattedLine);
+    if (sumSoTietChecked > 0) {
+        defaultLines.push(
+            `Tổng hợp: Kiến thức đã kiểm tra (${sumSoTietChecked}/${totalSoTiet} tiết – ${fmtPct(actualOldPct)}% thời lượng) giảm còn ${fmtPct(realizedOldPct)}% điểm số; Kiến thức mới (${sumSoTietUnchecked}/${totalSoTiet} tiết – ${fmtPct(actualNewPct)}% thời lượng) chiếm ${fmtPct(realizedNewPct)}% điểm số.`
+        );
+    }
+
+    return {
+        totalSoTiet,
+        sumSoTietChecked,
+        sumSoTietUnchecked,
+        grandPoints,
+        actualOldPct,
+        actualNewPct,
+        realizedOldPct,
+        realizedNewPct,
+        topicItems,
+        defaultText: defaultLines.join('\n')
+    };
+};
+
 export const generatePrintHTML = (data: MatrixData, examName: string) => {
     // Extract Grade from examName to use in Title
     const gradeMatch = examName.match(/\d+/);
@@ -1364,17 +1612,6 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             <tbody>${matrixBodyHtml}</tbody>
             ${matrixFooterHtml}
         </table>`;
-        
-    // Add Note for Final Exam (UPDATED to use Realized Percentages)
-    if (isFinalExam && sumSoTietChecked > 0) {
-        matrixTableHtml += `
-            <div style="margin-top: 15px; font-style: italic; font-size: 11pt;">
-                <strong>* Ghi chú phân bổ tỷ lệ:</strong><br/>
-                - Nội dung kiến thức đã thi giữa kì: Thực tế <b>${formatPercent(actualPercentChecked)}%</b> thời lượng &rarr; Giảm còn <b>${formatPercent(notePercentOld)}%</b> điểm số.<br/>
-                - Nội dung kiến thức mới: Thực tế <b>${formatPercent(actualPercentUnchecked)}%</b> thời lượng &rarr; Chiếm <b>${formatPercent(notePercentNew)}%</b> điểm số.
-            </div>
-        `;
-    }
 
     let specTableHtml = `
         <table>
@@ -1534,6 +1771,15 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             const subs = Object.keys(groupedSub);
             const mainSpan = subs.length;
 
+            let mainTopicSoTiet = 0;
+            let mainTopicExamined = 0;
+            rows.forEach((r: any) => {
+                const st = parseFloat(String(r[4]) || '0');
+                const ex = Math.min(Math.max(parseFloat(String(r[14]) || '0'), 0), st);
+                mainTopicSoTiet += st;
+                mainTopicExamined += ex;
+            });
+
             // Tính tổng số dòng <tr> của Chủ đề trong Bảng đặc tả (tách riêng từng YCCĐ)
             const subSpecRowsMap: Record<string, PrintSpecSubRow[]> = {};
             let mainSpecRowSpan = 0;
@@ -1554,9 +1800,22 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 const defaultNL = getDefaultCompetencyForTopic(mainTopic, subTopic);
                 const agg = createEmptyNewFormatRow(defaultNL);
                 let subPts = 0;
+                let subSoTiet = 0;
+                let subExamined = 0;
+                let subTargetPct = 0;
+                const lessonLabels: string[] = [];
 
                 subRows.forEach((r: any) => {
                     const origIdx = data.matrix.rows.indexOf(r);
+                    const st = parseFloat(String(r[4]) || '0');
+                    const ex = Math.min(Math.max(parseFloat(String(r[14]) || '0'), 0), st);
+                    subSoTiet += st;
+                    subExamined += ex;
+                    subTargetPct += getRowTargetPercent(r);
+                    if (r[3] && String(r[3]).trim() && String(r[3]).trim() !== subTopic) {
+                        lessonLabels.push(`${String(r[3]).trim()} (${st} tiết${ex > 0 ? `, đã KT ${ex}` : ''})`);
+                    }
+
                     const rawCfg = getRowCfg(origIdx);
                     const cfg: NewMatrixFormatRowConfig = JSON.parse(JSON.stringify(rawCfg));
                     if (!useShortAnswer) {
@@ -1609,14 +1868,20 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 const sumRowB = agg.mc.B.count + agg.tf.B.count + agg.sa.B.count + agg.essay.B.count;
                 const sumRowH = agg.mc.H.count + agg.tf.H.count + agg.sa.H.count + agg.essay.H.count;
                 const sumRowVD = agg.mc.VD.count + agg.tf.VD.count + agg.sa.VD.count + agg.essay.VD.count;
+                const subTotalQuestions = sumRowB + sumRowH + sumRowVD;
                 const subPct = (subPts / 10) * 100;
+
+                const mainTopicCellHtml = `<b>${mainTopic}</b><br/><span style="font-size:10pt; font-style:italic;">(${mainTopicSoTiet} tiết${mainTopicExamined > 0 ? ` – đã KT ${mainTopicExamined} tiết` : ''})</span>`;
+                const subTopicCellHtml = `${subTopic}${lessonLabels.length > 1 ? `<br/><span style="font-size:9.5pt; color:#444;">${lessonLabels.join('; ')}</span>` : ''}<br/><span style="font-size:10pt; font-style:italic;">(${subSoTiet} tiết${subExamined > 0 ? `, đã KT ${subExamined} tiết` : ''}${subTargetPct > 0 ? ` – Tỉ lệ: ${formatPercent(subTargetPct)}%` : ''})</span>`;
 
                 newMatrixBody += '<tr>';
                 newMatrixBody += `<td>${newStt}</td>`;
                 if (sIdx === 0) {
-                    newMatrixBody += `<td class="text-left align-top" rowspan="${mainSpan}"><b>${mainTopic}</b></td>`;
+                    newMatrixBody += `<td class="text-left align-top" rowspan="${mainSpan}">${mainTopicCellHtml}</td>`;
                 }
-                newMatrixBody += `<td class="text-left">${subTopic}</td>`;
+                newMatrixBody += `<td class="text-left">${subTopicCellHtml}</td>`;
+                newMatrixBody += `<td>${subSoTiet}</td>`;
+                newMatrixBody += `<td>${subExamined > 0 ? `<div><b>${subExamined} tiết</b></div><div style="font-size:9.5pt; color:#555;">(${subTotalQuestions} câu)</div>` : `<span style="color:#888;">0</span><div style="font-size:9.5pt; color:#555;">(${subTotalQuestions} câu)</div>`}</td>`;
                 activeParts.forEach(pKey => {
                     (['B', 'H', 'VD'] as const).forEach(lKey => {
                         const c = agg[pKey][lKey].count;
@@ -1691,6 +1956,8 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                         <th rowspan="4">TT</th>
                         <th rowspan="4">Chủ đề/Chương</th>
                         <th rowspan="4">Nội dung/đơn vị kiến thức</th>
+                        <th rowspan="4">Số tiết</th>
+                        <th rowspan="4">Đã kiểm tra<br/><span style="font-weight:normal; font-size:9.5pt;">(Số tiết &amp; câu)</span></th>
                         <th colspan="${useShortAnswer ? 12 : 9}">Mức độ đánh giá</th>
                         <th colspan="3" rowspan="3">Tổng</th>
                         <th rowspan="4">Tỷ lệ % điểm</th>
@@ -1716,6 +1983,8 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 <tfoot>
                     <tr>
                         <td colspan="3"><b>Tổng số câu/lệnh hỏi</b></td>
+                        <td><b>${totalSoTiet}</b></td>
+                        <td><b>${sumSoTietChecked > 0 ? `${sumSoTietChecked} tiết` : '0'}</b></td>
                         <td><b>${tot.mc.B || ''}</b></td><td><b>${tot.mc.H || ''}</b></td><td><b>${tot.mc.VD || ''}</b></td>
                         <td><b>${tot.tf.B || ''}</b></td><td><b>${tot.tf.H || ''}</b></td><td><b>${tot.tf.VD || ''}</b></td>
                         ${useShortAnswer ? `<td><b>${tot.sa.B || ''}</b></td><td><b>${tot.sa.H || ''}</b></td><td><b>${tot.sa.VD || ''}</b></td>` : ''}
@@ -1724,7 +1993,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                         <td><b>${totCountB + totCountH + totCountVD}</b></td>
                     </tr>
                     <tr>
-                        <td colspan="3"><b>Tổng số điểm</b></td>
+                        <td colspan="5"><b>Tổng số điểm</b></td>
                         <td colspan="3"><b>${formatDiem(ptMC)}</b></td>
                         <td colspan="3"><b>${formatDiem(ptTF)}</b></td>
                         ${useShortAnswer ? `<td colspan="3"><b>${formatDiem(ptSA)}</b></td>` : ''}
@@ -1733,7 +2002,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                         <td><b>${formatDiem(grandPoints)}</b></td>
                     </tr>
                     <tr>
-                        <td colspan="3"><b>Tỷ lệ %</b></td>
+                        <td colspan="5"><b>Tỉ lệ %</b></td>
                         <td colspan="3"><b>${formatPercent(ptMC * 10)}</b></td>
                         <td colspan="3"><b>${formatPercent(ptTF * 10)}</b></td>
                         ${useShortAnswer ? `<td colspan="3"><b>${formatPercent(ptSA * 10)}</b></td>` : ''}
@@ -1782,6 +2051,25 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                     </tr>
                 </tfoot>
             </table>`;
+    }
+
+    // Thêm phần "* Ghi chú:" cụ thể dưới bảng Ma trận cho cả 2 định dạng (New 4-Part & Classic)
+    const notesSummary = buildMatrixNotesSummary(data, examName);
+    const customNoteRaw = (data.customNote || '').trim();
+    const noteLinesToPrint = customNoteRaw
+        ? customNoteRaw.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
+        : notesSummary.defaultText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+
+    if (noteLinesToPrint.length > 0) {
+        const noteLinesHtml = noteLinesToPrint
+            .map(line => `<p style="margin: 2pt 0 2pt 12pt; font-family: 'Times New Roman', serif; font-size: 12pt; text-align: left;">${line}</p>`)
+            .join('');
+        matrixTableHtml += `
+            <div style="margin-top: 8pt; margin-bottom: 12pt; font-family: 'Times New Roman', serif; font-size: 12pt; text-align: left;">
+                <p style="margin: 0 0 3pt 12pt; font-weight: bold; font-size: 12pt; text-align: left;">* Ghi chú:</p>
+                ${noteLinesHtml}
+            </div>
+        `;
     }
 
     return `

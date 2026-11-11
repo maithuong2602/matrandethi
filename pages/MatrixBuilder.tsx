@@ -278,8 +278,9 @@ const MatrixBuilder: React.FC = () => {
                                 r[1] === mainTopic && r[2] === subTopic && r[3] === lessonName
                             );
                             if (existingRow) {
+                                const keptSoTiet = (existingRow[4] && existingRow[4] !== '0') ? existingRow[4] : soTiet;
                                 matrixRows.push([
-                                    stt.toString(), mainTopic, subTopic, lessonName, soTiet, 
+                                    stt.toString(), mainTopic, subTopic, lessonName, keptSoTiet, 
                                     existingRow[5] || '', existingRow[6] || '', existingRow[7] || '', existingRow[8] || '',
                                     existingRow[9] || '', existingRow[10] || '', existingRow[11] || '', existingRow[12] || '',
                                     existingRow[13] || '0', existingRow[14] || '0'
@@ -290,12 +291,12 @@ const MatrixBuilder: React.FC = () => {
                                     '','','','','','','','','0', '0' 
                                 ]);
                             }
-                            const existingSpec = dir.matrixData?.spec?.rows?.find((r: any) =>
+                            const existingSpec = (dir.matrixData?.specifications?.rows || (dir.matrixData as any)?.spec?.rows)?.find((r: any) =>
                                 r[1] === mainTopic && r[2] === subTopic && r[3] === lessonName
                             );
                             if (existingSpec) {
                                 specRows.push([
-                                    stt.toString(), mainTopic, subTopic, lessonName, requirements, 
+                                    stt.toString(), mainTopic, subTopic, lessonName, existingSpec[4] || requirements, 
                                     existingSpec[5] || '0-0', existingSpec[6] || '0-0', existingSpec[7] || '0-0', existingSpec[8] || '0-0'
                                 ]);
                             } else {
@@ -314,24 +315,25 @@ const MatrixBuilder: React.FC = () => {
                             r[1] === mainTopic && r[2] === subTopic && (r[3] === '' || !r[3])
                         );
                         if (existingRow) {
+                            const keptSoTiet = (existingRow[4] && existingRow[4] !== '0') ? existingRow[4] : '2';
                             matrixRows.push([
-                                stt.toString(), mainTopic, subTopic, '', '0', 
+                                stt.toString(), mainTopic, subTopic, '', keptSoTiet, 
                                 existingRow[5] || '', existingRow[6] || '', existingRow[7] || '', existingRow[8] || '',
                                 existingRow[9] || '', existingRow[10] || '', existingRow[11] || '', existingRow[12] || '',
                                 existingRow[13] || '0', existingRow[14] || '0'
                             ]);
                         } else {
                             matrixRows.push([
-                                stt.toString(), mainTopic, subTopic, '', '0', 
+                                stt.toString(), mainTopic, subTopic, '', '2', 
                                 '','','','','','','','','0', '0'
                             ]);
                         }
-                        const existingSpec = dir.matrixData?.spec?.rows?.find((r: any) =>
+                        const existingSpec = (dir.matrixData?.specifications?.rows || (dir.matrixData as any)?.spec?.rows)?.find((r: any) =>
                             r[1] === mainTopic && r[2] === subTopic && (r[3] === '' || !r[3])
                         );
                         if (existingSpec) {
                             specRows.push([
-                                stt.toString(), mainTopic, subTopic, '', requirements, 
+                                stt.toString(), mainTopic, subTopic, '', existingSpec[4] || requirements, 
                                 existingSpec[5] || '0-0', existingSpec[6] || '0-0', existingSpec[7] || '0-0', existingSpec[8] || '0-0'
                             ]);
                         } else {
@@ -362,6 +364,7 @@ const MatrixBuilder: React.FC = () => {
         const prevPointsConfig = dir.matrixData?.pointsConfig;
         const prevNewPointsConfig = dir.matrixData?.newPointsConfig;
         const prevNewFormatRows = dir.matrixData?.newFormatRows;
+        const prevCustomNote = dir.matrixData?.customNote;
 
         dir.matrixData = {
             matrix: { rows: matrixRows },
@@ -372,7 +375,8 @@ const MatrixBuilder: React.FC = () => {
             ...(prevFormat ? { matrixFormat: prevFormat } : {}),
             ...(prevPointsConfig ? { pointsConfig: prevPointsConfig } : {}),
             ...(prevNewPointsConfig ? { newPointsConfig: prevNewPointsConfig } : {}),
-            ...(prevNewFormatRows ? { newFormatRows: prevNewFormatRows } : {})
+            ...(prevNewFormatRows ? { newFormatRows: prevNewFormatRows } : {}),
+            ...(prevCustomNote !== undefined ? { customNote: prevCustomNote } : {})
         };
     };
 
@@ -437,19 +441,21 @@ const MatrixBuilder: React.FC = () => {
         const totalSoTietAll = rows.reduce((s: number, r: any) => s + r.soTiet, 0);
         const totalSoTietExaminedAll = rows.reduce((s: number, r: any) => s + r.soTietExamined, 0);
         const totalSoTietNewAll = rows.reduce((s: number, r: any) => s + r.soTietNew, 0);
+        const hasExaminedReduction = (isFinalExam || totalSoTietExaminedAll > 0) && totalSoTietExaminedAll > 0 && totalSoTietNewAll > 0;
 
-        if (!isFinalExam) {
-            // --- MID-TERM LOGIC: Proportional to Total Periods (Giữ nguyên) ---
+        if (!hasExaminedReduction) {
+            // --- PROPORTIONAL TO TOTAL PERIODS ---
             rows.forEach((r: any) => {
                 if (totalSoTietAll > 0) {
                     r.targetScore = (r.soTiet / totalSoTietAll) * TOTAL_SCORE;
                 }
             });
         } else {
-            // --- FINAL EXAM LOGIC: Weighted Old vs New ---
-            // Constraint: Old Content strictly max 35% (3.5 points)
-            const scoreForOld = TOTAL_SCORE * MAX_OLD_PERCENT; // 3.5
-            const scoreForNew = TOTAL_SCORE - scoreForOld; // 6.5
+            // --- WEIGHTED OLD VS NEW (Giảm tỷ lệ bài đã kiểm tra còn 30% - 35%) ---
+            const naturalOldRatio = totalSoTietExaminedAll / totalSoTietAll;
+            const reducedOldRatio = Math.min(Math.max(naturalOldRatio * 0.5, 0.30), MAX_OLD_PERCENT);
+            const scoreForOld = TOTAL_SCORE * reducedOldRatio;
+            const scoreForNew = TOTAL_SCORE - scoreForOld;
 
             rows.forEach((r: any) => {
                 let sOld = 0, sNew = 0;
@@ -470,17 +476,23 @@ const MatrixBuilder: React.FC = () => {
         for(let i=0; i<targetVD_TL; i++) tasksTL.push('VD');
 
         for (const type of tasksTL) {
-            // Filter candidates that have availability
-            const candidates = rows.filter((r: any) => {
+            // Filter candidates that have availability (or fallback to any row with periods > 0 if bank not loaded into folder)
+            let candidates = rows.filter((r: any) => {
                 const avail = type === 'VD' ? r.avail.VD.TL : r.avail.VDC.TL;
                 const allocated = type === 'VD' ? r.allocVD : r.allocVDC;
                 return avail > allocated;
             });
+            if (candidates.length === 0) {
+                candidates = rows.filter((r: any) => r.soTiet > 0 && (r.allocVD + r.allocVDC) === 0);
+            }
+            if (candidates.length === 0) {
+                candidates = rows.filter((r: any) => r.soTiet > 0);
+            }
 
             // Sorting Strategy
             candidates.sort((a: any, b: any) => {
-                if (isFinalExam) {
-                    // Final Exam Priority: New Content > Mixed Content > Old Content
+                if (hasExaminedReduction) {
+                    // Priority: New Content > Mixed Content > Old Content
                     if (a.isNewLesson && !b.isNewLesson) return -1;
                     if (!a.isNewLesson && b.isNewLesson) return 1;
                 }
@@ -508,8 +520,8 @@ const MatrixBuilder: React.FC = () => {
         let currentTH = 0;
         const TOLERANCE = 0.25; 
         
-        // Define Score Limits for Final Exam Groups
-        const LIMIT_OLD_SCORE = isFinalExam ? (TOTAL_SCORE * MAX_OLD_PERCENT) : 10; // 3.5
+        // Define Score Limits for Examined Lessons
+        const LIMIT_OLD_SCORE = hasExaminedReduction ? (TOTAL_SCORE * MAX_OLD_PERCENT) : 10; // 3.5
 
         let safetyLoop = 0;
         
@@ -543,42 +555,43 @@ const MatrixBuilder: React.FC = () => {
                 const alloc = targetLevel === 'NB' ? r.allocNB : r.allocTH;
                 if (avail <= alloc) return false;
 
-                // 2. GLOBAL CAP CHECK FOR OLD LESSONS (Crucial Update)
-                if (isFinalExam && r.isOldLesson) {
-                    // If adding 0.25 exceeds the GLOBAL limit for old lessons (3.5), skip.
+                // 2. GLOBAL CAP CHECK FOR OLD LESSONS
+                if (hasExaminedReduction && r.isOldLesson) {
                     if (currentTotalOldScore + SCORE_TN > LIMIT_OLD_SCORE + 0.05) return false;
                 }
 
                 // 3. INDIVIDUAL SCORE CHECK
                 const current = r.currentScore;
                 const target = r.targetScore;
-                
-                if (isFinalExam) {
-                    // Allow slight overflow for individual if global cap isn't hit, 
-                    // BUT heavily deprioritize lessons that already have 2.0 (handled in Sort).
-                    // If lesson is purely old and already exceeds target significantly, discourage unless desperate.
-                    // Actually, if a lesson has 2 VD (2.0 pts), it likely exceeds its small target. 
-                    // We rely on sorting to pick OTHER old lessons first.
-                } else {
-                    // Mid-term: Standard Tolerance
-                    if (current >= target + TOLERANCE) return false;
-                }
+                if (current >= target + TOLERANCE) return false;
                 
                 return true;
             });
 
-            // Fallback: If no strict candidates, and we really need questions
+            // Fallback 1: Relax individual tolerance if still within bank availability
             if (candidates.length === 0) {
                  candidates = rows.filter((r: any) => {
                     const avail = targetLevel === 'NB' ? r.avail.NB.TN : r.avail.TH.TN;
                     const alloc = targetLevel === 'NB' ? r.allocNB : r.allocTH;
-                    // Still enforce Global Old Cap even in fallback? 
-                    // Yes, prompt says "tổng bài cũ không nhiều hơn 35%". This is a hard constraint.
-                    if (isFinalExam && r.isOldLesson) {
+                    if (hasExaminedReduction && r.isOldLesson) {
                         if (currentTotalOldScore + SCORE_TN > LIMIT_OLD_SCORE + 0.05) return false;
                     }
                     return avail > alloc;
                 });
+            }
+
+            // Fallback 2: Distribute purely by period ratio & examined reduction when folder has no pre-loaded question files
+            if (candidates.length === 0) {
+                candidates = rows.filter((r: any) => {
+                    if (r.soTiet <= 0) return false;
+                    if (hasExaminedReduction && r.isOldLesson) {
+                        if (currentTotalOldScore + SCORE_TN > LIMIT_OLD_SCORE + 0.05) return false;
+                    }
+                    return r.currentScore < r.targetScore + TOLERANCE;
+                });
+            }
+            if (candidates.length === 0) {
+                candidates = rows.filter((r: any) => r.soTiet > 0);
             }
 
             if (candidates.length === 0) break; 
@@ -1065,7 +1078,8 @@ const MatrixBuilder: React.FC = () => {
                         noiDung: row[2],
                         bai: row[3],
                         soTiet: parseFloat(row[4]) || 0,
-                        daThi: row[14] === '1'
+                        daThi: (parseFloat(row[14]) || 0) > 0,
+                        soTietDaThi: parseFloat(row[14]) || 0
                     },
                     yeuCauCanDat: specRow ? specRow[4] : '',
                     tracNghiem: {
