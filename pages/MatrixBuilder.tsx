@@ -703,6 +703,38 @@ const MatrixBuilder: React.FC = () => {
 
             rowCfg.essay.VD.count = (r.allocVD || 0) + (r.allocVDC || 0);
             data.newFormatRows[idx] = rowCfg;
+
+            // Tự động đồng bộ cột Yêu cầu cần đạt trên Bản đặc tả: chỉ bật các tiêu chí tương ứng với mức độ & số câu được chọn ra đề
+            const rawReqHtml = String(data.specifications.rows[idx]?.[4] || '');
+            if (rawReqHtml) {
+                const updatedReqHtml = rawReqHtml.replace(
+                    /<strong\b[^>]*>([\s\S]*?)<\/strong>([\s\S]*?)(?=(?:<strong\b[^>]*>|$))/gi,
+                    (_fullMatch, rawTitle, bodyHtml) => {
+                        const lower = String(rawTitle || '').replace(/<[^>]*>/g, '').trim().toLowerCase();
+                        let lvlQuota = 0;
+                        if (lower.startsWith('nhận biết') || lower.startsWith('biết') || lower.startsWith('- biết')) {
+                            lvlQuota = r.allocNB || 0;
+                        } else if (lower.startsWith('thông hiểu') || lower.startsWith('hiểu') || lower.startsWith('- hiểu')) {
+                            lvlQuota = r.allocTH || 0;
+                        } else if (lower.startsWith('vận dụng cao')) {
+                            lvlQuota = r.allocVDC || r.allocVD || 0;
+                        } else {
+                            lvlQuota = (r.allocVD || 0) + (r.allocVDC || 0);
+                        }
+                        let itemIdx = 0;
+                        const updatedBody = String(bodyHtml).replace(
+                            /<div([^>]*)>([\s\S]*?)<\/div>/gi,
+                            (_divMatch, _attrs, innerTxt) => {
+                                itemIdx++;
+                                const isSelected = lvlQuota > 0 && itemIdx <= lvlQuota;
+                                return `<div class="pl-2"${isSelected ? '' : ' data-unchecked="true"'}>${innerTxt}</div>`;
+                            }
+                        );
+                        return `<strong class="block font-semibold">${rawTitle}</strong>${updatedBody}`;
+                    }
+                );
+                data.specifications.rows[idx][4] = updatedReqHtml;
+            }
         });
 
         setFileSystem(root);

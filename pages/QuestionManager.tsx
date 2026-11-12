@@ -29,7 +29,7 @@ import {
 } from 'lucide-react';
 import { ExerciseQuestion, BankScope, UserProfile } from '../types';
 import { CURRICULUM } from '../data/curriculum';
-import { parseQuestionsWithAI, generateBulkQuestions, generateEssayRubric } from '../services/geminiService';
+import { parseQuestionsWithAI, parseStructuredTextQuestions, generateBulkQuestions, generateEssayRubric } from '../services/geminiService';
 import { generateOfflineQuestions } from '../services/offlineQuestionGenerator';
 import { 
   loadQuestionBank, 
@@ -153,7 +153,7 @@ export const splitLegacyTrueFalseQuestions = (questions: ExerciseQuestion[]): Ex
         ...q,
         options: normalizedOptions,
         answer: answerSummary,
-        points: q.points || 1.0
+        points: q.points === 1.0 ? 0.25 : (q.points || 0.25)
       };
     }
     return q;
@@ -228,8 +228,14 @@ const QuestionManager: React.FC = () => {
   };
 
   const [bulkText, setBulkText] = useState('');
+  const [bulkMode, setBulkMode] = useState<'ai' | 'syntax'>('syntax');
   const [bulkTab, setBulkTab] = useState<'text' | 'pdf'>('text');
   const [bulkPdf, setBulkPdf] = useState<{ name: string; size: string; base64: string } | null>(null);
+
+  const syntaxDetectedQuestions = useMemo(() => {
+    if (!bulkText.trim()) return [];
+    return parseStructuredTextQuestions(bulkText);
+  }, [bulkText]);
 
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -984,6 +990,114 @@ const QuestionManager: React.FC = () => {
       e.target.value = '';
   };
 
+  const commitRawQuestionsToBank = (rawQuestions: any[]) => {
+    const newQuestions: ExerciseQuestion[] = rawQuestions.map((q: any) => {
+        const isMulti = q.questionType === 'multiple-answer' || q.mcType === 'multiple-answer';
+        const isTF = q.questionType === 'true-false';
+        const isShort = q.questionType === 'short-answer' || q.mcType === 'fill-blank';
+        const isEssay = q.category === 'essay' || q.questionType === 'essay';
+
+        let options: Option[] = [];
+        if (isTF) {
+            const isFourSub = Array.isArray(q.options) && q.options.length >= 2 && !q.options.some((o: any) => o.id === 'Đúng' || o.id === 'Sai');
+            if (isFourSub) {
+                const subIds = ['a', 'b', 'c', 'd'];
+                options = subIds.map((id, idx) => ({
+                    id,
+                    text: q.options[idx]?.text || '',
+                    isCorrect: Boolean(q.options[idx]?.isCorrect)
+                }));
+            } else {
+                const isTrue = Array.isArray(q.options) && q.options.length > 0
+                    ? Boolean(q.options[0]?.isCorrect)
+                    : String(q.answer || '').trim().toLowerCase().startsWith('đ');
+                options = [
+                    { id: 'Đúng', text: 'Đúng', isCorrect: isTrue },
+                    { id: 'Sai', text: 'Sai', isCorrect: !isTrue }
+                ];
+            }
+        } else if (!isShort && !isEssay) {
+            options = Array.isArray(q.options) && q.options.length > 0 ? q.options.map((opt: any, idx: number) => ({
+                id: ['A', 'B', 'C', 'D'][idx] || idx.toString(),
+                text: opt.text || '',
+                isCorrect: opt.isCorrect || false
+            })) : [
+                { id: 'A', text: '', isCorrect: false },
+                { id: 'B', text: '', isCorrect: false },
+                { id: 'C', text: '', isCorrect: false },
+                { id: 'D', text: '', isCorrect: false },
+            ];
+        }
+
+        const correctAnswers = isTF && options.some(o => ['a', 'b', 'c', 'd'].includes(o.id))
+            ? options.map(o => `${o.id}-${o.isCorrect ? 'Đ' : 'S'}`).join(', ')
+            : options.filter(o => o.isCorrect).map(o => o.id).join(', ');
+        const resolvedLevel = (['NB', 'TH', 'VD', 'VDC'].includes(String(q.level || '').toUpperCase())
+            ? String(q.level).toUpperCase()
+            : 'NB') as 'NB' | 'TH' | 'VD' | 'VDC';
+
+        const levelCriteriaOpts = getCriteriaOptionsForLevel(resolvedLevel);
+        const defaultCriterionCode = levelCriteriaOpts.length > 0 ? levelCriteriaOpts[0].split(' ')[0] : '';
+        const resolvedCriteria = q.criteria && levelCriteriaOpts.some(c => c.startsWith(q.criteria))
+            ? q.criteria
+            : (q.criteria || defaultCriterionCode);
+
+        const targetScope = activeScope === 'shared' && canApproveBank ? 'shared' : 'personal';
+
+        return {
+            id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+            category: isEssay ? 'essay' : (q.category || 'mc'),
+            questionType: q.questionType || (isMulti ? 'multiple-answer' : (isEssay ? 'essay' : 'multiple-choice')),
+            level: resolvedLevel,
+            criteria: resolvedCriteria,
+            content: q.content || '',
+            grade: grade || '',
+            lesson: lesson || '',
+            mcType: isMulti ? 'multiple-answer' : (isShort ? 'fill-blank' : (q.mcType || 'multiple-choice')),
+            options: options,
+            answer: q.answer || correctAnswers || '',
+            essayType: 'explanation',
+            originalNumber: resolvedCriteria ? `${resolvedCriteria}` : undefined,
+            bankScope: targetScope,
+            ownerEmail: userEmail,
+            ownerName: userName,
+            contentHash: computeQuestionContentHash(q.content || '', lesson || '')
+        };
+    });
+
+    let skippedCount = 0;
+    const uniqueQuestions = newQuestions.filter(nq => {
+        const isDup = checkDuplicateBeforeAdd(filteredQuestions, nq.content);
+        if (isDup) skippedCount++;
+        return !isDup;
+    });
+
+    if (uniqueQuestions.length === 0 && skippedCount > 0) {
+         setAlertMessage(`Cảnh báo: Tất cả ${skippedCount} câu hỏi đều trùng hoặc gần giống với dữ liệu hiện có.`);
+    } else {
+         setQuestions(prev => [...prev, ...uniqueQuestions]);
+         const successMsg = `Đã nhập: ${uniqueQuestions.length} câu hỏi thuộc bài "${lesson}".`;
+         const skipMsg = skippedCount > 0 ? ` Đã tự động bỏ qua ${skippedCount} câu trùng lặp (giống >90%).` : '';
+         setAlertMessage(successMsg + skipMsg);
+    }
+
+    setIsBulkModalOpen(false);
+    setBulkText('');
+    setBulkPdf(null);
+  };
+
+  const handleSyntaxDirectImport = () => {
+    if (!grade || !lesson) {
+        setAlertMessage("Vui lòng chọn Khối và Bài học trước khi nhập câu hỏi.");
+        return;
+    }
+    if (syntaxDetectedQuestions.length === 0) {
+        setAlertMessage("Chưa nhận diện được câu hỏi nào theo cú pháp chuẩn. Vui lòng kiểm tra lại định dạng hoặc chuyển sang Chức năng 1 (Dùng AI phân tích).");
+        return;
+    }
+    commitRawQuestionsToBank(syntaxDetectedQuestions);
+  };
+
   const handleAIImport = async () => {
     if (bulkTab === 'text' && !bulkText.trim()) {
         setAlertMessage("Vui lòng nhập nội dung để phân tích.");
@@ -1013,99 +1127,7 @@ const QuestionManager: React.FC = () => {
             return;
         }
 
-        const newQuestions: ExerciseQuestion[] = aiQuestions.map((q: any) => {
-            const isMulti = q.questionType === 'multiple-answer' || q.mcType === 'multiple-answer';
-            const isTF = q.questionType === 'true-false';
-            const isShort = q.questionType === 'short-answer' || q.mcType === 'fill-blank';
-            const isEssay = q.category === 'essay' || q.questionType === 'essay';
-
-            let options: Option[] = [];
-            if (isTF) {
-                const isFourSub = Array.isArray(q.options) && q.options.length >= 2 && !q.options.some((o: any) => o.id === 'Đúng' || o.id === 'Sai');
-                if (isFourSub) {
-                    const subIds = ['a', 'b', 'c', 'd'];
-                    options = subIds.map((id, idx) => ({
-                        id,
-                        text: q.options[idx]?.text || '',
-                        isCorrect: Boolean(q.options[idx]?.isCorrect)
-                    }));
-                } else {
-                    const isTrue = Array.isArray(q.options) && q.options.length > 0
-                        ? Boolean(q.options[0]?.isCorrect)
-                        : String(q.answer || '').trim().toLowerCase().startsWith('đ');
-                    options = [
-                        { id: 'Đúng', text: 'Đúng', isCorrect: isTrue },
-                        { id: 'Sai', text: 'Sai', isCorrect: !isTrue }
-                    ];
-                }
-            } else if (!isShort && !isEssay) {
-                options = Array.isArray(q.options) && q.options.length > 0 ? q.options.map((opt: any, idx: number) => ({
-                    id: ['A', 'B', 'C', 'D'][idx] || idx.toString(),
-                    text: opt.text || '',
-                    isCorrect: opt.isCorrect || false
-                })) : [
-                    { id: 'A', text: '', isCorrect: false },
-                    { id: 'B', text: '', isCorrect: false },
-                    { id: 'C', text: '', isCorrect: false },
-                    { id: 'D', text: '', isCorrect: false },
-                ];
-            }
-
-            const correctAnswers = isTF && options.some(o => ['a', 'b', 'c', 'd'].includes(o.id))
-                ? options.map(o => `${o.id}-${o.isCorrect ? 'Đ' : 'S'}`).join(', ')
-                : options.filter(o => o.isCorrect).map(o => o.id).join(', ');
-            const resolvedLevel = (['NB', 'TH', 'VD', 'VDC'].includes(String(q.level || '').toUpperCase())
-                ? String(q.level).toUpperCase()
-                : 'NB') as 'NB' | 'TH' | 'VD' | 'VDC';
-
-            const levelCriteriaOpts = getCriteriaOptionsForLevel(resolvedLevel);
-            const defaultCriterionCode = levelCriteriaOpts.length > 0 ? levelCriteriaOpts[0].split(' ')[0] : '';
-            const resolvedCriteria = q.criteria && levelCriteriaOpts.some(c => c.startsWith(q.criteria))
-                ? q.criteria
-                : (q.criteria || defaultCriterionCode);
-
-            const targetScope = activeScope === 'shared' && canApproveBank ? 'shared' : 'personal';
-
-            return {
-                id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-                category: isEssay ? 'essay' : (q.category || 'mc'),
-                questionType: q.questionType || (isMulti ? 'multiple-answer' : (isEssay ? 'essay' : 'multiple-choice')),
-                level: resolvedLevel,
-                criteria: resolvedCriteria,
-                content: q.content || '',
-                grade: grade || '',
-                lesson: lesson || '',
-                mcType: isMulti ? 'multiple-answer' : (isShort ? 'fill-blank' : (q.mcType || 'multiple-choice')),
-                options: options,
-                answer: q.answer || correctAnswers || '',
-                essayType: 'explanation',
-                originalNumber: resolvedCriteria ? `${resolvedCriteria}` : undefined,
-                bankScope: targetScope,
-                ownerEmail: userEmail,
-                ownerName: userName,
-                contentHash: computeQuestionContentHash(q.content || '', lesson || '')
-            };
-        });
-
-        let skippedCount = 0;
-        const uniqueQuestions = newQuestions.filter(nq => {
-            const isDup = checkDuplicateBeforeAdd(filteredQuestions, nq.content);
-            if (isDup) skippedCount++;
-            return !isDup;
-        });
-
-        if (uniqueQuestions.length === 0 && skippedCount > 0) {
-             setAlertMessage(`Cảnh báo: Tất cả ${skippedCount} câu hỏi đều trùng hoặc gần giống với dữ liệu hiện có.`);
-        } else {
-             setQuestions(prev => [...prev, ...uniqueQuestions]);
-             const successMsg = `Đã nhập: ${uniqueQuestions.length} câu hỏi thuộc bài "${lesson}".`;
-             const skipMsg = skippedCount > 0 ? ` Đã tự động bỏ qua ${skippedCount} câu trùng lặp (giống >90%).` : '';
-             setAlertMessage(successMsg + skipMsg);
-        }
-        
-        setIsBulkModalOpen(false);
-        setBulkText('');
-        setBulkPdf(null);
+        commitRawQuestionsToBank(aiQuestions);
     } catch (error) {
         setAlertMessage("Đã xảy ra lỗi khi phân tích AI. Vui lòng thử lại.");
     } finally {
@@ -1202,11 +1224,12 @@ ${formatExample}`;
       setTimeout(() => setCopiedPromptSuccess(false), 3000);
       if (openBulkAfterCopy) {
           setIsGenModalOpen(false);
+          setBulkMode('syntax');
           setBulkTab('text');
           setIsBulkModalOpen(true);
-          setAlertMessage("Đã sao chép Prompt chuẩn vào bộ nhớ tạm! Hãy dán (Ctrl+V) vào ChatGPT/Gemini kèm file đính kèm, sau đó dán kết quả AI trả về vào ô bên dưới.");
+          setAlertMessage("Đã sao chép Prompt chuẩn vào bộ nhớ tạm! Hãy dán (Ctrl+V) vào ChatGPT/Gemini kèm file đính kèm, sau đó dán kết quả AI trả về vào Chức năng 2 để tự động nhận hàng loạt.");
       } else {
-          setAlertMessage("Đã sao chép Prompt! Bạn hãy dán (Ctrl+V) vào ChatGPT/Gemini kèm file đính kèm, rồi copy kết quả đưa vào 'Nhập hàng loạt (AI Scan)'.");
+          setAlertMessage("Đã sao chép Prompt! Bạn hãy dán (Ctrl+V) vào ChatGPT/Gemini kèm file đính kèm, rồi copy kết quả đưa vào 'Nhập hàng loạt -> Chức năng 2: Dán theo cú pháp chuẩn'.");
       }
   };
 
@@ -2801,76 +2824,103 @@ ${formatExample}`;
       {/* Bulk Import Modal */}
       {isBulkModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-            <div className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-                <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-                    <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-                        <Layers className="text-primary" /> Nhập hàng loạt (AI Scan)
-                    </h3>
+            <div className="bg-white rounded-2xl w-full max-w-4xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+                <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                    <div>
+                        <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+                            <Layers className="text-primary" /> Nhập câu hỏi hàng loạt
+                        </h3>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                            Đang nhập cho: <b className="text-primary">Khối {grade || '...'} — {lesson || 'Chưa chọn bài học'}</b>
+                        </p>
+                    </div>
                     <button onClick={() => setIsBulkModalOpen(false)} className="text-gray-400 hover:text-gray-600 transition-colors">
                         <X size={24} />
                     </button>
                 </div>
                 
                 <div className="p-6 flex-1 overflow-y-auto">
-                    {/* Bulk Method Tabs */}
-                    <div className="flex gap-2 mb-4 p-1 bg-gray-100 rounded-xl max-w-sm">
+                    {/* 2 Main Bulk Functions */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
                         <button
                             type="button"
-                            onClick={() => setBulkTab('text')}
-                            className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${bulkTab === 'text' ? 'bg-white text-primary shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+                            onClick={() => setBulkMode('ai')}
+                            className={`p-3.5 rounded-xl border-2 text-left transition-all flex items-start gap-3 cursor-pointer ${
+                                bulkMode === 'ai'
+                                    ? 'border-purple-600 bg-purple-50/70 shadow-sm'
+                                    : 'border-gray-200 bg-white hover:border-purple-300'
+                            }`}
                         >
-                            Dán văn bản (Ctrl+V)
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setBulkTab('pdf')}
-                            className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${bulkTab === 'pdf' ? 'bg-white text-primary shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
-                        >
-                            <FileText size={14} /> Tải file PDF đề thi
-                        </button>
-                    </div>
-
-                    <div className="bg-gradient-to-r from-purple-50 to-blue-50 border border-purple-100 rounded-lg p-4 mb-5">
-                        <div className="flex items-start gap-3">
-                            <Sparkles className="text-purple-600 mt-0.5 flex-shrink-0" size={18} />
-                            <div>
-                                <p className="font-bold text-gray-800 text-xs mb-0.5">Công nghệ phân tích câu hỏi tự động</p>
-                                <p className="text-xs text-gray-600 leading-relaxed">
-                                    {bulkTab === 'pdf' 
-                                        ? `Tải lên file PDF chứa đề thi hoặc danh sách bài tập. AI sẽ tự động đọc tài liệu PDF, bóc tách toàn bộ câu hỏi và lọc đúng nội dung bài "${lesson || '...'}"`
-                                        : `Chỉ cần copy nội dung từ Word/PDF và dán vào dưới. AI sẽ tự động nhận diện câu hỏi, đáp án và lọc đúng bài "${lesson || '...'}"`
-                                    }
-                                </p>
+                            <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 font-bold ${bulkMode === 'ai' ? 'bg-purple-600 text-white' : 'bg-gray-100 text-gray-600'}`}>
+                                <Sparkles size={18} />
                             </div>
-                        </div>
+                            <div>
+                                <div className={`text-sm font-bold ${bulkMode === 'ai' ? 'text-purple-950' : 'text-gray-800'}`}>
+                                    Chức năng 1: Dùng AI phân tích
+                                </div>
+                                <div className="text-xs text-gray-600 mt-0.5 leading-snug">
+                                    Dán văn bản tự do từ Word hoặc tải file PDF đề thi để AI tự động đọc, phân loại và bóc tách câu hỏi.
+                                </div>
+                            </div>
+                        </button>
+
+                        <button
+                            type="button"
+                            onClick={() => setBulkMode('syntax')}
+                            className={`p-3.5 rounded-xl border-2 text-left transition-all flex items-start gap-3 cursor-pointer ${
+                                bulkMode === 'syntax'
+                                    ? 'border-emerald-600 bg-emerald-50/70 shadow-sm'
+                                    : 'border-gray-200 bg-white hover:border-emerald-300'
+                            }`}
+                        >
+                            <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 font-bold ${bulkMode === 'syntax' ? 'bg-emerald-600 text-white' : 'bg-gray-100 text-gray-600'}`}>
+                                <CheckCircle2 size={18} />
+                            </div>
+                            <div className="flex-1">
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className={`text-sm font-bold ${bulkMode === 'syntax' ? 'text-emerald-950' : 'text-gray-800'}`}>
+                                        Chức năng 2: Dán theo cú pháp chuẩn
+                                    </span>
+                                    <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-100 text-emerald-800 rounded-full">
+                                        Tự động nhận tức thì
+                                    </span>
+                                </div>
+                                <div className="text-xs text-gray-600 mt-0.5 leading-snug">
+                                    Dán kết quả từ Prompt AI chuẩn hoặc văn bản đúng cú pháp — hệ thống tự nhận hàng loạt ngay lập tức (0 giây, không tốn quota AI).
+                                </div>
+                            </div>
+                        </button>
                     </div>
 
-                    {bulkTab === 'text' ? (
-                        <div className="space-y-3">
-                            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-700 space-y-1.5">
+                    {bulkMode === 'syntax' ? (
+                        <div className="space-y-4">
+                            <div className="bg-emerald-50/80 border border-emerald-200 rounded-xl p-3.5 text-xs text-slate-700 space-y-2">
                                 <div className="flex flex-wrap items-center justify-between gap-2">
-                                    <div className="font-bold text-slate-800">Mẹo cú pháp nhận diện nhanh đáp án & mức độ (100% chính xác):</div>
+                                    <div className="font-bold text-emerald-950 flex items-center gap-1.5">
+                                        <CheckCircle2 size={15} className="text-emerald-600" />
+                                        Cú pháp chuẩn tự động nhận hàng loạt 100% (Tương thích trực tiếp với Prompt tạo câu hỏi):
+                                    </div>
                                     <button
                                         type="button"
                                         onClick={() => {
                                             const allCrit = [
-                                                ...getCriteriaOptionsForLevel('NB').map(c => `- [NB] ${c}`),
-                                                ...getCriteriaOptionsForLevel('TH').map(c => `- [TH] ${c}`),
-                                                ...getCriteriaOptionsForLevel('VD').map(c => `- [VD] ${c}`),
-                                                ...getCriteriaOptionsForLevel('VDC').map(c => `- [VDC] ${c}`)
+                                                ...getCriteriaOptionsForLevel('NB').map(c => `- [NB - ${c.split(' ')[0]}] ${c}`),
+                                                ...getCriteriaOptionsForLevel('TH').map(c => `- [TH - ${c.split(' ')[0]}] ${c}`),
+                                                ...getCriteriaOptionsForLevel('VD').map(c => `- [VD - ${c.split(' ')[0]}] ${c}`),
+                                                ...getCriteriaOptionsForLevel('VDC').map(c => `- [VDC - ${c.split(' ')[0]}] ${c}`)
                                             ].join('\n');
-                                            const promptText = `Hãy đóng vai chuyên gia biên soạn đề kiểm tra môn Tin học theo Công văn 7991/BGDĐT. Dựa sát 100% vào nội dung nguồn tài liệu/file đính kèm${lesson ? ` của bài học "${lesson}" (Khối ${grade || ''})` : ''}, hãy tạo danh sách câu hỏi theo ĐÚNG định dạng chuẩn dưới đây để tôi dán trực tiếp vào chức năng "Nhập hàng loạt (AI Scan)":
+                                            const promptText = `Hãy đóng vai chuyên gia biên soạn đề kiểm tra môn Tin học theo Công văn 7991/BGDĐT. Dựa sát 100% vào nội dung nguồn tài liệu/file đính kèm${lesson ? ` của bài học "${lesson}" (Khối ${grade || ''})` : ''}, hãy tạo danh sách câu hỏi theo ĐÚNG cú pháp chuẩn dưới đây để phần mềm tự động nhận hàng loạt:
 
 ${allCrit ? `YÊU CẦU CẦN ĐẠT (TIÊU CHÍ) CỦA BÀI HỌC:\n${allCrit}\n\n` : ''}YÊU CẦU CỐT LÕI VỀ NỘI DUNG TÌNH HUỐNG & CÂU HỎI:
 - Toàn bộ nội dung Tình huống và các phát biểu/lựa chọn BẮT BUỘC phải trích xuất, khai thác trực tiếp từ kiến thức, dữ kiện, ví dụ thực tế có trong TÀI LIỆU NGUỒN ĐÍNH KÈM và Yêu cầu cần đạt của bài học.
 - Mỗi Tình huống phải là một bối cảnh cụ thể, riêng biệt gắn với nội dung tài liệu nguồn để học sinh phân tích.
 
 QUY TẮC ĐỊNH DẠNG BẮT BUỘC (KHÔNG DÙNG BẢNG, KHÔNG DÙNG ĐỊNH DẠNG ĐẬM/NGHIÊNG MARKDOWN **):
-1. Đầu mỗi câu hỏi (hoặc ngay sau chữ "Tình huống X:") BẮT BUỘC gắn nhãn mức độ nhận thức trong ngoặc vuông: [NB] (Nhận biết), [TH] (Thông hiểu), [VD] (Vận dụng) hoặc [VDC] (Vận dụng cao). Có thể kèm mã tiêu chí như [NB - 1.1], [TH - 2.1], [VD - 3.1].
+1. Đầu mỗi câu hỏi (hoặc ngay sau chữ "Tình huống X:") BẮT BUỘC gắn nhãn mức độ nhận thức kèm mã tiêu chí trong ngoặc vuông: [NB - 1.1], [TH - 2.1], [VD - 3.1] hoặc [VDC - 4.1].
 2. Dạng 1 - Trắc nghiệm 4 lựa chọn: Đặt dấu sao (*) ngay trước chữ cái của phương án đúng (ví dụ: *B. Nội dung đáp án đúng).
 3. Dạng 2 - Trắc nghiệm Đúng/Sai theo Tình huống: Trình bày đúng mẫu gồm dòng "Tình huống X: [Mức độ - Mã tiêu chí] <Mô tả tình huống cụ thể từ nguồn tài liệu>", dòng tiếp theo "Câu X. Xác định tính đúng hoặc sai của các phát biểu sau:", tiếp theo là 4 dòng a), b), c), d) có gắn nhãn [Đúng] hoặc [Sai] ở cuối mỗi phát biểu.
 4. Dạng 3 - Trả lời ngắn / Điền khuyết: Xuống dòng ghi rõ "Đáp án: <nội dung đáp án ngắn gọn>".
-5. Dạng 4 - Tự luận: Đầu câu gắn nhãn [TL][VD] hoặc [TL][VDC], xuống dòng ghi "Hướng dẫn chấm: <nội dung đáp án>".
+5. Dạng 4 - Tự luận: Đầu câu gắn nhãn [TL][VD - 3.1], xuống dòng ghi "Hướng dẫn chấm: <nội dung đáp án>".
 
 KHUNG CÚ PHÁP TRÌNH BÀY MẪU (CHỈ MINH HỌA CẤU TRÚC, HÃY THAY THẾ PHẦN TRONG NGOẶC VUÔNG BẰNG NỘI DUNG TỪ TÀI LIỆU NGUỒN):
 
@@ -2893,78 +2943,198 @@ Câu 3: [NB - 1.1] [Nội dung câu hỏi trả lời ngắn / điền khuyết 
 Câu 4: [TL][VD - 3.1] [Nội dung câu hỏi tự luận bám sát tài liệu nguồn?]
 Hướng dẫn chấm: [Nội dung đáp án và biểu điểm tóm tắt]`;
                                             navigator.clipboard.writeText(promptText);
-                                            setAlertMessage("Đã sao chép Prompt mẫu chuẩn AI Scan vào bộ nhớ tạm! Bạn có thể dán (Ctrl+V) kèm file đính kèm vào ChatGPT / Gemini.");
+                                            setAlertMessage("Đã sao chép Prompt chuẩn vào bộ nhớ tạm! Bạn có thể dán (Ctrl+V) kèm file tài liệu vào ChatGPT / Gemini, sau đó dán kết quả vào ô dưới để tự động nhận hàng loạt.");
                                         }}
-                                        className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold text-[11px] flex items-center gap-1 shadow-sm transition-colors cursor-pointer"
+                                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-xs flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
                                     >
-                                        <Sparkles size={12} /> Copy Prompt mẫu đưa cho AI
+                                        <Copy size={13} /> Copy Prompt chuẩn để AI tạo đúng cú pháp
                                     </button>
                                 </div>
-                                <div>• <b>Mức độ & Tiêu chí:</b> Ghi <code className="bg-white px-1 border rounded font-bold text-indigo-700">[NB]</code>, <code className="bg-white px-1 border rounded font-bold text-indigo-700">[TH]</code>, <code className="bg-white px-1 border rounded font-bold text-indigo-700">[VD]</code>, <code className="bg-white px-1 border rounded font-bold text-indigo-700">[VDC]</code> (hoặc <code className="bg-white px-1 border rounded">[NB - 1.1]</code>) ngay đầu câu hỏi.</div>
-                                <div>• <b>Trắc nghiệm 4 lựa chọn:</b> Đặt dấu <code className="bg-amber-100 text-amber-900 px-1 rounded font-bold">*</code> trước đáp án đúng (VD: <code className="bg-white px-1 border rounded">*B. Bàn phím.</code> hoặc <code className="bg-white px-1 border rounded">B. *Bàn phím.</code>) hoặc ghi <code className="bg-white px-1 border rounded">Đáp án: B</code> ở dòng cuối.</div>
-                                <div>• <b>Đúng / Sai (Tình huống + 4 ý a, b, c, d):</b> Ghi <code className="bg-white px-1 border rounded">Tình huống 1: ...</code>, xuống dòng <code className="bg-white px-1 border rounded">Câu 1. Xác định tính đúng hoặc sai của các phát biểu sau:</code>, kèm <code className="bg-white px-1 border rounded">a) ... [Đúng]</code>, <code className="bg-white px-1 border rounded">b) ... [Sai]</code>, <code className="bg-white px-1 border rounded">c) ... [Đúng]</code>, <code className="bg-white px-1 border rounded">d) ... [Sai]</code>.</div>
-                                <div>• <b>Trả lời ngắn / Tự luận:</b> Ghi <code className="bg-white px-1 border rounded">Đáp án: ...</code> (Trả lời ngắn) hoặc gắn <code className="bg-white px-1 border rounded">[TL]</code> đầu câu kèm <code className="bg-white px-1 border rounded">Hướng dẫn chấm: ...</code> (Tự luận).</div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5 text-[11px]">
+                                    <div>• <b>Mức độ & Tiêu chí:</b> Ghi <code className="bg-white px-1 border rounded font-bold text-emerald-800">[NB - 1.1]</code>, <code className="bg-white px-1 border rounded font-bold text-emerald-800">[TH - 2.1]</code>, <code className="bg-white px-1 border rounded font-bold text-emerald-800">[VD - 3.1]</code> đầu câu.</div>
+                                    <div>• <b>Trắc nghiệm 4 lựa chọn:</b> Đặt dấu <code className="bg-amber-100 text-amber-900 px-1 rounded font-bold">*</code> trước phương án đúng (<code className="bg-white px-1 border rounded">*B. Bàn phím.</code>).</div>
+                                    <div>• <b>Đúng / Sai (Tình huống + 4 ý):</b> <code className="bg-white px-1 border rounded">Tình huống 1: [TH - 2.1] ...</code> + <code className="bg-white px-1 border rounded">Câu 1. ...</code> + <code className="bg-white px-1 border rounded">a) ... [Đúng]</code>, <code className="bg-white px-1 border rounded">b) ... [Sai]</code>.</div>
+                                    <div>• <b>Trả lời ngắn / Tự luận:</b> Ghi <code className="bg-white px-1 border rounded">Đáp án: ...</code> hoặc gắn <code className="bg-white px-1 border rounded">[TL]</code> kèm <code className="bg-white px-1 border rounded">Hướng dẫn chấm: ...</code>.</div>
+                                </div>
                             </div>
+
                             <textarea 
-                                className="w-full h-60 p-4 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-transparent resize-none font-mono text-sm shadow-inner"
-                                placeholder={`Ví dụ:\nCâu 1: [NB - 1.1] Thiết bị nào sau đây là thiết bị vào?\nA. Màn hình.\n*B. Bàn phím.\nC. Máy in.\nD. Loa.\n\nTình huống 1: [TH - 2.1] Bạn An sử dụng mạng xã hội để trao đổi học tập với bạn bè.\nCâu 2. Xác định tính đúng hoặc sai của các phát biểu sau:\na) Mạng xã hội giúp kết nối và chia sẻ thông tin nhanh chóng. [Đúng]\nb) Nên công khai mật khẩu tài khoản lên trang cá nhân. [Sai]\nc) Có thể cài đặt quyền riêng tư cho bài đăng. [Đúng]\nd) Mọi đường link lạ gửi qua tin nhắn đều an toàn. [Sai]`}
+                                className="w-full h-56 p-4 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent resize-none font-mono text-sm shadow-inner"
+                                placeholder={`Dán (Ctrl+V) danh sách câu hỏi theo cú pháp chuẩn vào đây — Hệ thống sẽ tự động nhận diện ngay bên dưới...\n\nVí dụ:\nCâu 1: [NB - 1.1] Thiết bị nào sau đây là thiết bị vào?\nA. Màn hình.\n*B. Bàn phím.\nC. Máy in.\nD. Loa.\n\nTình huống 1: [TH - 2.1] Bạn An sử dụng mạng xã hội để trao đổi học tập với bạn bè.\nCâu 2. Xác định tính đúng hoặc sai của các phát biểu sau:\na) Mạng xã hội giúp kết nối và chia sẻ thông tin nhanh chóng. [Đúng]\nb) Nên công khai mật khẩu tài khoản lên trang cá nhân. [Sai]\nc) Có thể cài đặt quyền riêng tư cho bài đăng. [Đúng]\nd) Mọi đường link lạ gửi qua tin nhắn đều an toàn. [Sai]`}
                                 value={bulkText}
                                 onChange={(e) => setBulkText(e.target.value)}
                             ></textarea>
+
+                            {/* Live Automatic Detection Preview */}
+                            <div className="border border-slate-200 rounded-xl bg-slate-50 p-3.5">
+                                <div className="flex items-center justify-between mb-2">
+                                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                                        <ListChecks size={16} className="text-emerald-600" />
+                                        Kết quả tự động nhận diện theo cú pháp:
+                                    </span>
+                                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${syntaxDetectedQuestions.length > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-200 text-gray-600'}`}>
+                                        Đã nhận diện: {syntaxDetectedQuestions.length} câu hỏi
+                                    </span>
+                                </div>
+                                {syntaxDetectedQuestions.length === 0 ? (
+                                    <p className="text-xs text-gray-500 italic">
+                                        {bulkText.trim()
+                                            ? 'Chưa khớp cú pháp chuẩn (cần bắt đầu bằng "Câu 1:" hoặc "Tình huống 1:"). Nếu đây là văn bản tự do chưa chuẩn hóa, bạn có thể bấm sang "Chức năng 1: Dùng AI phân tích".'
+                                            : 'Chưa có dữ liệu. Hãy dán văn bản theo cú pháp chuẩn vào ô trên để xem trước danh sách câu hỏi tự động nhận diện.'}
+                                    </p>
+                                ) : (
+                                    <div className="max-h-44 overflow-y-auto space-y-1.5 pr-1">
+                                        {syntaxDetectedQuestions.map((q: any, idx: number) => {
+                                            const typeLabel = q.questionType === 'true-false'
+                                                ? 'Đúng/Sai (4 ý)'
+                                                : q.questionType === 'short-answer'
+                                                    ? 'Trả lời ngắn'
+                                                    : q.questionType === 'essay' || q.category === 'essay'
+                                                        ? 'Tự luận'
+                                                        : q.questionType === 'multiple-answer'
+                                                            ? 'Nhiều đáp án'
+                                                            : '4 lựa chọn';
+                                            return (
+                                                <div key={idx} className="bg-white border border-slate-200 rounded-lg p-2 text-xs flex items-start justify-between gap-2">
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="flex flex-wrap items-center gap-1.5 mb-0.5">
+                                                            <span className="font-bold text-slate-900">Câu {idx + 1}</span>
+                                                            <span className="px-1.5 py-0.2 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded font-bold text-[10px]">
+                                                                {q.level || 'NB'}{q.criteria ? ` - ${q.criteria}` : ''}
+                                                            </span>
+                                                            <span className="px-1.5 py-0.2 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded font-semibold text-[10px]">
+                                                                {typeLabel}
+                                                            </span>
+                                                            {q.answer && (
+                                                                <span className="px-1.5 py-0.2 bg-amber-50 text-amber-800 border border-amber-200 rounded font-bold text-[10px]">
+                                                                    ĐA: {q.answer}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <p className="text-slate-700 truncate">{q.content}</p>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     ) : (
-                        <div className="py-4">
-                            {!bulkPdf ? (
-                                <label className="border-2 border-dashed border-blue-200 hover:border-primary bg-blue-50/40 hover:bg-blue-50/80 rounded-2xl p-10 flex flex-col items-center justify-center cursor-pointer transition-all text-center group">
-                                    <FileUp className="text-primary mb-3 group-hover:scale-110 transition-transform" size={40} />
-                                    <span className="text-base font-bold text-gray-800">Chọn hoặc Kéo thả file PDF đề thi vào đây</span>
-                                    <span className="text-xs text-gray-500 mt-1">Hỗ trợ file PDF lên đến 25MB</span>
-                                    <input 
-                                        type="file" 
-                                        accept=".pdf,application/pdf" 
-                                        className="hidden" 
-                                        onChange={(e) => handlePdfFileChange(e, 'bulk')} 
-                                    />
-                                    <span className="mt-4 px-4 py-2 bg-primary text-white text-xs font-bold rounded-lg shadow-sm">
-                                        Duyệt tệp PDF
-                                    </span>
-                                </label>
-                            ) : (
-                                <div className="bg-blue-50 border border-blue-200 rounded-2xl p-6 flex items-center justify-between">
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-12 h-12 rounded-xl bg-blue-200 text-blue-800 flex items-center justify-center font-bold text-sm">
-                                            PDF
-                                        </div>
-                                        <div>
-                                            <p className="text-sm font-bold text-gray-900">{bulkPdf.name}</p>
-                                            <p className="text-xs text-blue-600 font-semibold">{bulkPdf.size} • Sẵn sàng để AI phân tích và bóc tách câu hỏi</p>
-                                        </div>
+                        <div className="space-y-4">
+                            {/* AI Sub-Tabs: Text vs PDF */}
+                            <div className="flex gap-2 p-1 bg-gray-100 rounded-xl max-w-sm">
+                                <button
+                                    type="button"
+                                    onClick={() => setBulkTab('text')}
+                                    className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${bulkTab === 'text' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+                                >
+                                    Dán văn bản tự do (Ctrl+V)
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setBulkTab('pdf')}
+                                    className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${bulkTab === 'pdf' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+                                >
+                                    <FileText size={14} /> Tải file PDF đề thi
+                                </button>
+                            </div>
+
+                            <div className="bg-gradient-to-r from-purple-50 to-blue-50 border border-purple-100 rounded-lg p-3.5">
+                                <div className="flex items-start gap-3">
+                                    <Sparkles className="text-purple-600 mt-0.5 flex-shrink-0" size={18} />
+                                    <div>
+                                        <p className="font-bold text-gray-800 text-xs mb-0.5">Phân tích câu hỏi thông minh bằng AI</p>
+                                        <p className="text-xs text-gray-600 leading-relaxed">
+                                            {bulkTab === 'pdf' 
+                                                ? `Tải lên file PDF chứa đề thi hoặc danh sách bài tập. AI sẽ tự động đọc tài liệu PDF, bóc tách toàn bộ câu hỏi và lọc đúng nội dung bài "${lesson || '...'}"`
+                                                : `Dán nội dung câu hỏi bất kỳ từ Word/PDF chưa chuẩn hóa. AI sẽ tự động phân tích câu hỏi, đáp án, mức độ và gắn vào bài "${lesson || '...'}"`
+                                            }
+                                        </p>
                                     </div>
-                                    <button 
-                                        type="button"
-                                        onClick={() => setBulkPdf(null)}
-                                        className="p-2 hover:bg-blue-200 rounded-xl text-blue-800 transition-colors"
-                                        title="Hủy file này"
-                                    >
-                                        <X size={18} />
-                                    </button>
+                                </div>
+                            </div>
+
+                            {bulkTab === 'text' ? (
+                                <textarea 
+                                    className="w-full h-60 p-4 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none font-mono text-sm shadow-inner"
+                                    placeholder={`Dán nội dung câu hỏi tự do từ Word/PDF vào đây để AI phân tích và bóc tách...`}
+                                    value={bulkText}
+                                    onChange={(e) => setBulkText(e.target.value)}
+                                ></textarea>
+                            ) : (
+                                <div className="py-2">
+                                    {!bulkPdf ? (
+                                        <label className="border-2 border-dashed border-blue-200 hover:border-primary bg-blue-50/40 hover:bg-blue-50/80 rounded-2xl p-10 flex flex-col items-center justify-center cursor-pointer transition-all text-center group">
+                                            <FileUp className="text-primary mb-3 group-hover:scale-110 transition-transform" size={40} />
+                                            <span className="text-base font-bold text-gray-800">Chọn hoặc Kéo thả file PDF đề thi vào đây</span>
+                                            <span className="text-xs text-gray-500 mt-1">Hỗ trợ file PDF lên đến 25MB</span>
+                                            <input 
+                                                type="file" 
+                                                accept=".pdf,application/pdf" 
+                                                className="hidden" 
+                                                onChange={(e) => handlePdfFileChange(e, 'bulk')} 
+                                            />
+                                            <span className="mt-4 px-4 py-2 bg-primary text-white text-xs font-bold rounded-lg shadow-sm">
+                                                Duyệt tệp PDF
+                                            </span>
+                                        </label>
+                                    ) : (
+                                        <div className="bg-blue-50 border border-blue-200 rounded-2xl p-6 flex items-center justify-between">
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-12 h-12 rounded-xl bg-blue-200 text-blue-800 flex items-center justify-center font-bold text-sm">
+                                                    PDF
+                                                </div>
+                                                <div>
+                                                    <p className="text-sm font-bold text-gray-900">{bulkPdf.name}</p>
+                                                    <p className="text-xs text-blue-600 font-semibold">{bulkPdf.size} • Sẵn sàng để AI phân tích và bóc tách câu hỏi</p>
+                                                </div>
+                                            </div>
+                                            <button 
+                                                type="button"
+                                                onClick={() => setBulkPdf(null)}
+                                                className="p-2 hover:bg-blue-200 rounded-xl text-blue-800 transition-colors"
+                                                title="Hủy file này"
+                                            >
+                                                <X size={18} />
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>
                     )}
                 </div>
 
-                <div className="p-4 border-t border-gray-100 flex justify-end gap-3 bg-gray-50 shrink-0">
-                    <button onClick={() => setIsBulkModalOpen(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-200 rounded-lg transition-colors font-medium">Hủy bỏ</button>
-                    
-                    <button 
-                        onClick={handleAIImport} 
-                        disabled={isAnalyzing || (bulkTab === 'text' ? !bulkText.trim() : !bulkPdf)}
-                        className="px-6 py-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all font-bold flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-purple-200"
-                    >
-                        {isAnalyzing ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
-                        {isAnalyzing ? 'Đang phân tích & bóc tách...' : 'Bắt đầu phân tích'}
-                    </button>
+                <div className="p-4 border-t border-gray-100 flex justify-between items-center gap-3 bg-gray-50 shrink-0">
+                    <div className="text-xs text-gray-500">
+                        {bulkMode === 'syntax'
+                            ? `Chế độ cú pháp chuẩn: Nhận diện trực tiếp ${syntaxDetectedQuestions.length} câu hỏi.`
+                            : 'Chế độ AI: Sử dụng Gemini AI để đọc và phân tích dữ liệu tự do.'}
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <button onClick={() => setIsBulkModalOpen(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-200 rounded-lg transition-colors font-medium">Hủy bỏ</button>
+                        
+                        {bulkMode === 'syntax' ? (
+                            <button 
+                                onClick={handleSyntaxDirectImport} 
+                                disabled={syntaxDetectedQuestions.length === 0}
+                                className="px-6 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-all font-bold flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-emerald-200 cursor-pointer"
+                            >
+                                <CheckCircle2 size={18} />
+                                Nhập ngay {syntaxDetectedQuestions.length > 0 ? `${syntaxDetectedQuestions.length} câu hỏi` : 'vào ngân hàng'}
+                            </button>
+                        ) : (
+                            <button 
+                                onClick={handleAIImport} 
+                                disabled={isAnalyzing || (bulkTab === 'text' ? !bulkText.trim() : !bulkPdf)}
+                                className="px-6 py-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all font-bold flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-purple-200 cursor-pointer"
+                            >
+                                {isAnalyzing ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
+                                {isAnalyzing ? 'AI đang phân tích & bóc tách...' : 'Bắt đầu dùng AI phân tích'}
+                            </button>
+                        )}
+                    </div>
                 </div>
             </div>
         </div>

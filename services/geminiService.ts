@@ -257,6 +257,7 @@ export const parseStructuredTextQuestions = (rawText: string): any[] => {
     if (!rawText || !rawText.trim()) return [];
     const cleanedLines = rawText
         .replace(/\r\n/g, '\n')
+        .replace(/\*\*/g, '')
         .split('\n')
         .filter(line => !/^\s*(?:PHẦN\s+[I|V|X|\d]+|[I|V|X]+\.\s*(?:TRẮC\s*NGHIỆM|TỰ\s*LUẬN)|---\s*|Tiếp\s*tục\s*tương\s*tự)/i.test(line.trim()));
 
@@ -264,8 +265,11 @@ export const parseStructuredTextQuestions = (rawText: string): any[] => {
     const mergedLines: string[] = [];
     for (let i = 0; i < cleanedLines.length; i++) {
         const cur = cleanedLines[i].trim();
-        if (/^Tình\s*huống\s*\d*\s*[:.]/i.test(cur)) {
-            let combinedScenario = cur.replace(/^Tình\s*huống\s*\d*\s*[:.]\s*/i, '').trim();
+        if (/^(?:\[[^\]]+\]\s*)*Tình\s*huống\s*\d*\s*[:.]/i.test(cur)) {
+            let leadingTags = '';
+            const leadMatch = cur.match(/^((?:\[[^\]]+\]\s*)+)/);
+            if (leadMatch) leadingTags = leadMatch[1].trim() + ' ';
+            let combinedScenario = leadingTags + cur.replace(/^(?:\[[^\]]+\]\s*)*Tình\s*huống\s*\d*\s*[:.]\s*/i, '').trim();
             while (i + 1 < cleanedLines.length) {
                 const nextLine = cleanedLines[i + 1].trim();
                 if (!nextLine) {
@@ -300,7 +304,7 @@ export const parseStructuredTextQuestions = (rawText: string): any[] => {
     const cleanedRaw = mergedLines.join('\n');
 
     const blocks = cleanedRaw
-        .split(/(?=(?:^|\n)\s*(?:Câu\s*\d+|Bài\s*\d+|\d+\s*[.):]))/i)
+        .split(/(?=(?:^|\n)\s*(?:(?:\[\s*(?:TL|Tự\s*luận|NB|TH|VD|VDC)[^\]]*\]\s*)*(?:Câu\s*\d+|Bài\s*\d+)|\d+\s*[.):]))/i)
         .map(b => b.trim())
         .filter(Boolean);
 
@@ -320,75 +324,91 @@ export const parseStructuredTextQuestions = (rawText: string): any[] => {
         const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
         if (lines.length === 0) return;
 
-        let stem = lines[0].replace(/^(?:Câu\s*\d+|Bài\s*\d+|\d+)\s*[.):\-]?\s*/i, '').trim();
+        let stem = lines[0];
         let explicitAnswer = '';
         let isExplicitEssay = false;
         let isScenarioTF = false;
         let level: 'NB' | 'TH' | 'VD' | 'VDC' = 'NB';
         let criteria = '';
 
-        if (stem.startsWith('[TF_SCENARIO]')) {
-            isScenarioTF = true;
-            stem = stem.replace(/^\[TF_SCENARIO\]\s*/, '').trim();
-        }
-
-        // Hỗ trợ các tag ở đầu câu: [NB], [TH - 2.1], [VD: 3.1], [Tự luận], [TL], (NB)...
-        let tagMatched = true;
-        while (tagMatched) {
-            tagMatched = false;
-            const essayTag = stem.match(/^(?:\[\s*(?:TL|Tự\s*luận)\s*\]|\(\s*(?:TL|Tự\s*luận)\s*\))\s*/i);
-            if (essayTag) {
-                isExplicitEssay = true;
-                stem = stem.slice(essayTag[0].length).trim();
-                tagMatched = true;
-            }
-            const lvlCritMatch = stem.match(/^(?:\[\s*(NB|TH|VD|VDC|Nhận\s*biết|Thông\s*hiểu|Vận\s*dụng\s*cao|Vận\s*dụng|Biết|Hiểu)(?:\s*[-–:|,]\s*(\d+\.\d+))?\s*\]|\(\s*(NB|TH|VD|VDC|Nhận\s*biết|Thông\s*hiểu|Vận\s*dụng\s*cao|Vận\s*dụng|Biết|Hiểu)(?:\s*[-–:|,]\s*(\d+\.\d+))?\s*\))\s*/i);
-            if (lvlCritMatch) {
-                level = normalizeLevelTag(lvlCritMatch[1] || lvlCritMatch[3]);
-                if (lvlCritMatch[2] || lvlCritMatch[4]) {
-                    criteria = (lvlCritMatch[2] || lvlCritMatch[4]).trim();
+        // Bóc tách nhãn nếu đặt trước hoặc sau chữ "Câu X:"
+        const stripLeadingTags = (input: string): string => {
+            let s = input.trim();
+            let matched = true;
+            while (matched) {
+                matched = false;
+                const cauPrefix = s.match(/^(?:Câu\s*\d+|Bài\s*\d+|\d+)\s*[.):\-]?\s*/i);
+                if (cauPrefix) {
+                    s = s.slice(cauPrefix[0].length).trim();
+                    matched = true;
                 }
-                stem = stem.slice(lvlCritMatch[0].length).trim();
-                tagMatched = true;
+                if (s.startsWith('[TF_SCENARIO]')) {
+                    isScenarioTF = true;
+                    s = s.replace(/^\[TF_SCENARIO\]\s*/, '').trim();
+                    matched = true;
+                }
+                const essayTag = s.match(/^(?:\[\s*(?:TL|Tự\s*luận)\s*\]|\(\s*(?:TL|Tự\s*luận)\s*\))\s*/i);
+                if (essayTag) {
+                    isExplicitEssay = true;
+                    s = s.slice(essayTag[0].length).trim();
+                    matched = true;
+                }
+                const lvlCritMatch = s.match(/^(?:\[\s*(NB|TH|VD|VDC|Nhận\s*biết|Thông\s*hiểu|Vận\s*dụng\s*cao|Vận\s*dụng|Biết|Hiểu)(?:\s*[-–:|,]\s*(\d+\.\d+))?\s*\]|\(\s*(NB|TH|VD|VDC|Nhận\s*biết|Thông\s*hiểu|Vận\s*dụng\s*cao|Vận\s*dụng|Biết|Hiểu)(?:\s*[-–:|,]\s*(\d+\.\d+))?\s*\))\s*/i);
+                if (lvlCritMatch) {
+                    level = normalizeLevelTag(lvlCritMatch[1] || lvlCritMatch[3]);
+                    if (lvlCritMatch[2] || lvlCritMatch[4]) {
+                        criteria = (lvlCritMatch[2] || lvlCritMatch[4]).trim();
+                    }
+                    s = s.slice(lvlCritMatch[0].length).trim();
+                    matched = true;
+                }
+                const critOnlyMatch = s.match(/^\[\s*(\d+\.\d+)\s*\]\s*/);
+                if (critOnlyMatch) {
+                    criteria = critOnlyMatch[1].trim();
+                    if (criteria.startsWith('1.')) level = 'NB';
+                    else if (criteria.startsWith('2.')) level = 'TH';
+                    else if (criteria.startsWith('3.')) level = 'VD';
+                    else if (criteria.startsWith('4.')) level = 'VDC';
+                    s = s.slice(critOnlyMatch[0].length).trim();
+                    matched = true;
+                }
             }
-            const critOnlyMatch = stem.match(/^\[\s*(\d+\.\d+)\s*\]\s*/);
-            if (critOnlyMatch) {
-                criteria = critOnlyMatch[1].trim();
-                if (criteria.startsWith('1.')) level = 'NB';
-                else if (criteria.startsWith('2.')) level = 'TH';
-                else if (criteria.startsWith('3.')) level = 'VD';
-                else if (criteria.startsWith('4.')) level = 'VDC';
-                stem = stem.slice(critOnlyMatch[0].length).trim();
-                tagMatched = true;
-            }
-        }
+            return s;
+        };
 
-        stem = stem
+        stem = stripLeadingTags(stem)
             .replace(/^Tình\s*huống\s*\d*\s*[:.]\s*/i, '')
             .replace(/\s*(?:Câu\s*\d+\s*[.):\-]?\s*)?Xác\s*định\s*tính\s*đúng\s*hoặc\s*sai\s*của\s*các\s*phát\s*biểu\s*sau\s*[:.]?\s*$/i, '')
             .trim();
+        stem = stripLeadingTags(stem);
 
         const optLines: string[] = [];
+        let inAnswerSection = false;
         for (let i = 1; i < lines.length; i++) {
             const line = lines[i];
             if (/^(?:Câu\s*\d+\s*[.):\-]?\s*)?Xác\s*định\s*tính\s*đúng\s*hoặc\s*sai/i.test(line)) {
                 isScenarioTF = true;
                 continue;
             }
-            const ansMatch = line.match(/^(?:Đáp\s*án|ĐA|Trả\s*lời|Hướng\s*dẫn\s*chấm|HDC)\s*[:=]\s*(.+)$/i);
+            const ansMatch = line.match(/^(?:Đáp\s*án|ĐA|Trả\s*lời|Hướng\s*dẫn\s*chấm|HDC)\s*[:=]\s*(.*)$/i);
             if (ansMatch) {
                 if (/^(?:Hướng\s*dẫn\s*chấm|HDC)/i.test(line)) {
                     isExplicitEssay = true;
                 }
                 explicitAnswer = ansMatch[1].trim();
+                inAnswerSection = true;
                 continue;
             }
-            if (/^\*?[A-Da-d][.)]\s*/.test(line) || /^[A-Da-d][.)]\s*\*/.test(line)) {
+            if (inAnswerSection) {
+                explicitAnswer = explicitAnswer ? `${explicitAnswer}\n${line}` : line;
+                continue;
+            }
+            if (!isExplicitEssay && (/^\*?[A-Da-d][.)]\s*/.test(line) || /^[A-Da-d][.)]\s*\*/.test(line))) {
                 optLines.push(line);
             } else if (optLines.length === 0) {
                 const cleanedCont = line.replace(/^Xác\s*định\s*tính\s*đúng\s*hoặc\s*sai\s*của\s*các\s*phát\s*biểu\s*sau\s*[:.]?\s*/i, '').trim();
                 if (cleanedCont) {
-                    stem += (stem ? ' ' : '') + cleanedCont;
+                    stem += (stem ? '\n' : '') + cleanedCont;
                 }
             }
         }

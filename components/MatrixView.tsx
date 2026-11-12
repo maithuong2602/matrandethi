@@ -273,6 +273,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
     const [editingCell, setEditingCell] = useState<EditingCellState>(null);
     const [editingNewCell, setEditingNewCell] = useState<EditingNewCellState>(null);
     const [showCompetencyGuide, setShowCompetencyGuide] = useState<boolean>(false);
+    const [showAllSpecCriteria, setShowAllSpecCriteria] = useState<boolean>(false);
     const [draggedGroupIndex, setDraggedGroupIndex] = useState<number | null>(null);
     const [isEditingCustomNote, setIsEditingCustomNote] = useState<boolean>(false);
     const [customNoteDraft, setCustomNoteDraft] = useState<string>(data.customNote || '');
@@ -668,36 +669,43 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
         });
     });
 
-    // 2. Process TL (Columns: 6, 8, 10, 12)
+    // 2. Process TL (Columns: 6, 8, 10, 12) - đánh số Câu nối tiếp sau phần TNKQ
+    tlCounter = tnkqCounter;
     [6, 8, 10, 12].forEach(colIdx => {
         data.matrix.rows.forEach((row, rIdx) => {
             const count = parseInt(String(row[colIdx]) || '0');
             if (count > 0) {
                 const start = tlCounter;
                 const end = tlCounter + count - 1;
-                positionMap[`${rIdx}-${colIdx}`] = start === end ? `Câu ${start} (TL)` : `Câu ${start}-${end} (TL)`;
+                positionMap[`${rIdx}-${colIdx}`] = start === end ? `Câu ${start}` : `Câu ${start}-${end}`;
                 tlCounter += count;
             }
         });
     });
 
-    // 3. Process New 4-Part Format Question Positions (by row and level B, H, VD) - chỉ ghi vị trí, không ghi loại câu
+    // 3. Process New 4-Part Format Question Positions (by row and level B, H, VD) - đánh số Câu liên tục từ Câu 1 đến hết đề
     const newFormatPosMap: Record<string, string[]> = {};
+    let globalQuestionCounter = 1;
     activeParts.forEach(pKey => {
-        let pCounter = 1;
         (['B', 'H', 'VD'] as const).forEach(lKey => {
             data.matrix.rows.forEach((_, rIdx) => {
                 const cfg = getRowNewFormatConfig(rIdx);
-                const c = cfg[pKey][lKey]?.count || 0;
+                let c = cfg[pKey][lKey]?.count || 0;
+                if (!useShortAnswer && pKey === 'tf') {
+                    c += cfg.sa[lKey]?.count || 0;
+                }
+                if (!useShortAnswer && pKey === 'sa') {
+                    c = 0;
+                }
                 if (c > 0) {
-                    const start = pCounter;
-                    const end = pCounter + c - 1;
-                    const prefix = pKey === 'tf' ? 'Ý' : 'Câu';
+                    const start = globalQuestionCounter;
+                    const end = globalQuestionCounter + c - 1;
+                    const prefix = 'Câu';
                     const rangeStr = start === end ? `${prefix} ${start}` : `${prefix} ${start}-${end}`;
                     const mapKey = `${rIdx}-${lKey}`;
                     if (!newFormatPosMap[mapKey]) newFormatPosMap[mapKey] = [];
                     newFormatPosMap[mapKey].push(rangeStr);
-                    pCounter += c;
+                    globalQuestionCounter += c;
                 }
             });
         });
@@ -1149,7 +1157,16 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
 
     const buildNewSpecSubRows = (rowIndex: number): NewSpecSubRowItem[] => {
         const req = String(data.specifications?.rows?.[rowIndex]?.[4] || '');
+        const hasManualUnchecked = req.includes('data-unchecked="true"');
         const yccdSections = parseYccdHtml(req);
+        const rowCfg = getRowNewFormatConfig(rowIndex);
+
+        const levelQuotas: Record<'B' | 'H' | 'VD', number> = {
+            B: (rowCfg.mc.B?.count || 0) + (rowCfg.tf.B?.count || 0) + (rowCfg.sa.B?.count || 0) + (rowCfg.essay.B?.count || 0),
+            H: (rowCfg.mc.H?.count || 0) + (rowCfg.tf.H?.count || 0) + (rowCfg.sa.H?.count || 0) + (rowCfg.essay.H?.count || 0),
+            VD: (rowCfg.mc.VD?.count || 0) + (rowCfg.tf.VD?.count || 0) + (rowCfg.sa.VD?.count || 0) + (rowCfg.essay.VD?.count || 0)
+        };
+        const rowTotalQuota = levelQuotas.B + levelQuotas.H + levelQuotas.VD;
 
         const levelDefs: { levelKey: 'B' | 'H' | 'VD'; displayTitle: string; rawTitle: string }[] = [
             { levelKey: 'B', displayTitle: '- Biết:', rawTitle: 'Nhận biết' },
@@ -1178,7 +1195,28 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
             });
         });
 
-        return levelDefs.map(d => grouped[d.levelKey]);
+        if (showAllSpecCriteria || rowTotalQuota === 0) {
+            return levelDefs.map(d => grouped[d.levelKey]);
+        }
+
+        // Chế độ mặc định: Chỉ hiện mức độ & tiêu chí được chọn ra đề (quota > 0 và checked)
+        const filteredSubRows = levelDefs
+            .map(d => {
+                const quota = levelQuotas[d.levelKey];
+                if (quota <= 0) return null;
+                const baseGroup = grouped[d.levelKey];
+                let selectedItems = baseGroup.items.filter(it => it.checked);
+                if (!hasManualUnchecked && selectedItems.length > quota) {
+                    selectedItems = selectedItems.slice(0, quota);
+                }
+                return {
+                    ...baseGroup,
+                    items: selectedItems
+                };
+            })
+            .filter((r): r is NewSpecSubRowItem => r !== null);
+
+        return filteredSubRows.length > 0 ? filteredSubRows : [grouped.B];
     };
 
     const renderSpecRow = (row: string[], rowIndex: number, rowspanMain: number | null, rowspanSub: number | null) => {
@@ -2749,7 +2787,37 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
             <div className="overflow-x-auto rounded-lg border border-slate-300 shadow-sm mt-8">
                 <table className="w-full border-collapse matrix-table text-sm bg-white">
                      <caption className="text-lg font-bold text-slate-800 p-4 bg-gray-50 text-left border-b border-gray-200">
-                        {isNewFormat ? '2. BẢN ĐẶC TẢ ĐỀ KIỂM TRA ĐỊNH KÌ' : 'BẢNG ĐẶC TẢ ĐỀ KIỂM TRA'}
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                            <span>{isNewFormat ? '2. BẢN ĐẶC TẢ ĐỀ KIỂM TRA ĐỊNH KÌ' : 'BẢNG ĐẶC TẢ ĐỀ KIỂM TRA'}</span>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowAllSpecCriteria(false)}
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                                        !showAllSpecCriteria
+                                            ? 'bg-emerald-600 text-white shadow-xs'
+                                            : 'bg-white text-slate-600 border border-slate-300 hover:bg-slate-100'
+                                    }`}
+                                    title="Chỉ hiển thị những mức độ và tiêu chí (YCCĐ) có câu hỏi được chọn ra trong đề kiểm tra"
+                                >
+                                    <Check size={14} />
+                                    Chỉ hiện tiêu chí được chọn ra đề
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowAllSpecCriteria(true)}
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                                        showAllSpecCriteria
+                                            ? 'bg-indigo-600 text-white shadow-xs'
+                                            : 'bg-white text-slate-600 border border-slate-300 hover:bg-slate-100'
+                                    }`}
+                                    title="Hiển thị toàn bộ tiêu chí (YCCĐ) của chương trình để tích chọn hoặc chỉnh sửa"
+                                >
+                                    <Pencil size={13} />
+                                    Hiện tất cả tiêu chí để chọn/sửa
+                                </button>
+                            </div>
+                        </div>
                      </caption>
                      {isNewFormat ? (
                          <thead>

@@ -8,6 +8,8 @@ import {
 import { ExerciseQuestion, ImportedMatrixData, ExamVariant, ExamReviewResult, SavedExamDossier } from '../types';
 import {
     generateExamWordHtml,
+    generateHsktExamWordHtml,
+    getDefaultHsktQuestionIds,
     generateAzotaKeyHtml,
     generateExamVariants,
     generateMultiCodeAnswerKeyMatrixHtml,
@@ -106,13 +108,13 @@ interface BankQuestion extends ExerciseQuestion {
 }
 
 const ExamGenerator: React.FC = () => {
-    const [step, setStep] = useState<'upload' | 'config' | 'review'>('upload');
+    const [step, setStep] = useState<'upload' | 'config' | 'review'>('config');
     const [bank, setBank] = useState<BankQuestion[]>([]);
     const [selectedGradeFilter, setSelectedGradeFilter] = useState<string>('all');
     const [generatedTest, setGeneratedTest] = useState<BankQuestion[]>([]);
 
     // Config Modes
-    const [configMode, setConfigMode] = useState<'manual' | 'matrix'>('manual');
+    const [configMode, setConfigMode] = useState<'manual' | 'matrix'>('matrix');
     const [manualConfig, setManualConfig] = useState<Record<string, Record<string, number>>>({});
     const [importedMatrix, setImportedMatrix] = useState<ImportedMatrixData | null>(null);
 
@@ -121,6 +123,11 @@ const ExamGenerator: React.FC = () => {
     const [shuffleOptions, setShuffleOptions] = useState<boolean>(true);
     const [activeVariantCode, setActiveVariantCode] = useState<string>('101');
     const [variants, setVariants] = useState<ExamVariant[]>([]);
+
+    // Review Sub-Tab: Đề Chính Thức vs Đề & Biểu mẫu chấm HSKT riêng
+    const [reviewTab, setReviewTab] = useState<'regular' | 'hskt'>('regular');
+    const [hsktSelectedIds, setHsktSelectedIds] = useState<string[]>([]);
+    const [hsktPointMap, setHsktPointMap] = useState<Record<string, number>>({});
 
     // AI Review State
     const [isReviewing, setIsReviewing] = useState<boolean>(false);
@@ -134,7 +141,7 @@ const ExamGenerator: React.FC = () => {
 
     // UI States
     const [showExportModal, setShowExportModal] = useState<boolean>(false);
-    const [exportType, setExportType] = useState<'current' | 'all' | 'key_matrix' | 'full_dossier' | 'azota_current' | 'azota_all'>('current');
+    const [exportType, setExportType] = useState<'current' | 'all' | 'hskt_both' | 'hskt_exam' | 'hskt_grading' | 'key_matrix' | 'full_dossier' | 'azota_current' | 'azota_all'>('current');
     const [isSwapMenuOpen, setIsSwapMenuOpen] = useState<boolean>(false);
     const swapMenuRef = useRef<HTMLDivElement>(null);
     const [toastMsg, setToastMsg] = useState<string | null>(null);
@@ -339,6 +346,19 @@ const ExamGenerator: React.FC = () => {
         showNotice(`Đã lưu bản đề mới "${saved.title}" vào Ngân hàng Đề thi!`);
     };
 
+    const normalizeExamQuestionPoints = (qs: BankQuestion[]): BankQuestion[] => {
+        const mcCount = qs.filter(q => q.category !== 'essay').length;
+        return qs.map(q => {
+            if (q.category === 'essay') {
+                return { ...q, points: q.points || 1.0 };
+            }
+            if (mcCount === 28 && (q.points === 1.0 || q.points === 0.5)) {
+                return { ...q, points: 0.25 };
+            }
+            return { ...q, points: q.points || 0.25 };
+        });
+    };
+
     const handleLoadDossier = (dossier: SavedExamDossier) => {
         setCurrentDossierId(dossier.id);
         if (dossier.teacherName) setTeacherName(dossier.teacherName);
@@ -349,7 +369,9 @@ const ExamGenerator: React.FC = () => {
         }
         if (dossier.matrixData) setImportedMatrix(dossier.matrixData);
         if (Array.isArray(dossier.questions) && dossier.questions.length > 0) {
-            setGeneratedTest(dossier.questions);
+            const normalizedQs = normalizeExamQuestionPoints(dossier.questions);
+            setGeneratedTest(normalizedQs);
+            setHsktSelectedIds(getDefaultHsktQuestionIds(normalizedQs, dossier.headerInfo || headerInfo));
             setStep('review');
             showNotice(`Đã mở đề thi "${dossier.title}"`);
         } else {
@@ -462,6 +484,110 @@ const ExamGenerator: React.FC = () => {
         const currentV = variants.find(v => v.code === activeVariantCode);
         return currentV ? currentV.questions : generatedTest;
     }, [variants, activeVariantCode, generatedTest]);
+
+    // Tự động khởi tạo danh sách câu hỏi HSKT khi đề thi thay đổi mà chưa có lựa chọn HSKT
+    useEffect(() => {
+        if (generatedTest.length > 0) {
+            const validIds = new Set(generatedTest.map(q => String(q.id)));
+            const currentValid = hsktSelectedIds.filter(id => validIds.has(id));
+            if (currentValid.length === 0) {
+                setHsktSelectedIds(getDefaultHsktQuestionIds(generatedTest, headerInfo));
+            }
+        }
+    }, [generatedTest]);
+
+    // Danh sách câu hỏi dành riêng cho Đề HSKT (đã lọc và áp điểm HSKT)
+    const activeHsktQuestions = useMemo(() => {
+        const selectedSet = new Set(hsktSelectedIds.map(String));
+        return activeQuestions
+            .filter(q => selectedSet.has(String(q.id)))
+            .map(q => ({
+                ...q,
+                points: hsktPointMap[String(q.id)] ?? (q.category === 'essay' ? (q.points || 1.0) : (q.points || 0.25))
+            }));
+    }, [activeQuestions, hsktSelectedIds, hsktPointMap]);
+
+    const toggleHsktQuestion = (qId: string) => {
+        const strId = String(qId);
+        setHsktSelectedIds(prev =>
+            prev.includes(strId) ? prev.filter(id => id !== strId) : [...prev, strId]
+        );
+    };
+
+    const applyHsktPreset = (preset: 'yccd' | 'nb' | 'nb_th' | 'all') => {
+        if (preset === 'yccd') {
+            setHsktSelectedIds(getDefaultHsktQuestionIds(generatedTest, headerInfo));
+            showNotice('Đã chọn câu hỏi HSKT theo chuẩn YCCĐ!');
+        } else if (preset === 'nb') {
+            const nbIds = generatedTest.filter(q => (q.level || 'NB') === 'NB').map(q => String(q.id));
+            setHsktSelectedIds(nbIds);
+            showNotice(`Đã chọn ${nbIds.length} câu mức Nhận biết (NB) cho Đề HSKT!`);
+        } else if (preset === 'nb_th') {
+            const ids = generatedTest.filter(q => ['NB', 'TH'].includes(q.level || 'NB')).map(q => String(q.id));
+            setHsktSelectedIds(ids);
+            showNotice(`Đã chọn ${ids.length} câu mức Nhận biết & Thông hiểu cho Đề HSKT!`);
+        } else {
+            setHsktSelectedIds(generatedTest.map(q => String(q.id)));
+            showNotice('Đã chọn toàn bộ câu hỏi vào Đề HSKT!');
+        }
+    };
+
+    const applyHsktPointsPreset = (mode: 'keep' | 'scale10') => {
+        if (mode === 'keep') {
+            setHsktPointMap({});
+            showNotice('Đã đặt lại điểm gốc (0,25đ/câu TN, 1,0đ/câu TL) cho Đề HSKT.');
+            return;
+        }
+        const selectedSet = new Set(hsktSelectedIds.map(String));
+        const hsktQs = generatedTest.filter(q => selectedSet.has(String(q.id)));
+        if (hsktQs.length === 0) return;
+
+        const mcQs = hsktQs.filter(q => q.category !== 'essay');
+        const essayQs = hsktQs.filter(q => q.category === 'essay');
+        const newMap: Record<string, number> = {};
+
+        if (essayQs.length === 0) {
+            const ptPerMc = Number((10 / mcQs.length).toFixed(2));
+            mcQs.forEach(q => { newMap[String(q.id)] = ptPerMc; });
+        } else if (mcQs.length === 0) {
+            const ptPerEs = Number((10 / essayQs.length).toFixed(2));
+            essayQs.forEach(q => { newMap[String(q.id)] = ptPerEs; });
+        } else {
+            const targetEssayTotal = Math.min(3.0, essayQs.length * 1.0);
+            const targetMcTotal = 10.0 - targetEssayTotal;
+            const ptPerMc = Number((targetMcTotal / mcQs.length).toFixed(2));
+            const ptPerEs = Number((targetEssayTotal / essayQs.length).toFixed(2));
+            mcQs.forEach(q => { newMap[String(q.id)] = ptPerMc; });
+            essayQs.forEach(q => { newMap[String(q.id)] = ptPerEs; });
+        }
+        setHsktPointMap(newMap);
+        showNotice('Đã tự động quy đổi thang điểm Đề HSKT về 10,0 điểm!');
+    };
+
+    const updateHsktPoint = (qId: string, val: number) => {
+        setHsktPointMap(prev => ({
+            ...prev,
+            [String(qId)]: val
+        }));
+    };
+
+    const handleDownloadHsktWord = (section: 'both' | 'exam_only' | 'grading_only') => {
+        if (activeHsktQuestions.length === 0) {
+            alert('Vui lòng chọn ít nhất 1 câu hỏi cho Đề HSKT.');
+            return;
+        }
+        const vHeader = { ...headerInfo, maDe: activeVariantCode };
+        const html = generateHsktExamWordHtml(activeHsktQuestions, vHeader, section);
+        const blob = new Blob(['\ufeff', html], { type: 'application/msword' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const baseName = (customFileName || buildDefaultFileName(activeQuestions, headerInfo, teacherName, importedMatrix)).trim();
+        const suffix = section === 'exam_only' ? 'De_HSKT' : section === 'grading_only' ? 'Bieu_Mau_Cham_HSKT' : 'De_Va_HDC_HSKT';
+        a.download = `${suffix}_${baseName}.doc`;
+        a.click();
+        URL.revokeObjectURL(url);
+    };
 
     // Filtered Saved Exams
     const filteredSavedExams = useMemo(() => {
@@ -875,7 +1001,7 @@ const ExamGenerator: React.FC = () => {
             return picked.map(q => ({
                 ...q,
                 level: level === 'VD' && q.level === 'VDC' ? 'VD' : q.level,
-                points: category === 'essay' ? 1.0 : matchesPreferredType(q, 'true-false') ? 1.0 : matchesPreferredType(q, 'short-answer') ? 0.5 : 0.25,
+                points: category === 'essay' ? 1.0 : 0.25,
                 uniqueId: Math.random()
             }));
         };
@@ -904,10 +1030,13 @@ const ExamGenerator: React.FC = () => {
             const useSA = importedMatrix.thongTinChung?.useShortAnswer !== false;
             const extractCnt = (val: any): number => (typeof val === 'number' ? val : (val?.count || 0));
 
-            importedMatrix.chiTiet.forEach(row => {
+            importedMatrix.chiTiet.forEach((row, rowIdx) => {
                 const lessonName = row.thongTinChung.bai || row.thongTinChung.noiDung;
                 const subTopicName = row.thongTinChung.noiDung;
                 const mainTopicName = row.thongTinChung.chuong;
+
+                const tagPicked = (qs: any[], partOrder: number) =>
+                    qs.map(q => ({ ...q, _partOrder: partOrder, _rowIdx: rowIdx }));
 
                 const p4 = row.chiTiet4Phan;
                 const p4Sum = p4
@@ -939,35 +1068,35 @@ const ExamGenerator: React.FC = () => {
                     const esH = extractCnt(p4.tuLuan?.H);
                     const esVD = extractCnt(p4.tuLuan?.VD);
 
-                    if (mcB > 0) selected.push(...findQuestions(lessonName, 'NB', 'mc', mcB, 'multiple-choice', subTopicName, mainTopicName));
-                    if (mcH > 0) selected.push(...findQuestions(lessonName, 'TH', 'mc', mcH, 'multiple-choice', subTopicName, mainTopicName));
-                    if (mcVD > 0) selected.push(...findQuestions(lessonName, 'VD', 'mc', mcVD, 'multiple-choice', subTopicName, mainTopicName));
+                    if (mcB > 0) selected.push(...tagPicked(findQuestions(lessonName, 'NB', 'mc', mcB, 'multiple-choice', subTopicName, mainTopicName), 1));
+                    if (mcH > 0) selected.push(...tagPicked(findQuestions(lessonName, 'TH', 'mc', mcH, 'multiple-choice', subTopicName, mainTopicName), 1));
+                    if (mcVD > 0) selected.push(...tagPicked(findQuestions(lessonName, 'VD', 'mc', mcVD, 'multiple-choice', subTopicName, mainTopicName), 1));
 
-                    if (tfB > 0) selected.push(...findQuestions(lessonName, 'NB', 'mc', tfB, 'true-false', subTopicName, mainTopicName));
-                    if (tfH > 0) selected.push(...findQuestions(lessonName, 'TH', 'mc', tfH, 'true-false', subTopicName, mainTopicName));
-                    if (tfVD > 0) selected.push(...findQuestions(lessonName, 'VD', 'mc', tfVD, 'true-false', subTopicName, mainTopicName));
+                    if (tfB > 0) selected.push(...tagPicked(findQuestions(lessonName, 'NB', 'mc', tfB, 'true-false', subTopicName, mainTopicName), 2));
+                    if (tfH > 0) selected.push(...tagPicked(findQuestions(lessonName, 'TH', 'mc', tfH, 'true-false', subTopicName, mainTopicName), 2));
+                    if (tfVD > 0) selected.push(...tagPicked(findQuestions(lessonName, 'VD', 'mc', tfVD, 'true-false', subTopicName, mainTopicName), 2));
 
-                    if (saB > 0) selected.push(...findQuestions(lessonName, 'NB', 'mc', saB, 'short-answer', subTopicName, mainTopicName));
-                    if (saH > 0) selected.push(...findQuestions(lessonName, 'TH', 'mc', saH, 'short-answer', subTopicName, mainTopicName));
-                    if (saVD > 0) selected.push(...findQuestions(lessonName, 'VD', 'mc', saVD, 'short-answer', subTopicName, mainTopicName));
+                    if (saB > 0) selected.push(...tagPicked(findQuestions(lessonName, 'NB', 'mc', saB, 'short-answer', subTopicName, mainTopicName), 3));
+                    if (saH > 0) selected.push(...tagPicked(findQuestions(lessonName, 'TH', 'mc', saH, 'short-answer', subTopicName, mainTopicName), 3));
+                    if (saVD > 0) selected.push(...tagPicked(findQuestions(lessonName, 'VD', 'mc', saVD, 'short-answer', subTopicName, mainTopicName), 3));
 
-                    if (esB > 0) selected.push(...findQuestions(lessonName, 'NB', 'essay', esB, 'essay', subTopicName, mainTopicName));
-                    if (esH > 0) selected.push(...findQuestions(lessonName, 'TH', 'essay', esH, 'essay', subTopicName, mainTopicName));
-                    if (esVD > 0) selected.push(...findQuestions(lessonName, 'VD', 'essay', esVD, 'essay', subTopicName, mainTopicName));
+                    if (esB > 0) selected.push(...tagPicked(findQuestions(lessonName, 'NB', 'essay', esB, 'essay', subTopicName, mainTopicName), 4));
+                    if (esH > 0) selected.push(...tagPicked(findQuestions(lessonName, 'TH', 'essay', esH, 'essay', subTopicName, mainTopicName), 4));
+                    if (esVD > 0) selected.push(...tagPicked(findQuestions(lessonName, 'VD', 'essay', esVD, 'essay', subTopicName, mainTopicName), 4));
                 } else {
                     const tnCounts = row.tracNghiem;
                     if (tnCounts) {
-                        if (tnCounts.NB > 0) selected.push(...findQuestions(lessonName, 'NB', 'mc', tnCounts.NB, undefined, subTopicName, mainTopicName));
-                        if (tnCounts.TH > 0) selected.push(...findQuestions(lessonName, 'TH', 'mc', tnCounts.TH, undefined, subTopicName, mainTopicName));
-                        if (tnCounts.VD > 0) selected.push(...findQuestions(lessonName, 'VD', 'mc', tnCounts.VD, undefined, subTopicName, mainTopicName));
-                        if (tnCounts.VDC > 0) selected.push(...findQuestions(lessonName, 'VDC', 'mc', tnCounts.VDC, undefined, subTopicName, mainTopicName));
+                        if (tnCounts.NB > 0) selected.push(...tagPicked(findQuestions(lessonName, 'NB', 'mc', tnCounts.NB, undefined, subTopicName, mainTopicName), 1));
+                        if (tnCounts.TH > 0) selected.push(...tagPicked(findQuestions(lessonName, 'TH', 'mc', tnCounts.TH, undefined, subTopicName, mainTopicName), 1));
+                        if (tnCounts.VD > 0) selected.push(...tagPicked(findQuestions(lessonName, 'VD', 'mc', tnCounts.VD, undefined, subTopicName, mainTopicName), 1));
+                        if (tnCounts.VDC > 0) selected.push(...tagPicked(findQuestions(lessonName, 'VDC', 'mc', tnCounts.VDC, undefined, subTopicName, mainTopicName), 1));
                     }
                     const tlCounts = row.tuLuan;
                     if (tlCounts) {
-                        if (tlCounts.NB > 0) selected.push(...findQuestions(lessonName, 'NB', 'essay', tlCounts.NB, undefined, subTopicName, mainTopicName));
-                        if (tlCounts.TH > 0) selected.push(...findQuestions(lessonName, 'TH', 'essay', tlCounts.TH, undefined, subTopicName, mainTopicName));
-                        if (tlCounts.VD > 0) selected.push(...findQuestions(lessonName, 'VD', 'essay', tlCounts.VD, undefined, subTopicName, mainTopicName));
-                        if (tlCounts.VDC > 0) selected.push(...findQuestions(lessonName, 'VDC', 'essay', tlCounts.VDC, undefined, subTopicName, mainTopicName));
+                        if (tlCounts.NB > 0) selected.push(...tagPicked(findQuestions(lessonName, 'NB', 'essay', tlCounts.NB, undefined, subTopicName, mainTopicName), 4));
+                        if (tlCounts.TH > 0) selected.push(...tagPicked(findQuestions(lessonName, 'TH', 'essay', tlCounts.TH, undefined, subTopicName, mainTopicName), 4));
+                        if (tlCounts.VD > 0) selected.push(...tagPicked(findQuestions(lessonName, 'VD', 'essay', tlCounts.VD, undefined, subTopicName, mainTopicName), 4));
+                        if (tlCounts.VDC > 0) selected.push(...tagPicked(findQuestions(lessonName, 'VDC', 'essay', tlCounts.VDC, undefined, subTopicName, mainTopicName), 4));
                     }
                 }
             });
@@ -981,16 +1110,25 @@ const ExamGenerator: React.FC = () => {
         }
 
         const levelOrder = { NB: 1, TH: 2, VD: 3, VDC: 4 };
-        selected.sort((a, b) => {
+        selected.sort((a: any, b: any) => {
             if (a.category !== b.category) return a.category === 'mc' ? -1 : 1;
+            const pa = a._partOrder ?? (a.category === 'essay' ? 4 : 1);
+            const pb = b._partOrder ?? (b.category === 'essay' ? 4 : 1);
+            if (pa !== pb) return pa - pb;
             const la = levelOrder[a.level as keyof typeof levelOrder] || 5;
             const lb = levelOrder[b.level as keyof typeof levelOrder] || 5;
             if (la !== lb) return la - lb;
+            if (typeof a._rowIdx === 'number' && typeof b._rowIdx === 'number' && a._rowIdx !== b._rowIdx) {
+                return a._rowIdx - b._rowIdx;
+            }
             return a.lesson.localeCompare(b.lesson);
         });
 
         setCurrentDossierId(null);
         setGeneratedTest(selected);
+        setHsktSelectedIds(getDefaultHsktQuestionIds(selected, headerInfo));
+        setHsktPointMap({});
+        setReviewTab('regular');
         setStep('review');
     };
 
@@ -1246,6 +1384,9 @@ const ExamGenerator: React.FC = () => {
             const baseName = (customFileName || buildDefaultFileName(activeQuestions, headerInfo, teacherName, importedMatrix)).trim();
             a.download = `Bo_De_${baseName}.doc`;
             a.click();
+        } else if (exportType === 'hskt_both' || exportType === 'hskt_exam' || exportType === 'hskt_grading') {
+            const section = exportType === 'hskt_exam' ? 'exam_only' : exportType === 'hskt_grading' ? 'grading_only' : 'both';
+            handleDownloadHsktWord(section);
         } else {
             const currentV = variants.find(v => v.code === activeVariantCode);
             const vHeader = { ...headerInfo, maDe: activeVariantCode };
@@ -1262,139 +1403,90 @@ const ExamGenerator: React.FC = () => {
         setShowExportModal(false);
     };
 
+    const totalRegularMcPts = activeQuestions.filter(q => q.category !== 'essay').reduce((s, q) => s + (q.points || 0.25), 0);
+    const totalRegularEsPts = activeQuestions.filter(q => q.category === 'essay').reduce((s, q) => s + (q.points || 1.0), 0);
+    const totalHsktMcPts = activeHsktQuestions.filter(q => q.category !== 'essay').reduce((s, q) => s + (q.points || 0.25), 0);
+    const totalHsktEsPts = activeHsktQuestions.filter(q => q.category === 'essay').reduce((s, q) => s + (q.points || 1.0), 0);
+
     return (
         <div className="max-w-7xl mx-auto pb-20">
-            {/* TOP HEADER WITH QUICK ACCESS TO EXAM BANK */}
-            <header className="mb-6 flex flex-wrap items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-gray-200 shadow-xs">
+            {/* TOP HEADER WITH CLEAN 2-STEP NAVIGATION & SAVED EXAM BANK */}
+            <header className="mb-5 flex flex-wrap items-center justify-between gap-4 bg-white px-5 py-4 rounded-2xl border border-gray-200 shadow-xs">
                 <div>
-                    <h1 className="text-2xl font-extrabold text-gray-900 flex items-center gap-2.5">
-                        <Layers className="text-primary" size={26} /> Tạo Đề Thi & Ngân Hàng Đề Thi
+                    <h1 className="text-xl sm:text-2xl font-extrabold text-gray-900 flex items-center gap-2.5">
+                        <Layers className="text-primary" size={24} /> Tạo Đề Kiểm Tra & Đề HSKT
                     </h1>
-                    <p className="text-gray-500 text-xs sm:text-sm mt-0.5">
-                        Kết nối trực tiếp Ngân hàng câu hỏi trên máy, trộn đa mã đề và lưu trữ Ngân hàng đề thi chuyên nghiệp.
+                    <p className="text-gray-500 text-xs mt-0.5">
+                        Tự động ra đề theo Ma trận chuẩn 7991, tách riêng Đề & Biểu mẫu chấm dành cho Học sinh khuyết tật (HSKT).
                     </p>
                 </div>
 
-                {/* Progress Steps & Exam Bank Button */}
-                <div className="flex flex-wrap items-center gap-3">
-                    <div className="flex items-center gap-2 bg-slate-50 px-4 py-2 rounded-xl border border-gray-200 text-xs">
+                <div className="flex flex-wrap items-center gap-2.5">
+                    <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-gray-200 text-xs">
                         <button
                             type="button"
-                            onClick={() => setStep('upload')}
-                            className={`flex items-center gap-1.5 cursor-pointer ${step === 'upload' ? 'text-primary font-bold' : 'text-gray-500 hover:text-gray-800'}`}
+                            onClick={() => setStep('config')}
+                            className={`px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer transition-all ${step === 'config' || step === 'upload' ? 'bg-white text-primary font-bold shadow-2xs' : 'text-gray-600 hover:text-gray-900'}`}
                         >
-                            <span className="w-5 h-5 rounded-full bg-white flex items-center justify-center text-[11px] border border-current">1</span> Nguồn & Kho Đề
+                            <Settings size={14} /> 1. Cấu hình & Chọn Ma trận
                         </button>
-                        <span className="text-gray-300">→</span>
-                        <button
-                            type="button"
-                            onClick={() => bank.length > 0 && setStep('config')}
-                            disabled={bank.length === 0}
-                            className={`flex items-center gap-1.5 cursor-pointer disabled:opacity-40 ${step === 'config' ? 'text-primary font-bold' : 'text-gray-500 hover:text-gray-800'}`}
-                        >
-                            <span className="w-5 h-5 rounded-full bg-white flex items-center justify-center text-[11px] border border-current">2</span> Cấu hình & Ma trận
-                        </button>
-                        <span className="text-gray-300">→</span>
                         <button
                             type="button"
                             onClick={() => generatedTest.length > 0 && setStep('review')}
                             disabled={generatedTest.length === 0}
-                            className={`flex items-center gap-1.5 cursor-pointer disabled:opacity-40 ${step === 'review' ? 'text-primary font-bold' : 'text-gray-500 hover:text-gray-800'}`}
+                            className={`px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer disabled:opacity-40 transition-all ${step === 'review' ? 'bg-white text-primary font-bold shadow-2xs' : 'text-gray-600 hover:text-gray-900'}`}
                         >
-                            <span className="w-5 h-5 rounded-full bg-white flex items-center justify-center text-[11px] border border-current">3</span> Xem & Xuất Đề
+                            <FileText size={14} /> 2. Xem Đề, HSKT & Xuất File ({generatedTest.length})
                         </button>
                     </div>
 
                     <button
                         type="button"
                         onClick={() => setShowDossierRepoModal(true)}
-                        className="px-4 py-2 bg-blue-50 hover:bg-blue-100 text-primary border border-blue-200 rounded-xl text-xs font-bold flex items-center gap-2 transition-all shadow-2xs"
+                        className="px-3.5 py-2 bg-blue-50 hover:bg-blue-100 text-primary border border-blue-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
                     >
-                        <FileBox size={16} />
-                        Ngân Hàng Đề Đã Lưu ({allSavedExams.length})
+                        <FileBox size={15} />
+                        Kho Đề Đã Lưu ({allSavedExams.length})
                     </button>
                 </div>
             </header>
 
-            {/* VIEW 1: SOURCE SELECTION & SAVED EXAM BANK */}
-            {step === 'upload' && (
-                <div className="space-y-6">
-                    {/* Top Grid: 1-Click Use Internal Question Bank vs Upload JSON */}
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        {/* Card 1: Direct Internal Question Bank (2 cols) */}
-                        <div className="lg:col-span-2 bg-white rounded-2xl shadow-xs p-6 border border-blue-200 flex flex-col justify-between">
-                            <div>
-                                <div className="flex items-center justify-between gap-2 mb-3">
-                                    <span className="px-3 py-1 bg-blue-50 text-primary rounded-full text-xs font-bold flex items-center gap-1.5">
-                                        <Database size={14} /> Khuyên dùng • Tự động kết nối
-                                    </span>
-                                    <span className="text-xs text-gray-500">
-                                        Đang có sẵn <strong className="text-primary">{bank.length} câu hỏi</strong>
-                                    </span>
-                                </div>
-                                <h2 className="text-xl font-bold text-gray-900 mb-1.5">
-                                    Tạo đề thi mới từ Ngân hàng Câu hỏi trên máy
-                                </h2>
-                                <p className="text-sm text-gray-500 mb-5">
-                                    Sử dụng trực tiếp các câu hỏi bạn đã soạn trong mục <strong>Câu Hỏi</strong> mà không cần phải xuất/nhập file thủ công.
-                                </p>
-
-                                {/* Grade Filter Pills */}
-                                <div className="mb-5">
-                                    <label className="block text-xs font-bold text-gray-600 mb-2">Chọn Khối lớp cần ra đề:</label>
-                                    <div className="flex flex-wrap gap-2">
-                                        {[
-                                            { id: 'all', label: 'Tất cả các khối' },
-                                            { id: '6', label: 'Khối 6' },
-                                            { id: '7', label: 'Khối 7' },
-                                            { id: '8', label: 'Khối 8' },
-                                            { id: '9', label: 'Khối 9' },
-                                        ].map(g => (
-                                            <button
-                                                key={g.id}
-                                                type="button"
-                                                onClick={() => {
-                                                    setSelectedGradeFilter(g.id);
-                                                    loadInternalQuestionBank(g.id, false);
-                                                }}
-                                                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold border transition-all ${selectedGradeFilter === g.id
-                                                    ? 'bg-primary text-white border-primary shadow-xs'
-                                                    : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
-                                                    }`}
-                                            >
-                                                {g.label}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-gray-100">
-                                <div className="text-xs text-gray-500">
-                                    Số bài học sẵn sàng: <strong className="text-gray-800">{Object.keys(availableStats).length} bài</strong>
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={() => loadInternalQuestionBank(selectedGradeFilter, true)}
-                                    className="px-6 py-2.5 bg-primary hover:bg-primary-dark text-white rounded-xl font-bold text-sm shadow-md shadow-blue-200 transition-all flex items-center gap-2"
-                                >
-                                    <Play size={16} /> Tiếp tục cấu hình Đề thi ({bank.length} câu)
-                                </button>
+            {/* STEP 1: STREAMLINED CONFIGURATION & QUESTION SOURCE */}
+            {(step === 'config' || step === 'upload') && (
+                <div className="space-y-5">
+                    {/* Compact Question Source & Grade Bar */}
+                    <div className="bg-white rounded-2xl shadow-xs p-4 sm:p-5 border border-gray-200 flex flex-wrap items-center justify-between gap-4">
+                        <div className="flex flex-wrap items-center gap-3">
+                            <span className="px-3 py-1.5 bg-blue-50 text-primary rounded-xl text-xs font-bold flex items-center gap-1.5 border border-blue-100">
+                                <Database size={14} /> Ngân hàng trên máy: <strong>{bank.length} câu</strong> ({Object.keys(availableStats).length} bài)
+                            </span>
+                            <div className="flex flex-wrap items-center gap-1">
+                                {[
+                                    { id: 'all', label: 'Tất cả khối' },
+                                    { id: '6', label: 'Khối 6' },
+                                    { id: '7', label: 'Khối 7' },
+                                    { id: '8', label: 'Khối 8' },
+                                    { id: '9', label: 'Khối 9' },
+                                ].map(g => (
+                                    <button
+                                        key={g.id}
+                                        type="button"
+                                        onClick={() => {
+                                            setSelectedGradeFilter(g.id);
+                                            loadInternalQuestionBank(g.id, false);
+                                        }}
+                                        className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer ${selectedGradeFilter === g.id
+                                            ? 'bg-primary text-white border-primary'
+                                            : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
+                                            }`}
+                                    >
+                                        {g.label}
+                                    </button>
+                                ))}
                             </div>
                         </div>
 
-                        {/* Card 2: Upload External JSON Files (1 col) */}
-                        <div
-                            className="bg-white rounded-2xl shadow-xs p-6 text-center border-2 border-dashed border-gray-200 hover:border-primary transition-all cursor-pointer flex flex-col items-center justify-center group"
-                            onClick={() => document.getElementById('jsonUpload')?.click()}
-                        >
-                            <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center mb-4 text-primary group-hover:scale-105 transition-transform border border-gray-200">
-                                <Upload size={26} />
-                            </div>
-                            <h3 className="text-base font-bold text-gray-800 mb-1">Nạp thêm từ File JSON</h3>
-                            <p className="text-xs text-gray-500 mb-4 leading-relaxed">
-                                Tải lên 1 hoặc nhiều file <code className="bg-gray-100 px-1 rounded">.json</code> câu hỏi từ máy tính để gộp vào Ngân hàng.
-                            </p>
+                        <div className="flex items-center gap-2">
                             <input
                                 type="file"
                                 id="jsonUpload"
@@ -1403,285 +1495,151 @@ const ExamGenerator: React.FC = () => {
                                 multiple
                                 onChange={handleFileUpload}
                             />
-                            <span className="px-4 py-2 bg-slate-100 group-hover:bg-primary group-hover:text-white text-gray-700 rounded-xl text-xs font-bold transition-colors">
-                                Chọn file JSON từ máy
-                            </span>
+                            <button
+                                type="button"
+                                onClick={() => document.getElementById('jsonUpload')?.click()}
+                                className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-gray-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                            >
+                                <Upload size={14} className="text-primary" /> Nạp thêm câu hỏi (.json)
+                            </button>
                         </div>
                     </div>
 
-                    {/* SAVED EXAM BANK SECTION (NGÂN HÀNG ĐỀ THI ĐÃ LƯU) */}
-                    <div className="bg-white rounded-2xl shadow-xs border border-gray-200 p-6">
-                        <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-gray-100">
+                    {/* Main Configuration Card */}
+                    <div className="bg-white rounded-2xl shadow-xs p-5 sm:p-6 border border-gray-200">
+                        <div className="flex flex-wrap justify-between items-center mb-5 gap-4 border-b pb-4">
                             <div>
                                 <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                                    <FileBox className="text-primary" size={22} /> Ngân Hàng Đề Thi Đã Lưu ({allSavedExams.length})
+                                    <Settings size={20} className="text-primary" /> Chọn Phương Thức Ra Đề
                                 </h2>
                                 <p className="text-xs text-gray-500 mt-0.5">
-                                    Lưu trữ trọn bộ đề thi, các mã đề hoán vị & đáp án để sử dụng lâu dài qua các năm học.
+                                    Chọn ma trận đã lưu trên máy để tự động lấy đủ số câu chuẩn 7,0đ TN + 3,0đ TL, hoặc tự chọn số câu theo bài.
                                 </p>
                             </div>
 
-                            {/* Export / Import Exam Bank Buttons */}
-                            <div className="flex flex-wrap items-center gap-2">
+                            <div className="flex bg-gray-100 p-1 rounded-xl">
                                 <button
                                     type="button"
-                                    onClick={() => handleExportExamBank()}
-                                    className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-gray-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors"
-                                    title="Tải toàn bộ Ngân hàng Đề thi về máy dạng file .json"
+                                    onClick={() => setConfigMode('matrix')}
+                                    className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${configMode === 'matrix' ? 'bg-white text-primary shadow-2xs' : 'text-gray-500 hover:text-gray-700'}`}
                                 >
-                                    <Download size={14} className="text-primary" /> Sao lưu Kho Đề (.json)
+                                    <FileJson size={15} /> Theo Ma Trận Đề
                                 </button>
-                                <label className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-gray-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer">
-                                    <Upload size={14} className="text-emerald-600" /> Nhập Đề Thi (.json)
-                                    <input type="file" accept=".json" onChange={handleImportExamBankFile} className="hidden" />
-                                </label>
+                                <button
+                                    type="button"
+                                    onClick={() => setConfigMode('manual')}
+                                    className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${configMode === 'manual' ? 'bg-white text-primary shadow-2xs' : 'text-gray-500 hover:text-gray-700'}`}
+                                >
+                                    <Grid3X3 size={15} /> Chọn Số Câu Theo Bài
+                                </button>
                             </div>
                         </div>
 
-                        {/* Filter & Search Bar */}
-                        <div className="flex flex-wrap items-center justify-between gap-3 my-4">
-                            <div className="flex flex-wrap items-center gap-1.5">
-                                {[
-                                    { id: 'all', label: 'Tất cả' },
-                                    { id: '6', label: 'Khối 6' },
-                                    { id: '7', label: 'Khối 7' },
-                                    { id: '8', label: 'Khối 8' },
-                                    { id: '9', label: 'Khối 9' },
-                                ].map(tab => (
-                                    <button
-                                        key={tab.id}
-                                        type="button"
-                                        onClick={() => setExamGradeFilter(tab.id)}
-                                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${examGradeFilter === tab.id
-                                            ? 'bg-primary text-white'
-                                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                                            }`}
-                                    >
-                                        {tab.label}
-                                    </button>
-                                ))}
-                            </div>
-
-                            <div className="relative w-full sm:w-64">
-                                <Search size={15} className="absolute left-3 top-2.5 text-gray-400" />
-                                <input
-                                    type="text"
-                                    placeholder="Tìm tên đề thi, kỳ thi..."
-                                    value={examSearchQuery}
-                                    onChange={(e) => setExamSearchQuery(e.target.value)}
-                                    className="w-full pl-9 pr-3 py-1.5 border border-gray-200 rounded-xl text-xs outline-none focus:border-primary"
-                                />
-                            </div>
-                        </div>
-
-                        {/* Saved Exam Cards List */}
-                        {filteredSavedExams.length === 0 ? (
-                            <div className="text-center py-10 bg-gray-50 rounded-xl border border-dashed border-gray-200 text-gray-400 text-sm">
-                                Chưa có đề thi nào trong mục này. Hãy tạo đề mới hoặc bấm "Nhập Đề Thi (.json)".
-                            </div>
-                        ) : (
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-                                {filteredSavedExams.map(dossier => (
-                                    <div
-                                        key={dossier.id}
-                                        onClick={() => handleLoadDossier(dossier)}
-                                        className="p-4 rounded-xl border border-gray-200 hover:border-primary/50 hover:shadow-md transition-all bg-white cursor-pointer flex flex-col justify-between gap-3 group"
-                                    >
-                                        <div>
-                                            <div className="flex items-center justify-between gap-2 mb-1.5">
-                                                <div className="flex items-center gap-1.5">
-                                                    <span className="px-2 py-0.5 rounded-md bg-blue-50 text-primary text-[11px] font-bold border border-blue-100">
-                                                        Khối {dossier.grade || '7'}
-                                                    </span>
-                                                    <span className="px-2 py-0.5 rounded-md bg-slate-100 text-gray-700 text-[11px] font-semibold">
-                                                        {dossier.questions?.length || 0} câu
-                                                    </span>
-                                                    {dossier.variants && dossier.variants.length > 0 && (
-                                                        <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-[11px] font-semibold">
-                                                            {dossier.variants.length} mã đề
-                                                        </span>
-                                                    )}
-                                                </div>
-                                                <span className="text-[11px] text-gray-400">
-                                                    {new Date(dossier.updatedAt || dossier.createdAt).toLocaleDateString('vi-VN')}
-                                                </span>
-                                            </div>
-                                            <h3 className="text-sm font-bold text-gray-900 group-hover:text-primary transition-colors line-clamp-1">
-                                                {dossier.title}
-                                            </h3>
-                                            <p className="text-xs text-gray-500 mt-0.5 line-clamp-1">
-                                                {dossier.headerInfo?.tenKyThi || 'Đề kiểm tra định kì'} • {dossier.headerInfo?.tenTruong || ''}
-                                            </p>
-                                        </div>
-
-                                        <div className="flex items-center justify-between pt-2.5 border-t border-gray-100">
-                                            <span className="text-xs font-bold text-primary">
-                                                Bấm để mở & chỉnh sửa →
-                                            </span>
-                                            <div className="flex items-center gap-1">
-                                                <button
-                                                    type="button"
-                                                    onClick={(e) => handleQuickWordDownloadFromBank(dossier, e)}
-                                                    className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-colors"
-                                                    title="Tải ngay file Word (.doc)"
-                                                >
-                                                    <Download size={12} /> Word
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={(e) => handleExportExamBank(dossier.id, e)}
-                                                    className="p-1.5 text-gray-500 hover:text-primary hover:bg-blue-50 rounded-lg transition-colors"
-                                                    title="Xuất đề này ra file .json"
-                                                >
-                                                    <FileJson size={14} />
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={(e) => handleDuplicateDossier(dossier.id, e)}
-                                                    className="p-1.5 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                                                    title="Nhân bản đề thi này"
-                                                >
-                                                    <Copy size={14} />
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={(e) => handleDeleteDossier(dossier.id, e)}
-                                                    className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                                                    title="Xóa đề thi"
-                                                >
-                                                    <Trash2 size={14} />
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))}
+                        {/* Mode 1: Manual Table */}
+                        {configMode === 'manual' && (
+                            <div className="overflow-x-auto border rounded-xl mb-5 max-h-[420px] overflow-y-auto">
+                                <table className="w-full border-collapse">
+                                    <thead className="sticky top-0 z-10">
+                                        <tr className="bg-gray-50 text-gray-700 text-xs">
+                                            <th className="p-3 border text-left min-w-[200px]">Bài học / Chủ đề</th>
+                                            <th className="p-3 border w-28 bg-green-50 text-green-800 font-bold">Nhận biết</th>
+                                            <th className="p-3 border w-28 bg-blue-50 text-blue-800 font-bold">Thông hiểu</th>
+                                            <th className="p-3 border w-28 bg-yellow-50 text-yellow-800 font-bold">Vận dụng</th>
+                                            <th className="p-3 border w-28 bg-red-50 text-red-800 font-bold">Vận dụng cao</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {Object.keys(availableStats).sort().map(lesson => {
+                                            const stats = availableStats[lesson];
+                                            return (
+                                                <tr key={lesson} className="hover:bg-gray-50">
+                                                    <td className="p-2.5 border font-medium text-gray-800 text-xs sm:text-sm">{lesson}</td>
+                                                    {['NB', 'TH', 'VD', 'VDC'].map(lvl => (
+                                                        <td key={lvl} className="p-2 border text-center">
+                                                            <div className="flex flex-col items-center">
+                                                                <input
+                                                                    type="number"
+                                                                    min="0"
+                                                                    max={stats[lvl]}
+                                                                    value={manualConfig[lesson]?.[lvl] || ''}
+                                                                    placeholder="0"
+                                                                    className={`w-14 p-1 text-center border rounded-lg focus:ring-2 focus:ring-primary outline-none text-xs ${stats[lvl] === 0 ? 'bg-gray-100 text-gray-400' : 'bg-white font-bold text-gray-800'}`}
+                                                                    disabled={stats[lvl] === 0}
+                                                                    onChange={(e) => handleManualConfigChange(lesson, lvl, e.target.value)}
+                                                                />
+                                                                <span className="text-[10px] text-gray-400 mt-0.5">Kho: {stats[lvl]}</span>
+                                                            </div>
+                                                        </td>
+                                                    ))}
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
                             </div>
                         )}
-                    </div>
-                </div>
-            )}
 
-            {/* VIEW 2: CONFIG */}
-            {step === 'config' && (
-                <div className="bg-white rounded-2xl shadow-xs p-6 sm:p-8 border border-gray-200">
-                    <div className="flex flex-wrap justify-between items-center mb-6 gap-4 border-b pb-5">
-                        <div>
-                            <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-                                <Settings size={22} className="text-primary" /> Thiết Lập Cấu Trúc Đề Thi & Mã Đề
-                            </h2>
-                            <p className="text-xs sm:text-sm text-gray-500 mt-1">
-                                Ngân hàng đang chọn: <strong className="text-primary">{bank.length} câu hỏi</strong> ({Object.keys(availableStats).length} bài học)
-                            </p>
-                        </div>
-
-                        {/* Config Mode Toggle */}
-                        <div className="flex bg-gray-100 p-1 rounded-xl">
-                            <button
-                                onClick={() => setConfigMode('manual')}
-                                className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all flex items-center gap-2 ${configMode === 'manual' ? 'bg-white text-primary shadow-2xs' : 'text-gray-500 hover:text-gray-700'}`}
-                            >
-                                <Grid3X3 size={16} /> Chọn Số Câu Theo Bài
-                            </button>
-                            <button
-                                onClick={() => setConfigMode('matrix')}
-                                className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all flex items-center gap-2 ${configMode === 'matrix' ? 'bg-white text-primary shadow-2xs' : 'text-gray-500 hover:text-gray-700'}`}
-                            >
-                                <FileJson size={16} /> Theo Ma Trận Đề
-                            </button>
-                        </div>
-                    </div>
-
-                    {/* Mode 1: Manual Table */}
-                    {configMode === 'manual' && (
-                        <div className="overflow-x-auto border rounded-xl mb-6">
-                            <table className="w-full border-collapse">
-                                <thead>
-                                    <tr className="bg-gray-50 text-gray-700 text-xs sm:text-sm">
-                                        <th className="p-3 border text-left min-w-[200px]">Bài học / Chủ đề</th>
-                                        <th className="p-3 border w-32 bg-green-50 text-green-800 font-bold">Nhận biết</th>
-                                        <th className="p-3 border w-32 bg-blue-50 text-blue-800 font-bold">Thông hiểu</th>
-                                        <th className="p-3 border w-32 bg-yellow-50 text-yellow-800 font-bold">Vận dụng</th>
-                                        <th className="p-3 border w-32 bg-red-50 text-red-800 font-bold">Vận dụng cao</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {Object.keys(availableStats).sort().map(lesson => {
-                                        const stats = availableStats[lesson];
-                                        return (
-                                            <tr key={lesson} className="hover:bg-gray-50">
-                                                <td className="p-3 border font-medium text-gray-800 text-sm">{lesson}</td>
-                                                {['NB', 'TH', 'VD', 'VDC'].map(lvl => (
-                                                    <td key={lvl} className="p-2 border text-center">
-                                                        <div className="flex flex-col items-center">
-                                                            <input
-                                                                type="number"
-                                                                min="0"
-                                                                max={stats[lvl]}
-                                                                value={manualConfig[lesson]?.[lvl] || ''}
-                                                                placeholder="0"
-                                                                className={`w-16 p-1.5 text-center border rounded-lg focus:ring-2 focus:ring-primary outline-none text-sm ${stats[lvl] === 0 ? 'bg-gray-100 text-gray-400' : 'bg-white font-bold text-gray-800'}`}
-                                                                disabled={stats[lvl] === 0}
-                                                                onChange={(e) => handleManualConfigChange(lesson, lvl, e.target.value)}
-                                                            />
-                                                            <span className="text-[10px] text-gray-400 mt-1">Kho: {stats[lvl]}</span>
+                        {/* Mode 2: Matrix Selection */}
+                        {configMode === 'matrix' && (
+                            <div className="space-y-4 mb-5">
+                                {savedLocalMatrices.length > 0 && (
+                                    <div className="p-4 bg-blue-50/40 border border-blue-200 rounded-2xl">
+                                        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                                            <h3 className="text-xs sm:text-sm font-bold text-gray-900 flex items-center gap-1.5">
+                                                <Database size={15} className="text-primary" /> Chọn Ma trận đã lưu trên máy:
+                                            </h3>
+                                            <label className="text-xs font-bold text-primary hover:underline cursor-pointer flex items-center gap-1">
+                                                <Upload size={13} /> Tải file Ma trận (.json) từ máy
+                                                <input type="file" className="hidden" accept=".json" onChange={handleMatrixUpload} />
+                                            </label>
+                                        </div>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+                                            {savedLocalMatrices.map((m, idx) => {
+                                                const isSelected = importedMatrix?.thongTinChung?.tenDe === m.name;
+                                                return (
+                                                    <button
+                                                        key={idx}
+                                                        type="button"
+                                                        onClick={() => applyMatrixData(m.data)}
+                                                        className={`p-3 border rounded-xl text-left transition-all cursor-pointer ${
+                                                            isSelected
+                                                                ? 'bg-blue-50 border-primary ring-2 ring-primary/20'
+                                                                : 'bg-white hover:bg-gray-50 border-gray-200 hover:border-primary/50'
+                                                        }`}
+                                                    >
+                                                        <div className="font-bold text-xs sm:text-sm text-gray-900 flex items-center justify-between gap-1">
+                                                            <span className="truncate">{m.name}</span>
+                                                            {isSelected && <CheckCircle2 size={15} className="text-primary shrink-0" />}
                                                         </div>
-                                                    </td>
-                                                ))}
-                                            </tr>
-                                        );
-                                    })}
-                                </tbody>
-                            </table>
-                        </div>
-                    )}
-
-                    {/* Mode 2: Matrix Selection (Direct from Local Storage OR Upload JSON) */}
-                    {configMode === 'matrix' && (
-                        <div className="space-y-4 mb-6">
-                            {/* Saved Matrices on Machine */}
-                            {savedLocalMatrices.length > 0 && !importedMatrix && (
-                                <div className="p-5 bg-blue-50/50 border border-blue-200 rounded-2xl">
-                                    <h3 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
-                                        <Database size={16} className="text-primary" /> Chọn nhanh Ma trận đã tạo trên máy:
-                                    </h3>
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                                        {savedLocalMatrices.map((m, idx) => (
-                                            <button
-                                                key={idx}
-                                                type="button"
-                                                onClick={() => applyMatrixData(m.data)}
-                                                className="p-3.5 bg-white hover:bg-blue-50 border border-gray-200 hover:border-primary rounded-xl text-left transition-all shadow-2xs"
-                                            >
-                                                <div className="font-bold text-sm text-gray-900">{m.name}</div>
-                                                <div className="text-xs text-gray-500 mt-1">{m.data.chiTiet.length} nội dung / bài học</div>
-                                            </button>
-                                        ))}
+                                                        <div className="text-[11px] text-gray-500 mt-0.5">{m.data.chiTiet.length} đơn vị kiến thức</div>
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
                                     </div>
-                                </div>
-                            )}
+                                )}
 
-                            <div className="border-2 border-dashed border-gray-300 rounded-2xl p-6 text-center bg-gray-50">
                                 {!importedMatrix ? (
-                                    <>
-                                        <FileJson size={40} className="mx-auto text-primary mb-3" />
-                                        <h3 className="text-base font-bold text-gray-800 mb-1">Hoặc tải lên file Ma trận (.json)</h3>
-                                        <p className="text-xs text-gray-500 mb-4">Sử dụng file JSON xuất từ mục "Xây dựng Ma trận" để tự động chia tỷ lệ số câu.</p>
-                                        <label className="px-5 py-2.5 bg-primary text-white rounded-xl font-bold text-xs sm:text-sm hover:bg-primary-dark transition-all cursor-pointer inline-flex items-center gap-2 shadow-xs">
-                                            <Upload size={16} /> Chọn file Ma trận JSON
-                                            <input type="file" className="hidden" accept=".json" onChange={handleMatrixUpload} />
-                                        </label>
-                                    </>
+                                    savedLocalMatrices.length === 0 && (
+                                        <div className="border-2 border-dashed border-gray-300 rounded-2xl p-6 text-center bg-gray-50">
+                                            <FileJson size={36} className="mx-auto text-primary mb-2" />
+                                            <h3 className="text-sm font-bold text-gray-800 mb-1">Tải lên file Ma trận (.json)</h3>
+                                            <p className="text-xs text-gray-500 mb-3">Sử dụng file JSON xuất từ mục "Xây dựng Ma trận" để tự động lấy câu hỏi.</p>
+                                            <label className="px-4 py-2 bg-primary text-white rounded-xl font-bold text-xs hover:bg-primary-dark transition-all cursor-pointer inline-flex items-center gap-1.5">
+                                                <Upload size={15} /> Chọn file Ma trận JSON
+                                                <input type="file" className="hidden" accept=".json" onChange={handleMatrixUpload} />
+                                            </label>
+                                        </div>
+                                    )
                                 ) : (
-                                    <div className="text-left w-full mx-auto">
-                                        <div className="flex flex-wrap justify-between items-center gap-3 mb-4">
-                                            <div>
-                                                <h3 className="text-base font-bold text-emerald-700 flex items-center gap-2">
-                                                    <CheckCircle2 size={20} /> Đã chọn ma trận: {importedMatrix.thongTinChung.tenDe}
-                                                </h3>
-                                            </div>
-                                            <div className="flex items-center gap-3">
+                                    <div className="border border-emerald-200 bg-emerald-50/20 rounded-2xl p-4">
+                                        <div className="flex flex-wrap justify-between items-center gap-3 mb-3">
+                                            <h3 className="text-sm font-bold text-emerald-800 flex items-center gap-1.5">
+                                                <CheckCircle2 size={18} className="text-emerald-600" /> Đang chọn ma trận: {importedMatrix.thongTinChung.tenDe}
+                                            </h3>
+                                            <div className="flex flex-wrap items-center gap-3">
                                                 {importedMatrix.thongTinChung.matrixFormat === 'new_4part' && (
-                                                    <label className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-xs font-bold text-indigo-800 cursor-pointer select-none">
+                                                    <label className="flex items-center gap-2 px-3 py-1 rounded-lg bg-white border border-indigo-200 text-xs font-bold text-indigo-800 cursor-pointer select-none">
                                                         <input
                                                             type="checkbox"
                                                             checked={importedMatrix.thongTinChung.useShortAnswer !== false}
@@ -1695,37 +1653,37 @@ const ExamGenerator: React.FC = () => {
                                                                     }
                                                                 } : null);
                                                             }}
-                                                            className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                                            className="w-3.5 h-3.5 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
                                                         />
-                                                        <span>Có phần Điền khuyết / Trả lời ngắn (Bỏ tích ➔ Tự đẩy sang Đúng/Sai)</span>
+                                                        <span>Dùng phần Trả lời ngắn (Bỏ tích ➔ Đẩy sang Đúng/Sai)</span>
                                                     </label>
                                                 )}
-                                                <button onClick={() => setImportedMatrix(null)} className="text-red-600 hover:underline text-xs font-bold">
-                                                    Đổi ma trận khác
+                                                <button onClick={() => setImportedMatrix(null)} className="text-xs text-gray-500 hover:text-red-600 font-semibold cursor-pointer">
+                                                    Bỏ chọn
                                                 </button>
                                             </div>
                                         </div>
 
-                                        <div className="bg-white border rounded-xl overflow-hidden">
-                                            <table className="w-full text-xs sm:text-sm">
-                                                <thead className="bg-gray-100 text-gray-700 font-bold">
+                                        <div className="bg-white border rounded-xl overflow-hidden max-h-60 overflow-y-auto">
+                                            <table className="w-full text-xs">
+                                                <thead className="bg-gray-50 text-gray-700 font-bold sticky top-0">
                                                     <tr>
-                                                        <th className="p-3 text-left">Bài học</th>
-                                                        <th className="p-3 text-center">Trắc nghiệm (NB-TH-VD-VDC)</th>
-                                                        <th className="p-3 text-center">Tự luận (NB-TH-VD-VDC)</th>
+                                                        <th className="p-2.5 text-left">Nội dung / Bài học</th>
+                                                        <th className="p-2.5 text-center">Trắc nghiệm (NB - TH - VD - VDC)</th>
+                                                        <th className="p-2.5 text-center">Tự luận (NB - TH - VD - VDC)</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody>
                                                     {importedMatrix.chiTiet.map((row, idx) => (
                                                         <tr key={idx} className="border-t hover:bg-gray-50">
-                                                            <td className="p-3 font-medium">{row.thongTinChung.bai}</td>
-                                                            <td className="p-3 text-center">
-                                                                <span className="font-mono bg-blue-50 text-blue-700 px-2 py-1 rounded font-bold">
+                                                            <td className="p-2.5 font-medium text-gray-800">{row.thongTinChung.bai || row.thongTinChung.noiDung}</td>
+                                                            <td className="p-2.5 text-center">
+                                                                <span className="font-mono bg-blue-50 text-blue-700 px-2 py-0.5 rounded font-bold">
                                                                     {row.tracNghiem.NB} - {row.tracNghiem.TH} - {row.tracNghiem.VD} - {row.tracNghiem.VDC}
                                                                 </span>
                                                             </td>
-                                                            <td className="p-3 text-center">
-                                                                <span className="font-mono bg-orange-50 text-orange-700 px-2 py-1 rounded font-bold">
+                                                            <td className="p-2.5 text-center">
+                                                                <span className="font-mono bg-orange-50 text-orange-700 px-2 py-0.5 rounded font-bold">
                                                                     {row.tuLuan.NB} - {row.tuLuan.TH} - {row.tuLuan.VD} - {row.tuLuan.VDC}
                                                                 </span>
                                                             </td>
@@ -1737,81 +1695,71 @@ const ExamGenerator: React.FC = () => {
                                     </div>
                                 )}
                             </div>
-                        </div>
-                    )}
+                        )}
 
-                    {/* Multi-Code Configuration Options */}
-                    <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 mb-6">
-                        <h3 className="font-bold text-gray-800 text-sm mb-3 flex items-center gap-2">
-                            <Shuffle size={17} className="text-primary" /> Trộn Đa Mã Đề Thi
-                        </h3>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
-                            <div>
-                                <label className="block text-xs font-semibold text-gray-600 mb-2">Số lượng mã đề cần tạo:</label>
-                                <div className="flex gap-2">
-                                    {[1, 2, 4, 8].map(count => (
-                                        <button
-                                            key={count}
-                                            type="button"
-                                            onClick={() => setVariantCount(count)}
-                                            className={`px-3.5 py-2 rounded-lg text-xs font-bold border transition-all ${variantCount === count
-                                                ? 'bg-primary text-white border-primary'
-                                                : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                                                }`}
-                                        >
-                                            {count} mã đề
-                                        </button>
-                                    ))}
+                        {/* Compact Footer Bar: Variant Count + Generate Button */}
+                        <div className="flex flex-wrap items-center justify-between gap-4 pt-4 border-t border-gray-100">
+                            <div className="flex flex-wrap items-center gap-4">
+                                <div className="flex items-center gap-2">
+                                    <span className="text-xs font-bold text-gray-700 flex items-center gap-1">
+                                        <Shuffle size={14} className="text-primary" /> Số mã đề:
+                                    </span>
+                                    <div className="flex gap-1">
+                                        {[1, 2, 4, 8].map(count => (
+                                            <button
+                                                key={count}
+                                                type="button"
+                                                onClick={() => setVariantCount(count)}
+                                                className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer ${variantCount === count
+                                                    ? 'bg-primary text-white border-primary'
+                                                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                                                    }`}
+                                            >
+                                                {count} mã
+                                            </button>
+                                        ))}
+                                    </div>
                                 </div>
-                            </div>
-                            <div className="flex items-center gap-2.5 pt-2 md:pt-5">
-                                <input
-                                    type="checkbox"
-                                    id="shuffleOpts"
-                                    checked={shuffleOptions}
-                                    onChange={(e) => setShuffleOptions(e.target.checked)}
-                                    className="w-4 h-4 text-primary accent-primary rounded cursor-pointer"
-                                />
-                                <label htmlFor="shuffleOpts" className="text-xs sm:text-sm font-medium text-gray-700 cursor-pointer">
-                                    Tự động đảo phương án A, B, C, D giữa các mã đề
+
+                                <label className="flex items-center gap-2 text-xs font-medium text-gray-700 cursor-pointer select-none">
+                                    <input
+                                        type="checkbox"
+                                        checked={shuffleOptions}
+                                        onChange={(e) => setShuffleOptions(e.target.checked)}
+                                        className="w-4 h-4 text-primary accent-primary rounded cursor-pointer"
+                                    />
+                                    <span>Đảo đáp án A, B, C, D</span>
                                 </label>
                             </div>
-                        </div>
-                    </div>
 
-                    <div className="flex justify-between items-center">
-                        <button onClick={() => setStep('upload')} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-xl font-semibold text-sm">
-                            ← Quay lại
-                        </button>
-                        <button
-                            onClick={generateTest}
-                            disabled={configMode === 'matrix' && !importedMatrix}
-                            className="px-7 py-2.5 bg-emerald-600 text-white rounded-xl font-bold text-sm hover:bg-emerald-700 shadow-md shadow-emerald-200 flex items-center gap-2 disabled:opacity-50 transition-all"
-                        >
-                            <Play size={18} /> Tạo Đề & Trộn Mã Đề
-                        </button>
+                            <button
+                                type="button"
+                                onClick={generateTest}
+                                disabled={configMode === 'matrix' && !importedMatrix}
+                                className="px-6 py-2.5 bg-emerald-600 text-white rounded-xl font-bold text-sm hover:bg-emerald-700 shadow-md shadow-emerald-200 flex items-center gap-2 disabled:opacity-50 transition-all cursor-pointer"
+                            >
+                                <Play size={17} /> Tạo Đề Chính Thức & Đề HSKT
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}
 
-            {/* VIEW 3: REVIEW & SAVE TO EXAM BANK & EXPORT */}
+            {/* STEP 2: UNIFIED REVIEW, HSKT SEPARATION & EXPORT */}
             {step === 'review' && (
-                <div className="space-y-6">
+                <div className="space-y-5">
                     {/* Warning & Auto-fill Banner if missing questions */}
                     {missingRequirements.length > 0 && (
-                        <div className="bg-amber-50 border border-amber-300 p-5 rounded-2xl flex flex-wrap justify-between items-center gap-4">
+                        <div className="bg-amber-50 border border-amber-300 p-4 rounded-2xl flex flex-wrap justify-between items-center gap-4">
                             <div className="flex items-start gap-3">
-                                <AlertTriangle className="text-amber-600 shrink-0 mt-0.5" size={22} />
+                                <AlertTriangle className="text-amber-600 shrink-0 mt-0.5" size={20} />
                                 <div>
-                                    <p className="font-bold text-amber-900 text-sm">
+                                    <p className="font-bold text-amber-900 text-xs sm:text-sm">
                                         Ngân hàng hiện thiếu {missingRequirements.reduce((sum, item) => sum + item.count, 0)} câu hỏi theo cấu hình!
                                     </p>
-                                    <p className="text-xs text-amber-700 mt-0.5">
-                                        Bấm nút bên cạnh để hệ thống tự động sinh bù các câu còn thiếu và lưu luôn vào Ngân hàng.
-                                    </p>
-                                    <div className="mt-2.5 flex flex-wrap gap-1.5">
+                                    <div className="mt-1.5 flex flex-wrap gap-1.5">
                                         {missingRequirements.map((req, i) => (
-                                            <span key={i} className="text-xs bg-white px-2.5 py-1 rounded-lg text-amber-900 border border-amber-200">
+                                            <span key={i} className="text-[11px] bg-white px-2 py-0.5 rounded-lg text-amber-900 border border-amber-200">
                                                 <strong>{req.lesson}</strong> ({req.level} - {req.questionType === 'essay' ? 'TL' : 'TN'}): thiếu <strong className="text-red-600">{req.count}</strong>
                                             </span>
                                         ))}
@@ -1821,170 +1769,287 @@ const ExamGenerator: React.FC = () => {
                             <button
                                 onClick={handleTriggerAutoFill}
                                 disabled={isAutoFilling}
-                                className="px-4 py-2 bg-amber-600 text-white font-bold rounded-xl hover:bg-amber-700 flex items-center gap-2 text-xs sm:text-sm disabled:opacity-50"
+                                className="px-4 py-2 bg-amber-600 text-white font-bold rounded-xl hover:bg-amber-700 flex items-center gap-2 text-xs disabled:opacity-50 cursor-pointer"
                             >
-                                {isAutoFilling ? <Loader2 size={16} className="animate-spin" /> : <Wand2 size={16} />}
+                                {isAutoFilling ? <Loader2 size={15} className="animate-spin" /> : <Wand2 size={15} />}
                                 Tự động bù câu thiếu
                             </button>
                         </div>
                     )}
 
                     {isAutoFilling && (
-                        <div className="bg-blue-50 border border-blue-200 p-3.5 rounded-xl flex items-center gap-3 text-xs sm:text-sm text-blue-800">
-                            <Loader2 size={18} className="animate-spin text-primary" />
+                        <div className="bg-blue-50 border border-blue-200 p-3 rounded-xl flex items-center gap-3 text-xs text-blue-800">
+                            <Loader2 size={16} className="animate-spin text-primary" />
                             <span>{autoFillProgress}</span>
                         </div>
                     )}
 
-                    {/* SAVE TO EXAM BANK BAR (LƯU TRỮ NGÂN HÀNG ĐỀ THI CHUYÊN NGHIỆP & ĐƠN GIẢN) */}
-                    <div className="bg-white p-4 sm:p-5 rounded-2xl shadow-xs border border-blue-200 flex flex-wrap items-center justify-between gap-4">
-                        <div className="flex items-center gap-3 flex-1 min-w-[260px]">
-                            <div className="w-10 h-10 rounded-xl bg-blue-50 text-primary flex items-center justify-center shrink-0">
-                                <FolderCheck size={20} />
-                            </div>
-                            <div className="flex-1">
-                                <label className="block text-[11px] font-bold text-gray-500 uppercase">
-                                    Tên lưu trữ trong Ngân hàng Đề thi & Tên file Word:
-                                </label>
-                                <input
-                                    type="text"
-                                    value={customFileName}
-                                    onChange={(e) => {
-                                        setCustomFileName(e.target.value);
-                                        setIsFileNameManuallyEdited(true);
-                                    }}
-                                    placeholder={buildDefaultFileName(activeQuestions, headerInfo, teacherName, importedMatrix)}
-                                    className="w-full max-w-md mt-0.5 px-3 py-1.5 border border-gray-300 rounded-lg text-sm font-bold text-gray-900 focus:border-primary outline-none"
-                                />
-                            </div>
-                        </div>
-
-                        <div className="flex flex-wrap items-center gap-2">
-                            <button
-                                type="button"
-                                onClick={handleSaveToExamBank}
-                                className="px-4 py-2 bg-primary hover:bg-primary-dark text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-xs transition-all"
-                            >
-                                <Check size={15} />
-                                {currentDossierId ? 'Cập Nhật Vào Ngân Hàng Đề' : 'Lưu Vào Ngân Hàng Đề Thi'}
-                            </button>
-
-                            {currentDossierId && (
+                    {/* UNIFIED CONTROL PANEL (GỌN GÀNG, TÁCH BIỆT ĐỀ CHÍNH THỨC & ĐỀ HSKT) */}
+                    <div className="bg-white rounded-2xl shadow-xs border border-gray-200 overflow-hidden">
+                        {/* Row 1: Exam Name + Mode Switcher (Đề Chính Thức vs Đề & Biểu mẫu chấm HSKT) + Quick Save/Export */}
+                        <div className="p-4 border-b border-gray-100 flex flex-wrap items-center justify-between gap-3 bg-slate-50/60">
+                            <div className="flex flex-wrap items-center gap-2.5 flex-1 min-w-[260px]">
                                 <button
                                     type="button"
-                                    onClick={handleSaveAsNewExam}
-                                    className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-gray-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"
-                                    title="Lưu thành một bản đề thi mới trong Ngân hàng"
+                                    onClick={() => setStep('config')}
+                                    className="px-3 py-1.5 bg-white hover:bg-gray-100 text-gray-700 border border-gray-200 rounded-xl text-xs font-bold cursor-pointer"
                                 >
-                                    <PlusCircle size={14} /> Lưu Bản Mới
+                                    ← Cấu hình
                                 </button>
-                            )}
-
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    const currentV = variants.find(v => v.code === activeVariantCode);
-                                    const vHeader = { ...headerInfo, maDe: activeVariantCode };
-                                    const html = generateExamWordHtml(currentV ? currentV.questions : generatedTest, vHeader);
-                                    const blob = new Blob(['\ufeff', html], { type: 'application/msword' });
-                                    const url = URL.createObjectURL(blob);
-                                    const a = document.createElement('a');
-                                    a.href = url;
-                                    const baseName = (customFileName || buildDefaultFileName(activeQuestions, headerInfo, teacherName, importedMatrix)).trim();
-                                    a.download = `${baseName}.doc`;
-                                    a.click();
-                                }}
-                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-xs transition-all"
-                            >
-                                <Download size={15} /> Tải Ngay File Word (.doc)
-                            </button>
-                        </div>
-                    </div>
-
-                    {/* Top Action Bar */}
-                    <div className="bg-white p-4 sm:p-5 rounded-2xl shadow-xs border border-gray-200 flex flex-wrap justify-between items-center gap-4">
-                        <div className="flex items-center gap-3 flex-wrap">
-                            <span className="text-sm font-bold text-gray-800">
-                                Tổng số: <strong className="text-primary">{activeQuestions.length} câu</strong>
-                            </span>
-                            {variants.length > 1 && (
-                                <div className="flex items-center gap-1.5">
-                                    {variants.map(v => (
-                                        <button
-                                            key={v.code}
-                                            onClick={() => setActiveVariantCode(v.code)}
-                                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${activeVariantCode === v.code
-                                                ? 'bg-primary text-white'
-                                                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                                                }`}
-                                        >
-                                            Mã {v.code}
-                                        </button>
-                                    ))}
+                                <div className="flex items-center gap-1.5 flex-1 max-w-sm">
+                                    <input
+                                        type="text"
+                                        value={customFileName}
+                                        onChange={(e) => {
+                                            setCustomFileName(e.target.value);
+                                            setIsFileNameManuallyEdited(true);
+                                        }}
+                                        placeholder={buildDefaultFileName(activeQuestions, headerInfo, teacherName, importedMatrix)}
+                                        className="w-full px-3 py-1.5 bg-white border border-gray-300 rounded-xl text-xs font-bold text-gray-900 focus:border-primary outline-none"
+                                        title="Tên đề thi lưu trữ & tên file Word"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={handleSaveToExamBank}
+                                        className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-primary border border-blue-200 rounded-xl text-xs font-bold flex items-center gap-1 shrink-0 cursor-pointer"
+                                        title="Lưu đề thi này vào Kho Đề"
+                                    >
+                                        <FolderCheck size={14} /> {currentDossierId ? 'Cập nhật Kho' : 'Lưu Kho Đề'}
+                                    </button>
                                 </div>
-                            )}
-                        </div>
+                            </div>
 
-                        <div className="flex flex-wrap items-center gap-2.5">
-                            {/* AI Review Button */}
-                            <button
-                                onClick={handleRunAIReview}
-                                disabled={isReviewing}
-                                className="px-3.5 py-1.5 bg-purple-50 text-purple-700 border border-purple-200 rounded-xl hover:bg-purple-100 flex items-center gap-1.5 text-xs font-bold transition-all disabled:opacity-50"
-                            >
-                                {isReviewing ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-                                AI Kiểm Tra Đề
-                            </button>
-
-                            {/* Bulk Swap Menu */}
-                            <div className="relative" ref={swapMenuRef}>
+                            {/* Tab Switcher: ĐỀ CHÍNH THỨC vs ĐỀ & BIỂU MẪU CHẤM HSKT */}
+                            <div className="flex items-center bg-gray-200/80 p-1 rounded-xl">
                                 <button
-                                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setIsSwapMenuOpen(!isSwapMenuOpen); }}
-                                    className="px-3.5 py-1.5 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 flex items-center gap-1.5 font-bold text-xs border border-gray-200"
+                                    type="button"
+                                    onClick={() => setReviewTab('regular')}
+                                    className={`px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition-all flex items-center gap-1.5 cursor-pointer ${
+                                        reviewTab === 'regular'
+                                            ? 'bg-white text-primary shadow-xs'
+                                            : 'text-gray-600 hover:text-gray-900'
+                                    }`}
                                 >
-                                    <RefreshCw size={14} /> Đổi câu hỏi <ChevronDown size={13} />
+                                    <FileText size={14} />
+                                    Đề Chính Thức ({activeQuestions.length} câu • {(totalRegularMcPts + totalRegularEsPts).toFixed(1).replace('.', ',')}đ)
                                 </button>
-                                {isSwapMenuOpen && (
-                                    <div className="absolute right-0 top-full mt-1.5 w-44 bg-white rounded-xl shadow-xl border border-gray-200 z-50 overflow-hidden">
-                                        <button onClick={() => triggerBulkSwap()} className="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-xs flex items-center gap-2 font-bold text-gray-800">
-                                            <RefreshCw size={13} /> Đổi toàn bộ đề
-                                        </button>
-                                        <div className="border-t border-gray-100"></div>
-                                        <button onClick={() => triggerBulkSwap('NB')} className="w-full text-left px-4 py-2 hover:bg-gray-50 text-xs text-green-700 font-semibold">Mức Nhận biết</button>
-                                        <button onClick={() => triggerBulkSwap('TH')} className="w-full text-left px-4 py-2 hover:bg-gray-50 text-xs text-blue-700 font-semibold">Mức Thông hiểu</button>
-                                        <button onClick={() => triggerBulkSwap('VD')} className="w-full text-left px-4 py-2 hover:bg-gray-50 text-xs text-yellow-700 font-semibold">Mức Vận dụng</button>
-                                        <button onClick={() => triggerBulkSwap('VDC')} className="w-full text-left px-4 py-2 hover:bg-gray-50 text-xs text-red-700 font-semibold">Mức Vận dụng cao</button>
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* Bulk Points */}
-                            <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-xl border border-gray-200">
-                                <span className="text-[11px] font-semibold text-gray-600 pl-2">TN:</span>
-                                <input
-                                    type="number"
-                                    step="0.25"
-                                    value={bulkPoints}
-                                    onChange={(e) => setBulkPoints(parseFloat(e.target.value))}
-                                    className="w-12 p-1 border rounded text-center text-xs font-bold bg-white"
-                                />
-                                <button onClick={applyBulkPoints} className="px-2 py-1 bg-primary text-white rounded text-[11px] font-bold">
-                                    Áp dụng
-                                </button>
-                                <div className="h-4 w-[1px] bg-gray-300 mx-0.5"></div>
-                                <span className="text-[11px] font-semibold text-gray-600 pl-1">TL:</span>
-                                <input
-                                    type="number"
-                                    step="0.25"
-                                    value={bulkPointsTL}
-                                    onChange={(e) => setBulkPointsTL(parseFloat(e.target.value))}
-                                    className="w-12 p-1 border rounded text-center text-xs font-bold bg-white"
-                                />
-                                <button onClick={applyBulkPointsTL} className="px-2 py-1 bg-indigo-600 text-white rounded text-[11px] font-bold">
-                                    Áp dụng
+                                <button
+                                    type="button"
+                                    onClick={() => setReviewTab('hskt')}
+                                    className={`px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition-all flex items-center gap-1.5 cursor-pointer ${
+                                        reviewTab === 'hskt'
+                                            ? 'bg-rose-600 text-white shadow-xs'
+                                            : 'text-rose-700 hover:bg-rose-50'
+                                    }`}
+                                >
+                                    <ShieldCheck size={14} />
+                                    Đề & Biểu Mẫu Chấm HSKT Riêng ({activeHsktQuestions.length} câu • {(totalHsktMcPts + totalHsktEsPts).toFixed(1).replace('.', ',')}đ)
                                 </button>
                             </div>
                         </div>
+
+                        {/* Row 2: Context Toolbar depending on Regular vs HSKT tab */}
+                        {reviewTab === 'regular' ? (
+                            <div className="p-3.5 flex flex-wrap items-center justify-between gap-3">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <span className="text-xs font-semibold text-gray-600 bg-gray-100 px-2.5 py-1 rounded-lg">
+                                        TN: <strong>{activeQuestions.filter(q => q.category !== 'essay').length} câu</strong> ({totalRegularMcPts.toFixed(1).replace('.', ',')}đ)
+                                        {' • '}
+                                        TL: <strong>{activeQuestions.filter(q => q.category === 'essay').length} câu</strong> ({totalRegularEsPts.toFixed(1).replace('.', ',')}đ)
+                                    </span>
+
+                                    {variants.length > 1 && (
+                                        <div className="flex items-center gap-1">
+                                            {variants.map(v => (
+                                                <button
+                                                    key={v.code}
+                                                    type="button"
+                                                    onClick={() => setActiveVariantCode(v.code)}
+                                                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${activeVariantCode === v.code
+                                                        ? 'bg-primary text-white'
+                                                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                                                        }`}
+                                                >
+                                                    Mã {v.code}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-2">
+                                    {/* Bulk Swap Menu */}
+                                    <div className="relative" ref={swapMenuRef}>
+                                        <button
+                                            type="button"
+                                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setIsSwapMenuOpen(!isSwapMenuOpen); }}
+                                            className="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 flex items-center gap-1 font-bold text-xs border border-gray-200 cursor-pointer"
+                                        >
+                                            <RefreshCw size={13} /> Đổi câu hỏi <ChevronDown size={12} />
+                                        </button>
+                                        {isSwapMenuOpen && (
+                                            <div className="absolute right-0 top-full mt-1.5 w-44 bg-white rounded-xl shadow-xl border border-gray-200 z-50 overflow-hidden">
+                                                <button onClick={() => triggerBulkSwap()} className="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-xs flex items-center gap-2 font-bold text-gray-800">
+                                                    <RefreshCw size={13} /> Đổi toàn bộ đề
+                                                </button>
+                                                <div className="border-t border-gray-100"></div>
+                                                <button onClick={() => triggerBulkSwap('NB')} className="w-full text-left px-4 py-2 hover:bg-gray-50 text-xs text-green-700 font-semibold">Mức Nhận biết</button>
+                                                <button onClick={() => triggerBulkSwap('TH')} className="w-full text-left px-4 py-2 hover:bg-gray-50 text-xs text-blue-700 font-semibold">Mức Thông hiểu</button>
+                                                <button onClick={() => triggerBulkSwap('VD')} className="w-full text-left px-4 py-2 hover:bg-gray-50 text-xs text-yellow-700 font-semibold">Mức Vận dụng</button>
+                                                <button onClick={() => triggerBulkSwap('VDC')} className="w-full text-left px-4 py-2 hover:bg-gray-50 text-xs text-red-700 font-semibold">Mức Vận dụng cao</button>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <button
+                                        type="button"
+                                        onClick={handleRunAIReview}
+                                        disabled={isReviewing}
+                                        className="px-3 py-1.5 bg-purple-50 text-purple-700 border border-purple-200 rounded-xl hover:bg-purple-100 flex items-center gap-1 text-xs font-bold transition-all disabled:opacity-50 cursor-pointer"
+                                    >
+                                        {isReviewing ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                                        AI Kiểm Tra
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            const currentV = variants.find(v => v.code === activeVariantCode);
+                                            const vHeader = { ...headerInfo, maDe: activeVariantCode };
+                                            const html = generateExamWordHtml(currentV ? currentV.questions : generatedTest, vHeader);
+                                            const blob = new Blob(['\ufeff', html], { type: 'application/msword' });
+                                            const url = URL.createObjectURL(blob);
+                                            const a = document.createElement('a');
+                                            a.href = url;
+                                            const baseName = (customFileName || buildDefaultFileName(activeQuestions, headerInfo, teacherName, importedMatrix)).trim();
+                                            a.download = `${baseName}.doc`;
+                                            a.click();
+                                        }}
+                                        className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
+                                    >
+                                        <Download size={14} /> Xuất Đề Chính Thức (.doc)
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowExportModal(true)}
+                                        className="px-3.5 py-1.5 bg-primary hover:bg-primary-dark text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
+                                    >
+                                        <Printer size={14} /> Tùy Chọn Xuất Khác
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            /* HSKT DEDICATED TOOLBAR */
+                            <div className="p-4 bg-rose-50/40 space-y-3">
+                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <span className="text-xs font-bold text-rose-900 bg-rose-100/80 border border-rose-200 px-3 py-1 rounded-lg">
+                                            Đề HSKT: <strong>{activeHsktQuestions.filter(q => q.category !== 'essay').length} câu TN</strong> ({totalHsktMcPts.toFixed(1).replace('.', ',')}đ)
+                                            {' + '}
+                                            <strong>{activeHsktQuestions.filter(q => q.category === 'essay').length} câu TL</strong> ({totalHsktEsPts.toFixed(1).replace('.', ',')}đ)
+                                            {' = '}
+                                            <strong className="text-rose-700">{(totalHsktMcPts + totalHsktEsPts).toFixed(1).replace('.', ',')} điểm</strong>
+                                        </span>
+
+                                        <div className="flex flex-wrap items-center gap-1">
+                                            <span className="text-[11px] font-bold text-gray-600 mr-1">Chọn nhanh:</span>
+                                            <button
+                                                type="button"
+                                                onClick={() => applyHsktPreset('yccd')}
+                                                className="px-2.5 py-1 bg-white hover:bg-rose-50 text-rose-700 border border-rose-200 rounded-lg text-[11px] font-bold cursor-pointer"
+                                            >
+                                                Theo YCCĐ HSKT
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => applyHsktPreset('nb')}
+                                                className="px-2.5 py-1 bg-white hover:bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-[11px] font-bold cursor-pointer"
+                                            >
+                                                Chỉ câu Nhận biết (NB)
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => applyHsktPreset('nb_th')}
+                                                className="px-2.5 py-1 bg-white hover:bg-blue-50 text-blue-700 border border-blue-200 rounded-lg text-[11px] font-bold cursor-pointer"
+                                            >
+                                                Câu NB + Thông hiểu
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => applyHsktPointsPreset('scale10')}
+                                                className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-[11px] font-bold cursor-pointer"
+                                                title="Tự động chia đều điểm các câu trong đề HSKT để tổng điểm bằng 10,0 điểm"
+                                            >
+                                                Quy đổi thang 10,0đ
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => applyHsktPointsPreset('keep')}
+                                                className="px-2.5 py-1 bg-white hover:bg-gray-100 text-gray-600 border border-gray-200 rounded-lg text-[11px] font-semibold cursor-pointer"
+                                            >
+                                                Giữ điểm gốc
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* 3 Dedicated HSKT Export Buttons */}
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => handleDownloadHsktWord('exam_only')}
+                                            className="px-3 py-1.5 bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
+                                        >
+                                            <Download size={13} /> Tải Đề HSKT Riêng (.doc)
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleDownloadHsktWord('grading_only')}
+                                            className="px-3 py-1.5 bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-300 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
+                                        >
+                                            <FileSpreadsheet size={13} /> Tải Biểu Mẫu Chấm HSKT Riêng (.doc)
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleDownloadHsktWord('both')}
+                                            className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
+                                        >
+                                            <Printer size={14} /> Tải Cả Đề & Biểu Mẫu Chấm HSKT (.doc)
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Interactive Pill Selector to include/exclude questions for HSKT */}
+                                <div className="bg-white p-3 rounded-xl border border-rose-200/80">
+                                    <div className="text-[11px] font-bold text-gray-600 mb-2">
+                                        Bấm vào số thứ tự câu hỏi bên dưới để Thêm / Bớt câu hỏi trong Đề HSKT (màu đỏ = có trong Đề HSKT):
+                                    </div>
+                                    <div className="flex flex-wrap gap-1.5">
+                                        {activeQuestions.map((q, idx) => {
+                                            const isSelected = hsktSelectedIds.includes(String(q.id));
+                                            return (
+                                                <button
+                                                    key={q.id || idx}
+                                                    type="button"
+                                                    onClick={() => toggleHsktQuestion(String(q.id))}
+                                                    className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all cursor-pointer flex items-center gap-1 ${
+                                                        isSelected
+                                                            ? 'bg-rose-600 text-white border-rose-600 shadow-2xs'
+                                                            : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
+                                                    }`}
+                                                    title={`Câu ${idx + 1} (${q.level} - ${q.category === 'essay' ? 'Tự luận' : 'Trắc nghiệm'}): ${q.content?.slice(0, 60)}...`}
+                                                >
+                                                    <span>Câu {idx + 1}</span>
+                                                    <span className={`text-[10px] px-1 rounded ${isSelected ? 'bg-rose-700 text-rose-100' : 'bg-gray-200 text-gray-600'}`}>
+                                                        {q.level}
+                                                    </span>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     {/* Official Exam Paper Preview Header */}
@@ -1999,20 +2064,30 @@ const ExamGenerator: React.FC = () => {
                                     </span>
                                     <div className="w-[90px] h-[1px] bg-black mt-1"></div>
                                 </div>
-                                <span className="text-xs font-bold text-gray-700 mt-2 bg-gray-100 px-3 py-0.5 rounded border border-gray-300">ĐỀ CHÍNH THỨC</span>
+                                <span className={`text-xs font-bold mt-2 px-3 py-0.5 rounded border ${
+                                    reviewTab === 'hskt'
+                                        ? 'bg-rose-50 text-rose-800 border-rose-300'
+                                        : 'bg-gray-100 text-gray-700 border-gray-300'
+                                }`}>
+                                    {reviewTab === 'hskt' ? 'ĐỀ DÀNH CHO HSKT' : 'ĐỀ CHÍNH THỨC'}
+                                </span>
                             </div>
                             <div className="flex flex-col items-center justify-start space-y-1 pl-2">
                                 <span className="text-sm font-bold uppercase text-gray-950">{headerInfo.tenKyThi}</span>
                                 <span className="text-sm font-extrabold uppercase text-gray-900">{headerInfo.monHoc}</span>
                                 <span className="text-xs italic text-gray-600">Thời gian: {headerInfo.thoiGian}</span>
-                                <span className="text-xs italic text-gray-500">(Đề có {Math.max(1, Math.ceil(activeQuestions.length / 8))} trang)</span>
-                                <span className="text-xs font-bold text-gray-800 mt-1">Mã đề: {activeVariantCode || headerInfo.maDe || '101'}</span>
+                                <span className="text-xs italic text-gray-500">
+                                    (Đề có {Math.max(1, Math.ceil((reviewTab === 'hskt' ? activeHsktQuestions.length : activeQuestions.length) / 8))} trang)
+                                </span>
+                                <span className="text-xs font-bold text-gray-800 mt-1">
+                                    Mã đề: {activeVariantCode || headerInfo.maDe || '101'}{reviewTab === 'hskt' ? ' (HSKT)' : ''}
+                                </span>
                             </div>
                         </div>
 
                         <div className="pt-2 border-t border-gray-200">
                             <h3 className="text-base font-extrabold text-gray-900 uppercase">
-                                PHẦN 1. TRẮC NGHIỆM ({activeQuestions.filter(q => q.category !== 'essay').reduce((s, q) => s + (q.points || 0.25), 0).toFixed(1).replace('.', ',')} điểm)
+                                PHẦN 1. TRẮC NGHIỆM ({(reviewTab === 'hskt' ? totalHsktMcPts : totalRegularMcPts).toFixed(1).replace('.', ',')} điểm)
                             </h3>
                             <p className="text-xs italic text-gray-600 mt-0.5">
                                 Em hãy chọn hoặc điền đáp án đúng vào khung trả lời tương ứng:
@@ -2020,11 +2095,11 @@ const ExamGenerator: React.FC = () => {
                         </div>
                     </div>
 
-                    {/* Question List Preview */}
+                    {/* Question List Preview (Regular vs HSKT) */}
                     <div className="space-y-4">
-                        {activeQuestions.map((q, idx) => {
-                            const isFirstEssay = q.category === 'essay' && (idx === 0 || activeQuestions[idx - 1].category !== 'essay');
-                            const totalEssayPoints = activeQuestions.filter(item => item.category === 'essay').reduce((sum, item) => sum + (item.points ?? 1.0), 0);
+                        {(reviewTab === 'hskt' ? activeHsktQuestions : activeQuestions).map((q, idx, arr) => {
+                            const isFirstEssay = q.category === 'essay' && (idx === 0 || arr[idx - 1].category !== 'essay');
+                            const totalEssayPoints = arr.filter(item => item.category === 'essay').reduce((sum, item) => sum + (item.points ?? 1.0), 0);
 
                             return (
                                 <React.Fragment key={q.uniqueId || idx}>
@@ -2062,7 +2137,7 @@ const ExamGenerator: React.FC = () => {
                                                     <div className="space-y-2 text-sm text-gray-800">
                                                         <p className="font-medium whitespace-pre-wrap">
                                                             <strong className="text-indigo-950">
-                                                                Tình huống {activeQuestions.slice(0, idx + 1).filter(item => item.questionType === 'true-false').length}:
+                                                                Tình huống {arr.slice(0, idx + 1).filter(item => item.questionType === 'true-false').length}:
                                                             </strong>{' '}
                                                             {(q.content || '')
                                                                 .replace(/^Tình\s*huống\s*\d*\s*[:.]\s*/i, '')
@@ -2141,7 +2216,7 @@ const ExamGenerator: React.FC = () => {
                                                 )}
                                             </div>
 
-                                            <div className="flex flex-col items-end gap-2 min-w-[120px]">
+                                            <div className="flex flex-col items-end gap-2 min-w-[130px]">
                                                 <div className="flex items-center gap-1.5 bg-gray-50 px-2 py-1 rounded-lg border border-gray-200">
                                                     <label className="text-xs text-gray-600 font-semibold">Điểm:</label>
                                                     <input
@@ -2153,16 +2228,31 @@ const ExamGenerator: React.FC = () => {
                                                         value={q.points ?? (q.category === 'essay' ? 1.0 : 0.25)}
                                                         onChange={(e) => {
                                                             const val = parseFloat(e.target.value);
-                                                            updatePoint(q.uniqueId, isNaN(val) ? 0 : val);
+                                                            if (reviewTab === 'hskt') {
+                                                                updateHsktPoint(String(q.id), isNaN(val) ? 0.25 : val);
+                                                            } else {
+                                                                updatePoint(q.uniqueId, isNaN(val) ? 0 : val);
+                                                            }
                                                         }}
                                                     />
                                                 </div>
-                                                <button
-                                                    onClick={() => swapQuestion(q)}
-                                                    className="text-xs flex items-center gap-1 text-primary hover:bg-blue-50 px-2 py-1 rounded font-semibold transition-colors"
-                                                >
-                                                    <RefreshCw size={13} /> Đổi câu khác
-                                                </button>
+                                                {reviewTab === 'hskt' ? (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => toggleHsktQuestion(String(q.id))}
+                                                        className="text-xs flex items-center gap-1 text-rose-600 hover:bg-rose-50 px-2 py-1 rounded font-semibold transition-colors cursor-pointer"
+                                                    >
+                                                        <X size={13} /> Loại khỏi đề HSKT
+                                                    </button>
+                                                ) : (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => swapQuestion(q)}
+                                                        className="text-xs flex items-center gap-1 text-primary hover:bg-blue-50 px-2 py-1 rounded font-semibold transition-colors cursor-pointer"
+                                                    >
+                                                        <RefreshCw size={13} /> Đổi câu khác
+                                                    </button>
+                                                )}
                                             </div>
                                         </div>
                                     </div>
@@ -2171,42 +2261,107 @@ const ExamGenerator: React.FC = () => {
                         })}
                     </div>
 
-                    {/* Bottom Sticky Action Bar */}
-                    <div className="sticky bottom-4 bg-white/95 backdrop-blur-md p-4 rounded-2xl shadow-xl border border-gray-200 flex flex-wrap justify-between items-center gap-4 z-20">
-                        <button onClick={() => setStep('config')} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-xl font-semibold text-sm">
-                            ← Quay lại Cấu hình
-                        </button>
+                    {/* SEPARATE HSKT GRADING SHEET PREVIEW WHEN IN HSKT TAB */}
+                    {reviewTab === 'hskt' && activeHsktQuestions.length > 0 && (
+                        <div className="bg-white rounded-2xl shadow-xs border-2 border-rose-200 p-6 sm:p-8 space-y-4 font-serif mt-6">
+                            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-rose-100 pb-3 font-sans">
+                                <div className="flex items-center gap-2">
+                                    <span className="px-2.5 py-1 bg-rose-100 text-rose-800 rounded-lg text-xs font-extrabold">
+                                        BIỂU MẪU CHẤM RIÊNG CHO HSKT
+                                    </span>
+                                    <span className="text-xs text-gray-500">
+                                        (Tách biệt hoàn toàn với Hướng dẫn chấm của Đề chính thức)
+                                    </span>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => handleDownloadHsktWord('grading_only')}
+                                    className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                                >
+                                    <Download size={14} /> Xuất Biểu Mẫu Chấm HSKT Riêng (.doc)
+                                </button>
+                            </div>
 
-                        <div className="flex flex-wrap items-center gap-2.5">
-                            <button
-                                onClick={handleSaveToExamBank}
-                                className="px-4 py-2.5 bg-blue-50 text-primary hover:bg-blue-100 border border-blue-200 rounded-xl font-bold text-xs sm:text-sm flex items-center gap-1.5 transition-all"
-                            >
-                                <FolderCheck size={16} /> Lưu Vào Ngân Hàng Đề
-                            </button>
+                            <div className="text-center space-y-1">
+                                <div className="text-sm font-bold uppercase text-gray-900">
+                                    HƯỚNG DẪN CHẤM {headerInfo.tenKyThi}
+                                </div>
+                                <div className="text-sm font-extrabold uppercase text-rose-700">
+                                    (BIỂU MẪU CHẤM DÀNH CHO HỌC SINH KHUYẾT TẬT)
+                                </div>
+                                <div className="text-xs font-bold uppercase text-gray-800">{headerInfo.monHoc}</div>
+                            </div>
 
-                            <button
-                                onClick={() => { setExportType('key_matrix'); setShowExportModal(true); }}
-                                className="px-4 py-2.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 rounded-xl font-bold text-xs sm:text-sm flex items-center gap-1.5 transition-all"
-                            >
-                                <FileSpreadsheet size={16} /> Bảng Đáp Án
-                            </button>
-
-                            <button
-                                onClick={() => { setExportType('azota_current'); setShowExportModal(true); }}
-                                className="px-4 py-2.5 bg-orange-500 text-white hover:bg-orange-600 rounded-xl font-bold text-xs sm:text-sm flex items-center gap-1.5 transition-all"
-                            >
-                                <FileText size={16} /> Xuất Azota
-                            </button>
-
-                            <button
-                                onClick={() => setShowExportModal(true)}
-                                className="px-5 py-2.5 bg-primary text-white hover:bg-primary-dark rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 shadow-md shadow-blue-200 transition-all"
-                            >
-                                <Download size={17} /> Tùy Chọn Xuất Word
-                            </button>
+                            <table className="w-full border-collapse border border-black text-xs sm:text-sm">
+                                <thead>
+                                    <tr className="bg-gray-100 font-bold text-center">
+                                        <th className="border border-black p-2 w-1/5">Phần</th>
+                                        <th className="border border-black p-2 w-3/5">Đáp án / Hướng dẫn chấm HSKT</th>
+                                        <th className="border border-black p-2 w-1/5">Điểm</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {activeHsktQuestions.some(q => q.category !== 'essay') && (
+                                        <tr>
+                                            <td className="border border-black p-3 text-center font-bold">
+                                                Trắc nghiệm:<br />{totalHsktMcPts.toFixed(1).replace('.', ',')} điểm
+                                            </td>
+                                            <td className="border border-black p-3">
+                                                <div className="grid grid-cols-4 sm:grid-cols-8 gap-1.5 text-center">
+                                                    {activeHsktQuestions.filter(q => q.category !== 'essay').map((q, i) => {
+                                                        let ans = '';
+                                                        if (q.questionType === 'true-false') {
+                                                            if (Array.isArray(q.options) && q.options.some((o: any) => ['a', 'b', 'c', 'd'].includes(String(o.id || '').toLowerCase()))) {
+                                                                ans = q.options.map((o: any, sIdx: number) => `${o.id || ['a', 'b', 'c', 'd'][sIdx]}-${o.isCorrect ? 'Đ' : 'S'}`).join(', ');
+                                                            } else {
+                                                                ans = q.answer === 'Sai' ? 'S' : 'Đ';
+                                                            }
+                                                        } else {
+                                                            ans = q.options?.filter((o: any) => o.isCorrect).map((o: any) => o.id).join(', ') || q.answer || '';
+                                                        }
+                                                        return (
+                                                            <div key={i} className="border border-gray-400 rounded p-1 bg-gray-50">
+                                                                <div className="font-bold text-gray-700 border-b border-gray-300 pb-0.5">Câu {i + 1}</div>
+                                                                <div className="font-extrabold text-primary pt-0.5">{ans}</div>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </td>
+                                            <td className="border border-black p-3 text-center font-bold">
+                                                {totalHsktMcPts.toFixed(1).replace('.', ',')}đ
+                                            </td>
+                                        </tr>
+                                    )}
+                                    {activeHsktQuestions.filter(q => q.category === 'essay').map((q, idx) => {
+                                        const mcLen = activeHsktQuestions.filter(item => item.category !== 'essay').length;
+                                        return (
+                                            <tr key={q.id || idx}>
+                                                <td className="border border-black p-3 text-center font-bold">
+                                                    Tự luận (Câu {mcLen + idx + 1})
+                                                </td>
+                                                <td className="border border-black p-3 whitespace-pre-wrap">
+                                                    <div className="font-bold underline mb-1">{q.content}</div>
+                                                    <div>{q.answer}</div>
+                                                </td>
+                                                <td className="border border-black p-3 text-center font-bold">
+                                                    {(q.points || 1.0).toFixed(1).replace('.', ',')}đ
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                    <tr className="bg-gray-50 font-bold text-center">
+                                        <td colSpan={2} className="border border-black p-2.5">
+                                            Tổng cộng Đề HSKT: {activeHsktQuestions.length} câu
+                                        </td>
+                                        <td className="border border-black p-2.5 text-rose-700">
+                                            {(totalHsktMcPts + totalHsktEsPts).toFixed(1).replace('.', ',')}đ
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
                         </div>
-                    </div>
+                    )}
                 </div>
             )}
 
@@ -2317,6 +2472,30 @@ const ExamGenerator: React.FC = () => {
                                             <div className="text-sm">Định dạng Azota (Mã đề {activeVariantCode})</div>
                                         </div>
                                     </label>
+                                    <div className="pt-2 mt-1 border-t border-dashed border-rose-200">
+                                        <div className="text-[11px] font-bold text-rose-700 uppercase mb-1.5">Hồ sơ riêng dành cho Học sinh Khuyết tật (HSKT):</div>
+                                        <div className="grid grid-cols-1 gap-1.5">
+                                            <label className={`flex items-center gap-3 p-2.5 rounded-xl border cursor-pointer transition-all ${exportType === 'hskt_both' ? 'border-rose-600 bg-rose-50/70 text-rose-800 font-bold' : 'border-gray-200 hover:bg-rose-50/30'}`}>
+                                                <input type="radio" name="exportOption" checked={exportType === 'hskt_both'} onChange={() => setExportType('hskt_both')} />
+                                                <div>
+                                                    <div className="text-sm">Đề HSKT + Biểu mẫu chấm HSKT riêng ({hsktSelectedIds.length} câu - Thang 10đ)</div>
+                                                    <div className="text-xs text-gray-500 font-normal">Gồm cả đề thi rút gọn cho HSKT và biểu mẫu chấm điểm riêng</div>
+                                                </div>
+                                            </label>
+                                            <label className={`flex items-center gap-3 p-2.5 rounded-xl border cursor-pointer transition-all ${exportType === 'hskt_exam' ? 'border-rose-600 bg-rose-50/70 text-rose-800 font-bold' : 'border-gray-200 hover:bg-rose-50/30'}`}>
+                                                <input type="radio" name="exportOption" checked={exportType === 'hskt_exam'} onChange={() => setExportType('hskt_exam')} />
+                                                <div>
+                                                    <div className="text-sm">Chỉ xuất Đề thi HSKT riêng</div>
+                                                </div>
+                                            </label>
+                                            <label className={`flex items-center gap-3 p-2.5 rounded-xl border cursor-pointer transition-all ${exportType === 'hskt_grading' ? 'border-rose-600 bg-rose-50/70 text-rose-800 font-bold' : 'border-gray-200 hover:bg-rose-50/30'}`}>
+                                                <input type="radio" name="exportOption" checked={exportType === 'hskt_grading'} onChange={() => setExportType('hskt_grading')} />
+                                                <div>
+                                                    <div className="text-sm">Chỉ xuất Biểu mẫu chấm HSKT riêng</div>
+                                                </div>
+                                            </label>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
 

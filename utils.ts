@@ -157,12 +157,70 @@ export const isQuestionForHskt = (
     return false;
 };
 
+export const getDefaultHsktQuestionIds = (questions: any[], headerInfo?: any): string[] => {
+    if (!Array.isArray(questions) || questions.length === 0) return [];
+    let hsktChecked: Record<string, boolean> = {};
+    let hasAnyHsktConfigured = false;
+    try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+            const saved = localStorage.getItem('hsktChecked');
+            if (saved) {
+                hsktChecked = JSON.parse(saved);
+                hasAnyHsktConfigured = Object.values(hsktChecked).some(v => !!v);
+            }
+        }
+    } catch { }
+
+    const gradeFromHeader = headerInfo?.monHoc?.match(/\d+/)?.[0] || '6';
+    if (hasAnyHsktConfigured) {
+        const matched = questions.filter(q => isQuestionForHskt(q, hsktChecked, gradeFromHeader));
+        if (matched.length > 0) {
+            return matched.map(q => String(q.id));
+        }
+    }
+
+    // Mặc định nếu chưa tích YCCĐ HSKT riêng: Tự động lấy các câu mức Nhận biết (NB) phù hợp với HSKT
+    const nbQuestions = questions.filter(q => (q.level || 'NB').toUpperCase() === 'NB');
+    if (nbQuestions.length >= 4) {
+        return nbQuestions.map(q => String(q.id));
+    }
+
+    // Dự phòng nếu đề có ít hơn 4 câu NB: lấy thêm câu Thông hiểu (TH) cho đủ tối thiểu 50% số câu
+    const thQuestions = questions.filter(q => (q.level || '').toUpperCase() === 'TH');
+    const fallback = [...nbQuestions, ...thQuestions].slice(0, Math.max(4, Math.ceil(questions.length * 0.5)));
+    return fallback.map(q => String(q.id));
+};
+
+export const generateHsktExamWordHtml = (
+    hsktQuestions: any[],
+    headerInfo: any,
+    exportSection: 'both' | 'exam_only' | 'grading_only' = 'both'
+) => {
+    const headerWithHskt = {
+        ...headerInfo,
+        isHsktExam: true,
+        exportSection
+    };
+    return generateExamWordHtml(hsktQuestions, headerWithHskt);
+};
+
 export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
+    const isHsktExam = Boolean(headerInfo?.isHsktExam);
+    const exportSection: 'both' | 'exam_only' | 'grading_only' = headerInfo?.exportSection || 'both';
+
     const tracNghiemQuestions = questions.filter(q => q.category !== 'essay');
     const tuLuanQuestions = questions.filter(q => q.category === 'essay');
 
-    const totalTracNghiemPoints = tracNghiemQuestions.reduce((sum, q) => sum + (q.points || 0.25), 0);
+    const getMcQuestionPoint = (q: any) => {
+        if (!isHsktExam && tracNghiemQuestions.length === 28 && (q.points === 1.0 || q.points === 0.5)) {
+            return 0.25;
+        }
+        return q.points || 0.25;
+    };
+
+    const totalTracNghiemPoints = tracNghiemQuestions.reduce((sum, q) => sum + getMcQuestionPoint(q), 0);
     const totalTuLuanPoints = tuLuanQuestions.reduce((sum, q) => sum + (q.points || 1.0), 0);
+    const unitMcPoint = tracNghiemQuestions.length > 0 ? getMcQuestionPoint(tracNghiemQuestions[0]) : 0.25;
     
     const currentYear = new Date().getFullYear();
     const nextYear = currentYear + 1;
@@ -297,7 +355,7 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                         <!--<![endif]-->
                     </div>
                     <div style="margin-top: 4px; text-align: center;">
-                        <b style="font-weight: bold; font-size: 13pt;">ĐỀ CHÍNH THỨC</b>
+                        <b style="font-weight: bold; font-size: 13pt;">${isHsktExam ? 'ĐỀ DÀNH CHO HSKT' : 'ĐỀ CHÍNH THỨC'}</b>
                     </div>
                 </td>
                 
@@ -306,8 +364,8 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                     <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 13pt; text-align: center;">${tenKyThiFull}</p>
                     <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 13pt; text-align: center;">${monHocFormatted}</p>
                     <p style="margin:0; font-style: italic; font-size: 13pt; text-align: center;">Thời gian: ${headerInfo.thoiGian ? (headerInfo.thoiGian.includes('không kể') ? headerInfo.thoiGian : headerInfo.thoiGian + ' (không kể thời gian giao đề)') : '45 phút (không kể thời gian giao đề)'}</p>
-                    <p style="margin:0; font-style: italic; font-size: 13pt; text-align: center;">(Đề có <!--[if supportFields]><span style='mso-element:field-begin'></span>SECTIONPAGES<span style='mso-element:field-separator'></span><![endif]-->04<!--[if supportFields]><span style='mso-element:field-end'></span><![endif]--> trang)</p>
-                    <p style="margin:0; text-align: center; font-weight: bold; font-size: 13pt; margin-top: 4pt;">Mã đề: ${headerInfo.maDe || '101'}</p>
+                    <p style="margin:0; font-style: italic; font-size: 13pt; text-align: center;">(Đề có <!--[if supportFields]><span style='mso-element:field-begin'></span>SECTIONPAGES<span style='mso-element:field-separator'></span><![endif]-->02<!--[if supportFields]><span style='mso-element:field-end'></span><![endif]--> trang)</p>
+                    <p style="margin:0; text-align: center; font-weight: bold; font-size: 13pt; margin-top: 4pt;">Mã đề: ${headerInfo.maDe || '101'}${isHsktExam ? ' (HSKT)' : ''}</p>
                 </td>
             </tr>
         </table>
@@ -338,8 +396,8 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
         // Answer Grid
         let answerGridHtml = `
             <div style="margin-top:5pt; margin-bottom:5pt;">
-                <h3 style="font-size: 13pt; font-weight: bold; margin: 0; text-transform: uppercase;">PHẦN 1. TRẮC NGHIỆM (${totalTracNghiemPoints.toFixed(1).replace('.',',')} điểm)</h3>
-                <p style="font-size: 13pt; font-style: italic; margin: 3pt 0 5pt 0;">- Em hãy điền đáp án vào khung bên dưới cho câu trả lời đúng: (mỗi câu đúng 0,25 điểm)</p>
+                <h3 style="font-size: 13pt; font-weight: bold; margin: 0; text-transform: uppercase;">PHẦN 1. TRẮC NGHIỆM (${formatDiem(totalTracNghiemPoints)} điểm)</h3>
+                <p style="font-size: 13pt; font-style: italic; margin: 3pt 0 5pt 0;">- Em hãy điền đáp án vào khung bên dưới cho câu trả lời đúng: (mỗi câu đúng ${formatDiem(unitMcPoint)} điểm)</p>
             </div>
             <table style="border-collapse: collapse; margin: 0 auto; width: 100%; table-layout: fixed;">`;
         
@@ -483,20 +541,19 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
     // ---------------- SECTION 2: GRADING GUIDE ----------------
     const totalQuestions = tracNghiemQuestions.length + tuLuanQuestions.length;
     const totalPoints = totalTracNghiemPoints + totalTuLuanPoints;
-    const currentYearVal = new Date().getFullYear();
-    const nextYearVal = currentYearVal + 1;
 
     let gradingGuideHeader = `
         <table style="width:100%; border: none; font-family: 'Times New Roman', serif; font-size: 13pt; margin-bottom: 15pt;">
             <tr>
                 <td style="text-align: center; width: 45%; vertical-align: top;">
                     <p style="margin:0; text-transform: uppercase; font-size: 13pt; text-align: center;">${headerInfo.donVi || 'UBND PHƯỜNG HẢI CHÂU'}</p>
-                    <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 13pt; text-align: center;">TRƯỜNG TRUNG HỌC CƠ SỞ LÊ HỒNG PHONG</p>
+                    <p style="margin:0; font-weight: bold; text-transform: uppercase; font-size: 13pt; text-align: center;">${schoolTop} ${schoolNameUnderlined}</p>
                 </td>
                 <td style="text-align: center; width: 55%; vertical-align: top;">
                     <p style="margin:0; font-weight: bold; text-transform: uppercase; text-align: center;">HƯỚNG DẪN CHẤM ${tenKyThiFull.replace(/LỚP\s*\d+\s*-\s*/, "KIỂM TRA ")}</p>
+                    ${isHsktExam ? `<p style="margin:0; font-weight: bold; text-transform: uppercase; text-align: center;">(BIỂU MẪU CHẤM DÀNH CHO HỌC SINH KHUYẾT TẬT)</p>` : ''}
                     <p style="margin:0; font-weight: bold; text-transform: uppercase; text-align: center;">${monHocFormatted}</p>
-                    <p style="margin:0; font-style: italic; text-align: center;">(Hướng dẫn chấm gồm có <!--[if supportFields]><span style='mso-element:field-begin'></span>SECTIONPAGES<span style='mso-element:field-separator'></span><![endif]-->02<!--[if supportFields]><span style='mso-element:field-end'></span><![endif]--> trang)</p>
+                    <p style="margin:0; font-style: italic; text-align: center;">(Hướng dẫn chấm gồm có <!--[if supportFields]><span style='mso-element:field-begin'></span>SECTIONPAGES<span style='mso-element:field-separator'></span><![endif]-->01<!--[if supportFields]><span style='mso-element:field-end'></span><![endif]--> trang)</p>
                 </td>
             </tr>
         </table>
@@ -508,45 +565,12 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
             <thead>
                 <tr style="font-weight: bold; text-align: center;">
                     <td style="border: 1px solid black; padding: 5px; width: 15%;">Phần</td>
-                    <td style="border: 1px solid black; padding: 5px; width: 70%;">Đáp án</td>
+                    <td style="border: 1px solid black; padding: 5px; width: 70%;">Đáp án / Hướng dẫn chấm</td>
                     <td style="border: 1px solid black; padding: 5px; width: 15%;">Điểm</td>
                 </tr>
             </thead>
             <tbody>
     `;
-
-    // ---------------- HSKT LOGIC ----------------
-    let hsktChecked: Record<string, boolean> = {};
-    let hasAnyHsktConfigured = false;
-    try {
-        if (typeof window !== 'undefined' && window.localStorage) {
-            const saved = localStorage.getItem('hsktChecked');
-            if (saved) {
-                hsktChecked = JSON.parse(saved);
-                hasAnyHsktConfigured = Object.values(hsktChecked).some(v => !!v);
-            }
-        }
-    } catch { }
-
-    const gradeFromHeader = headerInfo?.monHoc?.match(/\d+/)?.[0] || '6';
-    const isHskt = (q: any) => isQuestionForHskt(q, hsktChecked, gradeFromHeader);
-
-    let hsktTracNghiemCount = 0;
-    let hsktTracNghiemPoints = 0;
-    let hsktTuLuanPoints = 0;
-    if (hasAnyHsktConfigured) {
-        tracNghiemQuestions.forEach(q => {
-            if (isHskt(q)) {
-                hsktTracNghiemCount++;
-                hsktTracNghiemPoints += (q.points || 0.25);
-            }
-        });
-        tuLuanQuestions.forEach(q => {
-            if (isHskt(q)) {
-                hsktTuLuanPoints += (q.points || 1.0);
-            }
-        });
-    }
 
     // MC Section (Grading Guide)
     let mcSectionHtml = '';
@@ -605,71 +629,17 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
         }
         mcGrid += `</table>`;
 
-        let middleColumnHtml = mcGrid;
-
-        if (hasAnyHsktConfigured) {
-            let hsktMcGrid = `<table style="width: 100%; border-collapse: collapse; text-align: center; font-size: 11pt; margin: 0 auto; table-layout: fixed;">`;
-            for (let r = 0; r < mcRows; r++) {
-                hsktMcGrid += `<tr>`;
-                for (let c = 0; c < mcCols; c++) {
-                    const idx = r * mcCols + c;
-                    if (idx < tracNghiemQuestions.length) {
-                        const q = tracNghiemQuestions[idx];
-                        const isQHskt = isHskt(q);
-                        const headerBg = isQHskt ? '#f0f0f0' : '#fafafa';
-                        const headerColor = isQHskt ? '#000000' : '#888888';
-                        hsktMcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; font-weight: bold; padding: 2px; background-color: ${headerBg}; color: ${headerColor}; width: ${100 / mcCols}%;">${idx + 1}</td>`;
-                    } else {
-                        hsktMcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / mcCols}%;">&nbsp;</td>`;
-                    }
-                }
-                hsktMcGrid += `</tr><tr>`;
-                for (let c = 0; c < mcCols; c++) {
-                    const idx = r * mcCols + c;
-                    if (idx < tracNghiemQuestions.length) {
-                        const q = tracNghiemQuestions[idx];
-                        if (isHskt(q)) {
-                            let correctOpt = '';
-                            if (q.questionType === 'true-false') {
-                                if (Array.isArray(q.options) && q.options.some((o: any) => ['a', 'b', 'c', 'd'].includes(String(o.id || '').toLowerCase()))) {
-                                    correctOpt = q.options.map((o: any, sIdx: number) => `${o.id || ['a', 'b', 'c', 'd'][sIdx]}-${o.isCorrect ? 'Đ' : 'S'}`).join('<br/>');
-                                } else {
-                                    correctOpt = q.answer === 'Sai' || q.options?.find((o: any) => o.isCorrect)?.id === 'Sai' ? 'S' : 'Đ';
-                                }
-                            } else {
-                                correctOpt = q.options?.filter((o: any) => o.isCorrect).map((o: any) => o.id).join(', ') || q.answer || '';
-                            }
-                            hsktMcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / mcCols}%; font-weight: bold; color: #000000;">${correctOpt || ''}</td>`;
-                        } else {
-                            hsktMcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / mcCols}%; font-style: italic; color: #888888; background-color: #fcfcfc;">Miễn</td>`;
-                        }
-                    } else {
-                        hsktMcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / mcCols}%;">&nbsp;</td>`;
-                    }
-                }
-                hsktMcGrid += `</tr>`;
-            }
-            hsktMcGrid += `</table>`;
-
-            middleColumnHtml += `
-                <div style="color: #b91c1c; font-size: 11pt; font-weight: bold; text-align: left; margin: 10px 0 4px 0;">
-                    Hướng dẫn chấm dành cho HSKT (${hsktTracNghiemCount}/${tracNghiemQuestions.length} câu - ${hsktTracNghiemPoints.toFixed(1).replace('.', ',')} điểm; các câu ghi "Miễn" không tính điểm):
-                </div>
-                ${hsktMcGrid}
-            `;
-        }
-
         mcSectionHtml = `
             <tr>
                 <td style="border: 1px solid black; padding: 10px; text-align: center; font-weight: bold; vertical-align: middle;">
-                    Trắc nghiệm:<br/>${totalTracNghiemPoints.toFixed(1).replace('.',',')} điểm
-                    <br/><span style="font-weight: normal; font-style: italic; font-size: 11pt;">(mỗi câu trả lời đúng được 0.25 đ)</span>
+                    Trắc nghiệm:<br/>${formatDiem(totalTracNghiemPoints)} điểm
+                    <br/><span style="font-weight: normal; font-style: italic; font-size: 11pt;">(mỗi câu trả lời đúng được ${formatDiem(unitMcPoint)} đ)</span>
                 </td>
                 <td style="border: 1px solid black; padding: 10px; vertical-align: middle;">
-                    ${middleColumnHtml}
+                    ${mcGrid}
                 </td>
                 <td style="border: 1px solid black; padding: 10px; text-align: center; font-weight: bold; vertical-align: middle;">
-                    ${totalTracNghiemPoints.toFixed(1).replace('.',',')}đ
+                    ${formatDiem(totalTracNghiemPoints)}đ
                 </td>
             </tr>
         `;
@@ -688,26 +658,15 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
             let rawAnswer = q.answer || '';
             
             // PRE-PROCESSING to handle single-line answers
-            // Remove header if present
             rawAnswer = rawAnswer.replace(/^HƯỚNG DẪN CHẤM:?\s*/i, '');
-            
-            // 1. Handle semicolon-separated lists: "; b..." -> "\nb..."
-            // Pattern: semicolon + whitespace + (letter/digit + separator)
-            // Separator can be ) . - – :
             rawAnswer = rawAnswer.replace(/;\s*(?=(?:[a-z]|[0-9]{1,2})\s*[\)\.\-–:])/gi, '\n');
-            
-            // 2. Handle specific format "x - 0.xd" which might lack semicolons sometimes or relying on space
-            // E.g. "content a - 0.5d: ..."
-            // Look for space followed by letter + hyphen + digit + d
             rawAnswer = rawAnswer.replace(/(\s+)(?=[a-z]\s*[-–]\s*\d+(?:[\.,]\d+)?[đd])/gi, '\n');
 
             const questionParts = parseParts(q.content);
             const answerParts = parseParts(rawAnswer);
             
-            // Build the Nested Table for content (2 Cols: Request | Guide)
             let nestedTableRows = '';
             
-            // Case 1: Detailed parts found in Answer (e.g. a)... b)...)
             if (answerParts.length > 1) {
                 const getPartKey = (lbl: string) => {
                     const m = lbl.match(/([a-z]|[0-9]{1,2})/i);
@@ -718,13 +677,11 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                     const ansKey = getPartKey(ansPart.label);
                     const qPart = questionParts.find(qp => getPartKey(qp.label) === ansKey) || { content: '' };
                     
-                    // Format Clean Label (e.g. "a)" or "1)")
                     let col1Label = ansPart.label.replace(/\s*[-–].*$/, '').trim();
                     if (col1Label && !col1Label.endsWith(')') && !col1Label.endsWith('.')) {
                         col1Label += ')';
                     }
 
-                    // Col 1 Content
                     let col1Text = col1Label ? `<b>${col1Label}</b>` : `<b>Ý ${idx + 1}:</b>`;
                     if (qPart.content) {
                         col1Text += ` ${qPart.content}`; 
@@ -732,7 +689,6 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                         col1Text = `<b>Ý ${idx + 1}</b>`;
                     }
                     
-                    // Col 2 Content: Replace newlines with <br/> for correct display
                     const ansContent = ansPart.content.replace(/\n/g, '<br/>');
 
                     nestedTableRows += `
@@ -745,7 +701,6 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                     `;
                 });
             } else {
-                // Case 2: Single block answer (No a, b, c detected)
                 const ansContent = rawAnswer.replace(/\n/g, '<br/>');
                 nestedTableRows = `
                     <tr>
@@ -756,30 +711,25 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                 `;
             }
 
-            let hsktNote = '';
-            if (hasAnyHsktConfigured && !isHskt(q)) {
-                hsktNote = ` <span style="color: red; font-weight: normal; font-style: italic;">(Miễn đối với HSKT)</span>`;
-            }
-
             essaySectionHtml += `<tr>`;
             if (isFirst) {
                 essaySectionHtml += `
                     <td rowspan="${rowspan}" style="border: 1px solid black; padding: 10px; text-align: center; font-weight: bold; vertical-align: top;">
-                        Tự luận:<br/>${totalTuLuanPoints.toFixed(1).replace('.',',')} điểm
+                        Tự luận:<br/>${formatDiem(totalTuLuanPoints)} điểm
                     </td>
                 `;
             }
             essaySectionHtml += `
                 <td style="border: 1px solid black; padding: 5px; vertical-align: top;">
                     <div style="border-bottom: 1px solid #000; margin-bottom: 5px; padding-bottom: 2px;">
-                        <span style="font-weight: bold; text-decoration: underline;">${qLabel}:</span> ${q.content.split('\n')[0].substring(0, 100)}...${hsktNote}
+                        <span style="font-weight: bold; text-decoration: underline;">${qLabel}:</span> ${q.content.split('\n')[0].substring(0, 100)}...
                     </div>
                     <table style="width: 100%; border-collapse: collapse; border: none;">
                         ${nestedTableRows}
                     </table>
                 </td>
                 <td style="border: 1px solid black; padding: 5px; text-align: center; font-weight: bold; vertical-align: middle;">
-                    ${(q.points || 1.0).toFixed(1).replace('.',',')}đ
+                    ${formatDiem(q.points || 1.0)}đ
                 </td>
             `;
             essaySectionHtml += `</tr>`;
@@ -790,23 +740,21 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
     let gradingFooterRow = `
         <tr>
             <td colspan="2" style="border: 1px solid black; padding: 10px; text-align: center; font-weight: bold;">
-                Tổng số câu: ${totalQuestions} câu (TN + TL)
+                Tổng số câu: ${totalQuestions} câu (${tracNghiemQuestions.length} TN${tuLuanQuestions.length > 0 ? ` + ${tuLuanQuestions.length} TL` : ''})
             </td>
             <td style="border: 1px solid black; padding: 10px; text-align: center; font-weight: bold;">
-                ${totalPoints.toFixed(1).replace('.',',')}đ
+                ${formatDiem(totalPoints)}đ
             </td>
         </tr>
     `;
 
     let gradingTableEnd = `</tbody></table>`;
     
-    let hsktSummaryText = '';
-    if (hasAnyHsktConfigured) {
-        const hsktTotalPts = hsktTracNghiemPoints + hsktTuLuanPoints;
-        const hsktTuLuanCount = tuLuanQuestions.filter(q => isHskt(q)).length;
-        hsktSummaryText = `
-            <div style="margin-top: 8px; color: #b91c1c; font-style: italic; font-size: 10.5pt; text-align: center; font-weight: bold;">
-                * Điểm tối đa dành cho Học sinh khuyết tật: ${hsktTotalPts.toFixed(1).replace('.', ',')} điểm (${hsktTracNghiemCount} câu TN + ${hsktTuLuanCount} câu TL đạt chuẩn YCCĐ; các câu khác được miễn).
+    let hsktFooterNote = '';
+    if (isHsktExam) {
+        hsktFooterNote = `
+            <div style="margin-top: 8px; font-style: italic; font-size: 11pt; text-align: center;">
+                * Ghi chú: Giáo viên chấm linh hoạt, ghi nhận sự cố gắng và mức độ hoàn thành yêu cầu cần đạt của Học sinh khuyết tật theo quy định hiện hành.
             </div>
         `;
     }
@@ -816,17 +764,38 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
         <div style="margin-top: 10px; font-style: italic; font-size: 11pt; text-align: center;">
             Học sinh có thể trình bày theo cách khác, hợp lí, chính xác thì cho điểm tối đa.
         </div>
-        ${hsktSummaryText}
+        ${hsktFooterNote}
     `;
 
+    const examSectionContent = `
+        <div class="Section1">
+            ${examHeaderHtml}
+            ${examBodyHtml}
+            <br/><p style="text-align: center; font-weight: bold; margin-top: 20px;">---HẾT---</p>
+            ${exportSection === 'both' ? `<br clear=all style='mso-special-character:line-break;page-break-before:always;mso-break-type:section-break'>` : ''}
+        </div>
+    `;
 
+    const gradingSectionContent = `
+        ${exportSection === 'both' ? `<p style="page-break-before: always; margin: 0; padding: 0; font-size: 1pt;">&nbsp;</p>` : ''}
+        <div class="${exportSection === 'both' ? 'Section2' : 'Section1'}">
+            ${exportSection === 'both' ? `<br clear=all style='page-break-before:always'>` : ''}
+            ${gradingGuideHeader}
+            ${gradingTableStart}
+            ${mcSectionHtml}
+            ${essaySectionHtml}
+            ${gradingFooterRow}
+            ${gradingTableEnd}
+            ${gradingFooterText}
+        </div>
+    `;
 
     // 3. Document Structure
     return `
         <html xmlns:v='urn:schemas-microsoft-com:vml' xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
         <head>
             <meta charset="utf-8">
-            <title>De Thi</title>
+            <title>${isHsktExam ? 'De Thi HSKT' : 'De Thi'}</title>
             ${css}
             <xml>
                 <w:WordDocument>
@@ -837,25 +806,8 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
             </xml>
         </head>
         <body>
-            <div class="Section1">
-                ${examHeaderHtml}
-                ${examBodyHtml}
-                <br/><p style="text-align: center; font-weight: bold; margin-top: 20px;">---HẾT---</p>
-                <br clear=all style='mso-special-character:line-break;page-break-before:always;mso-break-type:section-break'>
-            </div>
-            
-            <p style="page-break-before: always; margin: 0; padding: 0; font-size: 1pt;">&nbsp;</p>
-            
-            <div class="Section2">
-                <br clear=all style='page-break-before:always'>
-                ${gradingGuideHeader}
-                ${gradingTableStart}
-                ${mcSectionHtml}
-                ${essaySectionHtml}
-                ${gradingFooterRow}
-                ${gradingTableEnd}
-                ${gradingFooterText}
-            </div>
+            ${exportSection !== 'grading_only' ? examSectionContent : ''}
+            ${exportSection !== 'exam_only' ? gradingSectionContent : ''}
             
             <!-- Footer Definitions -->
             <!--[if gte mso 9]>
@@ -1175,14 +1127,15 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
         });
     });
 
-    // TL: NB(6) -> TH(8) -> VD(10) -> VDC(12)
+    // TL: NB(6) -> TH(8) -> VD(10) -> VDC(12) (đánh số Câu nối tiếp sau phần TNKQ)
+    tlCounter = tnkqCounter;
     [6, 8, 10, 12].forEach(colIdx => {
         data.matrix.rows.forEach((row, rIdx) => {
             const count = parseInt(String(row[colIdx]) || '0');
             if (count > 0) {
                 const start = tlCounter;
                 const end = tlCounter + count - 1;
-                positionMap[`${rIdx}-${colIdx}`] = start === end ? `Câu ${start} (TL)` : `Câu ${start}-${end} (TL)`;
+                positionMap[`${rIdx}-${colIdx}`] = start === end ? `Câu ${start}` : `Câu ${start}-${end}`;
                 tlCounter += count;
             }
         });
@@ -1478,6 +1431,44 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 activeReqHtml = activeReqHtml.replace(/<div[^>]*data-unchecked="true"[^>]*>[\s\S]*?<\/div>/gi, '');
             }
 
+            // Chỉ giữ lại các mức độ và tiêu chí có câu hỏi được chọn trong đề
+            const subTotalNB = subCounts[5] + subCounts[6];
+            const subTotalTH = subCounts[7] + subCounts[8];
+            const subTotalVD = subCounts[9] + subCounts[10];
+            const subTotalVDC = subCounts[11] + subCounts[12];
+            const hasAnySubQuestions = (subTotalNB + subTotalTH + subTotalVD + subTotalVDC) > 0;
+
+            if (hasAnySubQuestions) {
+                activeReqHtml = activeReqHtml.replace(
+                    /<strong\b[^>]*>([\s\S]*?)<\/strong>([\s\S]*?)(?=(?:<strong\b[^>]*>|$))/gi,
+                    (fullMatch, rawTitle, bodyHtml) => {
+                        const lower = String(rawTitle || '').replace(/<[^>]*>/g, '').trim().toLowerCase();
+                        let lvlQuota = 0;
+                        if (lower.startsWith('nhận biết') || lower.startsWith('biết') || lower.startsWith('- biết')) {
+                            lvlQuota = subTotalNB;
+                        } else if (lower.startsWith('thông hiểu') || lower.startsWith('hiểu') || lower.startsWith('- hiểu')) {
+                            lvlQuota = subTotalTH;
+                        } else if (lower.startsWith('vận dụng cao')) {
+                            lvlQuota = subTotalVDC > 0 ? subTotalVDC : subTotalVD;
+                        } else {
+                            lvlQuota = subTotalVD + subTotalVDC;
+                        }
+                        if (lvlQuota <= 0) return '';
+
+                        // Nếu chưa đánh dấu thủ công (data-unchecked) mà số dòng tiêu chí nhiều hơn số câu ra đề -> chỉ lấy đúng số tiêu chí được chọn
+                        if (!reqHtml.includes('data-unchecked="true"')) {
+                            let kept = 0;
+                            const filteredBody = String(bodyHtml).replace(/<div[^>]*>[\s\S]*?<\/div>/gi, (divMatch) => {
+                                kept++;
+                                return kept <= lvlQuota ? divMatch : '';
+                            });
+                            return `<strong class="block font-semibold">${rawTitle}</strong>${filteredBody}`;
+                        }
+                        return fullMatch;
+                    }
+                );
+            }
+
             // Remove empty level headers that have no <div> items under them
             activeReqHtml = activeReqHtml.replace(/<strong\b[^>]*>[\s\S]*?<\/strong>(?=\s*(?:<strong\b[^>]*>|$))/gi, '');
 
@@ -1662,10 +1653,10 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             return cfg;
         };
 
-        // Tính vị trí câu hỏi cho Mẫu mới (new_4part) theo từng dòng & từng mức độ (B, H, VD) - chỉ ghi vị trí, không ghi loại câu
+        // Tính vị trí câu hỏi cho Mẫu mới (new_4part) theo số thứ tự Câu liên tục trong đề (Câu 1, Câu 2, ... Câu 31)
         const newFormatPosMap: Record<string, { pKey: 'mc' | 'tf' | 'sa' | 'essay'; prefix: string; start: number; end: number }[]> = {};
+        let globalQuestionCounter = 1;
         activeParts.forEach(pKey => {
-            let pCounter = 1;
             (['B', 'H', 'VD'] as const).forEach(lKey => {
                 data.matrix.rows.forEach((_, rIdx) => {
                     const rawCfg = getRowCfg(rIdx);
@@ -1677,13 +1668,13 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                         c = 0;
                     }
                     if (c > 0) {
-                        const start = pCounter;
-                        const end = pCounter + c - 1;
-                        const prefix = pKey === 'tf' ? 'Ý' : 'Câu';
+                        const start = globalQuestionCounter;
+                        const end = globalQuestionCounter + c - 1;
+                        const prefix = 'Câu';
                         const mapKey = `${rIdx}-${lKey}`;
                         if (!newFormatPosMap[mapKey]) newFormatPosMap[mapKey] = [];
                         newFormatPosMap[mapKey].push({ pKey, prefix, start, end });
-                        pCounter += c;
+                        globalQuestionCounter += c;
                     }
                 });
             });
@@ -1701,7 +1692,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
         let ptB = 0, ptH = 0, ptVD = 0;
         let newStt = 1;
 
-        // Helper gom YCCĐ theo 3 mức độ (- Biết:, - Hiểu:, - Vận dụng:) cho Bản đặc tả (mỗi mức độ 1 dòng <tr>)
+        // Helper gom YCCĐ theo 3 mức độ (- Biết:, - Hiểu:, - Vận dụng:) cho Bản đặc tả (chỉ hiển thị tiêu chí được chọn ra đề)
         type PrintSpecSubRow = {
             subRowId: string;
             levelKey: 'B' | 'H' | 'VD';
@@ -1709,9 +1700,13 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             items: string[];
         };
 
-        const parseReqToSpecSubRows = (reqHtmlStr: string): PrintSpecSubRow[] => {
+        const parseReqToSpecSubRows = (
+            reqHtmlStr: string,
+            levelQuotas?: Record<'B' | 'H' | 'VD', number>
+        ): PrintSpecSubRow[] => {
+            const hasManualUnchecked = (reqHtmlStr || '').includes('data-unchecked="true"');
             let cleaned = reqHtmlStr || '';
-            if (cleaned.includes('data-unchecked="true"')) {
+            if (hasManualUnchecked) {
                 cleaned = cleaned.replace(/<div[^>]*data-unchecked="true"[^>]*>[\s\S]*?<\/div>/gi, '');
             }
             const strongRegex = /<strong[^>]*>([\s\S]*?)<\/strong>/gi;
@@ -1758,12 +1753,47 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 { k: 'VD', t: '- Vận dụng:' }
             ];
 
-            return levelDefs.map((d, idx) => ({
-                subRowId: `header_${idx}`,
-                levelKey: d.k,
-                title: d.t,
-                items: groupedItems[d.k].length > 0 ? groupedItems[d.k] : ['...']
-            }));
+            const totalQuotaInSub = levelQuotas
+                ? (levelQuotas.B + levelQuotas.H + levelQuotas.VD)
+                : 0;
+
+            const activeRows = levelDefs
+                .map((d, idx) => {
+                    const quota = levelQuotas ? levelQuotas[d.k] : 0;
+                    // Nếu đơn vị kiến thức có phân bổ câu hỏi trong đề, chỉ hiện những mức độ có câu hỏi được chọn (quota > 0)
+                    if (totalQuotaInSub > 0 && quota <= 0) {
+                        return null;
+                    }
+                    let items = groupedItems[d.k];
+                    // Nếu chưa chọn thủ công từng tiêu chí và số tiêu chí nhiều hơn số câu ra đề -> chỉ lấy đúng số tiêu chí được chọn
+                    if (!hasManualUnchecked && quota > 0 && items.length > quota) {
+                        items = items.slice(0, quota);
+                    }
+                    if (items.length === 0 && totalQuotaInSub > 0 && quota <= 0) {
+                        return null;
+                    }
+                    return {
+                        subRowId: `header_${idx}`,
+                        levelKey: d.k,
+                        title: d.t,
+                        items: items.length > 0 ? items : []
+                    };
+                })
+                .filter((r): r is PrintSpecSubRow => r !== null && r.items.length > 0);
+
+            if (activeRows.length > 0) {
+                return activeRows;
+            }
+
+            // Fallback nếu toàn bộ ma trận chưa nhập số câu nào
+            return levelDefs
+                .map((d, idx) => ({
+                    subRowId: `header_${idx}`,
+                    levelKey: d.k,
+                    title: d.t,
+                    items: groupedItems[d.k]
+                }))
+                .filter(r => r.items.length > 0);
         };
 
         Object.keys(groupedByMainTopic).forEach(mainTopic => {
@@ -1785,7 +1815,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 mainTopicExamined += ex;
             });
 
-            // Tính tổng số dòng <tr> của Chủ đề trong Bảng đặc tả (tách riêng từng YCCĐ)
+            // Tính tổng số dòng <tr> của Chủ đề trong Bảng đặc tả (chỉ giữ các mức độ & tiêu chí được chọn ra đề)
             const subSpecRowsMap: Record<string, PrintSpecSubRow[]> = {};
             let mainSpecRowSpan = 0;
             subs.forEach(subTopic => {
@@ -1795,7 +1825,21 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                     ? (data.specifications.rows[data.matrix.rows.indexOf(firstRow)]?.[4] || '')
                     : '';
                 const reqHtmlStr = rawCustomReq || getRequirementsHtml(gradeStr, mainTopic, subTopic);
-                const parsedSubRows = parseReqToSpecSubRows(reqHtmlStr);
+
+                const subQuotas: Record<'B' | 'H' | 'VD', number> = { B: 0, H: 0, VD: 0 };
+                subRows.forEach((r: any) => {
+                    const origIdx = data.matrix.rows.indexOf(r);
+                    const rawCfg = getRowCfg(origIdx);
+                    (['B', 'H', 'VD'] as const).forEach(lKey => {
+                        subQuotas[lKey] +=
+                            (rawCfg.mc[lKey]?.count || 0) +
+                            (rawCfg.tf[lKey]?.count || 0) +
+                            (rawCfg.sa[lKey]?.count || 0) +
+                            (rawCfg.essay[lKey]?.count || 0);
+                    });
+                });
+
+                const parsedSubRows = parseReqToSpecSubRows(reqHtmlStr, subQuotas);
                 subSpecRowsMap[subTopic] = parsedSubRows;
                 mainSpecRowSpan += parsedSubRows.length;
             });
