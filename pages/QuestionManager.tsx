@@ -991,13 +991,16 @@ const QuestionManager: React.FC = () => {
   };
 
   const commitRawQuestionsToBank = (rawQuestions: any[]) => {
+    const userCanApprove = canApproveExam(currentUser);
+    const targetScope: BankScope = (bankScopeFilter === 'shared' || bankScopeFilter === 'all') && userCanApprove ? 'shared' : 'personal';
+
     const newQuestions: ExerciseQuestion[] = rawQuestions.map((q: any) => {
         const isMulti = q.questionType === 'multiple-answer' || q.mcType === 'multiple-answer';
         const isTF = q.questionType === 'true-false';
         const isShort = q.questionType === 'short-answer' || q.mcType === 'fill-blank';
         const isEssay = q.category === 'essay' || q.questionType === 'essay';
 
-        let options: Option[] = [];
+        let options: { id: string; text: string; isCorrect: boolean }[] = [];
         if (isTF) {
             const isFourSub = Array.isArray(q.options) && q.options.length >= 2 && !q.options.some((o: any) => o.id === 'Đúng' || o.id === 'Sai');
             if (isFourSub) {
@@ -1042,11 +1045,11 @@ const QuestionManager: React.FC = () => {
             ? q.criteria
             : (q.criteria || defaultCriterionCode);
 
-        const targetScope = activeScope === 'shared' && canApproveBank ? 'shared' : 'personal';
+        const resolvedCategory: 'mc' | 'essay' = isEssay ? 'essay' : (q.category || 'mc');
 
         return {
             id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-            category: isEssay ? 'essay' : (q.category || 'mc'),
+            category: resolvedCategory,
             questionType: q.questionType || (isMulti ? 'multiple-answer' : (isEssay ? 'essay' : 'multiple-choice')),
             level: resolvedLevel,
             criteria: resolvedCriteria,
@@ -1059,9 +1062,16 @@ const QuestionManager: React.FC = () => {
             essayType: 'explanation',
             originalNumber: resolvedCriteria ? `${resolvedCriteria}` : undefined,
             bankScope: targetScope,
-            ownerEmail: userEmail,
-            ownerName: userName,
-            contentHash: computeQuestionContentHash(q.content || '', lesson || '')
+            ownerEmail: currentUser.email,
+            ownerName: currentUser.name,
+            version: 1,
+            updatedAt: new Date().toISOString(),
+            contentHash: computeQuestionContentHash({
+                content: q.content || '',
+                grade: grade || '',
+                category: resolvedCategory,
+                options
+            })
         };
     });
 
@@ -1302,6 +1312,8 @@ ${formatExample}`;
                       : options?.filter((o: any) => o.isCorrect).map((o: any) => o.id).join(', ');
 
                   const defaultCrit = getCriteriaOptionsForLevel(effectiveLevel)[0]?.split(' ')[0] || '';
+                  const userCanApprove = canApproveExam(currentUser);
+                  const targetScope: BankScope = (bankScopeFilter === 'shared' || bankScopeFilter === 'all') && userCanApprove ? 'shared' : 'personal';
                   return {
                     id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
                     category: category,
@@ -1316,10 +1328,17 @@ ${formatExample}`;
                     answer: correctAnswers || q.answer || '',
                     essayType: 'explanation',
                     points: (genType === 'essay' || genType === 'true-false') ? 1.0 : 0.25,
-                    bankScope: activeScope === 'shared' && canApproveBank ? 'shared' : 'personal',
-                    ownerEmail: userEmail,
-                    ownerName: userName,
-                    contentHash: computeQuestionContentHash(q.content || '', lesson || '')
+                    bankScope: targetScope,
+                    ownerEmail: currentUser.email,
+                    ownerName: currentUser.name,
+                    version: 1,
+                    updatedAt: new Date().toISOString(),
+                    contentHash: computeQuestionContentHash({
+                        content: q.content || 'Câu hỏi tự động',
+                        grade: grade || '',
+                        category,
+                        options
+                    })
                   };
               });
 
