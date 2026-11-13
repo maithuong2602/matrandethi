@@ -22,7 +22,11 @@ import { splitLegacyTrueFalseQuestions, autoTagQuestion } from './QuestionManage
 import { CURRICULUM } from '../data/curriculum';
 import { CANONICAL_REQUIREMENTS, KNTT_LESSON_MAPPINGS } from '../data/curriculum/index';
 import { loadQuestionBank, saveQuestionBank } from '../services/storage/questionBankStorage';
-import { filterQuestionsByActiveCriteria } from '../services/criteriaService';
+import {
+    filterQuestionsByActiveCriteria,
+    getQuestionTypeKey,
+    getCanonicalCriterionKeyForQuestion
+} from '../services/criteriaService';
 import {
     getSavedExams,
     saveExamDossier,
@@ -915,6 +919,25 @@ const ExamGenerator: React.FC = () => {
             return false;
         };
 
+        // Theo dõi các YCCĐ đã được sử dụng bởi từng loại câu hỏi (multiple-choice, true-false, short-answer, essay)
+        // để khi lấy câu hỏi cho loại câu hỏi khác sẽ ưu tiên YCCĐ khác, hạn chế tối đa cùng 1 YCCĐ có 2 loại câu hỏi
+        const criterionTypesUsed = new Map<string, Set<string>>();
+        const criterionCountByType = new Map<string, Map<string, number>>();
+
+        const recordPickedCriterion = (q: BankQuestion, effectiveType: string, effectiveLesson: string) => {
+            const cKey = getCanonicalCriterionKeyForQuestion(q, targetGrade, effectiveLesson);
+            if (!criterionTypesUsed.has(cKey)) {
+                criterionTypesUsed.set(cKey, new Set());
+            }
+            criterionTypesUsed.get(cKey)!.add(effectiveType);
+
+            if (!criterionCountByType.has(cKey)) {
+                criterionCountByType.set(cKey, new Map());
+            }
+            const typeMap = criterionCountByType.get(cKey)!;
+            typeMap.set(effectiveType, (typeMap.get(effectiveType) || 0) + 1);
+        };
+
         const findQuestions = (
             lessonName: string,
             level: string,
@@ -922,9 +945,12 @@ const ExamGenerator: React.FC = () => {
             count: number,
             preferredQuestionType?: 'multiple-choice' | 'true-false' | 'short-answer' | 'essay',
             subTopicName?: string,
-            mainTopicName?: string
+            mainTopicName?: string,
+            remainingOtherTypesInLevel: ('multiple-choice' | 'true-false' | 'short-answer' | 'essay')[] = []
         ) => {
             const effectiveLabel = lessonName || subTopicName || mainTopicName || 'Bài chung';
+            const targetType: 'multiple-choice' | 'true-false' | 'short-answer' | 'essay' =
+                preferredQuestionType || (category === 'essay' ? 'essay' : 'multiple-choice');
 
             // Các câu hỏi chưa dùng thuộc đúng bài học / đơn vị kiến thức của dòng ma trận
             const rowPool = activeBank.filter(q => {
@@ -964,38 +990,147 @@ const ExamGenerator: React.FC = () => {
                 }
             });
 
-            // Nếu yêu cầu short-answer, ưu tiên exact short-answer trước rồi mới tới true-false trong tier1
-            const sortByPreferred = (arr: BankQuestion[]) => {
-                if (preferredQuestionType === 'short-answer') {
-                    return [
-                        ...shuffle(arr.filter(q => matchesPreferredType(q, 'short-answer'))),
-                        ...shuffle(arr.filter(q => !matchesPreferredType(q, 'short-answer')))
-                    ];
-                }
-                return shuffle(arr);
-            };
-
-            let combinedCandidates = [
-                ...sortByPreferred(tier1),
-                ... shuffle(tier2),
-                ...sortByPreferred(tier3),
-                ...shuffle(tier4)
+            const tiers: BankQuestion[][] = [
+                shuffle(tier1),
+                shuffle(tier2),
+                shuffle(tier3),
+                shuffle(tier4)
             ];
 
             // Tier 5: Nếu trong bài vẫn chưa đủ số câu, tìm thêm các câu chưa dùng thuộc cùng Chủ đề lớn (mainTopicName)
-            if (combinedCandidates.length < count && mainTopicName) {
-                const candidateIds = new Set(combinedCandidates.map(q => q.id));
+            const totalInRowTiers = tier1.length + tier2.length + tier3.length + tier4.length;
+            if (totalInRowTiers < count && mainTopicName) {
+                const candidateIds = new Set([...tier1, ...tier2, ...tier3, ...tier4].map(q => q.id));
                 const topicPool = activeBank.filter(q => {
                     if (usedIds.has(q.id) || candidateIds.has(q.id)) return false;
                     return doesQuestionMatchRow(q, mainTopicName, mainTopicName, mainTopicName) && q.category === category;
                 });
-                const topicExactLvl = shuffle(topicPool.filter(q => isLevelMatch(q.level, level)));
-                const topicOtherLvl = shuffle(topicPool.filter(q => !isLevelMatch(q.level, level)));
-                combinedCandidates = [...combinedCandidates, ...topicExactLvl, ...topicOtherLvl];
+                tiers.push(shuffle(topicPool.filter(q => isLevelMatch(q.level, level))));
+                tiers.push(shuffle(topicPool.filter(q => !isLevelMatch(q.level, level))));
             }
 
-            const picked = combinedCandidates.slice(0, count);
-            picked.forEach(q => usedIds.add(q.id));
+            // Xác định tập YCCĐ khả dụng cho từng loại câu hỏi khác còn chờ lấy trong cùng (bài, mức độ)
+            // để tránh chiếm mất YCCĐ duy nhất của loại câu hỏi khác
+            const otherTypeAvailableCKeys = new Map<string, Set<string>>();
+            remainingOtherTypesInLevel.forEach(otherType => {
+                const cKeySet = new Set<string>();
+                rowPool.forEach(q => {
+                    if (!isLevelMatch(q.level, level)) return;
+                    const matchesOther =
+                        matchesPreferredType(q, otherType) ||
+                        (otherType === 'short-answer' && matchesPreferredType(q, 'true-false'));
+                    if (matchesOther) {
+                        const ck = getCanonicalCriterionKeyForQuestion(q, targetGrade, effectiveLabel);
+                        const usedBy = criterionTypesUsed.get(ck);
+                        const usedByThirdType = usedBy
+                            ? Array.from(usedBy).some(t => t !== otherType)
+                            : false;
+                        if (!usedByThirdType) {
+                            cKeySet.add(ck);
+                        }
+                    }
+                });
+                otherTypeAvailableCKeys.set(otherType, cKeySet);
+            });
+
+            const picked: BankQuestion[] = [];
+
+            for (const tierList of tiers) {
+                const remainingInTier = [...tierList];
+                while (picked.length < count && remainingInTier.length > 0) {
+                    // Đếm số lượng YCCĐ hoàn toàn chưa được bất kỳ loại câu hỏi nào sử dụng trong remainingInTier
+                    const unusedCKeysInTier = new Set<string>();
+                    remainingInTier.forEach(cand => {
+                        const ck = getCanonicalCriterionKeyForQuestion(cand, targetGrade, effectiveLabel);
+                        const uSet = criterionTypesUsed.get(ck);
+                        if (!uSet || uSet.size === 0) {
+                            unusedCKeysInTier.add(ck);
+                        }
+                    });
+
+                    // Kiểm tra xem loại câu hỏi hiện tại (targetType) đã có sẵn ít nhất 1 YCCĐ riêng (chưa đụng loại khác) chưa
+                    const hasCleanSameTypeOption = remainingInTier.some(cand => {
+                        const ck = getCanonicalCriterionKeyForQuestion(cand, targetGrade, effectiveLabel);
+                        const uSet = criterionTypesUsed.get(ck);
+                        return uSet && uSet.has(targetType) && uSet.size === 1;
+                    });
+
+                    // Nếu số YCCĐ chưa dùng còn lại <= số loại câu hỏi khác đang chờ phía sau, cần giữ lại YCCĐ chưa dùng cho các loại câu hỏi đó
+                    const shouldPreserveUnusedForOtherTypes =
+                        hasCleanSameTypeOption &&
+                        remainingOtherTypesInLevel.length > 0 &&
+                        unusedCKeysInTier.size <= remainingOtherTypesInLevel.length;
+
+                    remainingInTier.sort((a, b) => {
+                        // 0. Nếu là short-answer, ưu tiên câu exact short-answer trước câu fallback true-false
+                        if (preferredQuestionType === 'short-answer') {
+                            const aExact = matchesPreferredType(a, 'short-answer') ? 0 : 1;
+                            const bExact = matchesPreferredType(b, 'short-answer') ? 0 : 1;
+                            if (aExact !== bExact) return aExact - bExact;
+                        }
+
+                        const ckA = getCanonicalCriterionKeyForQuestion(a, targetGrade, effectiveLabel);
+                        const ckB = getCanonicalCriterionKeyForQuestion(b, targetGrade, effectiveLabel);
+
+                        const usedA = criterionTypesUsed.get(ckA) || new Set<string>();
+                        const usedB = criterionTypesUsed.get(ckB) || new Set<string>();
+
+                        // 1. ƯU TIÊN SỐ 1: Số lượng loại câu hỏi KHÁC đã lấy YCCĐ này càng ít càng tốt (0 là tốt nhất: chưa bị loại câu hỏi khác lấy)
+                        const otherCountA = Array.from(usedA).filter(t => t !== targetType).length;
+                        const otherCountB = Array.from(usedB).filter(t => t !== targetType).length;
+                        if (otherCountA !== otherCountB) {
+                            return otherCountA - otherCountB;
+                        }
+
+                        // 2. ƯU TIÊN SỐ 2: Không lấy vào YCCĐ duy nhất mà một loại câu hỏi khác đang chờ phía sau bắt buộc phải dùng
+                        let criticalForOtherA = 0;
+                        let criticalForOtherB = 0;
+                        otherTypeAvailableCKeys.forEach(cSet => {
+                            if (cSet.size <= 1) {
+                                if (cSet.has(ckA)) criticalForOtherA++;
+                                if (cSet.has(ckB)) criticalForOtherB++;
+                            }
+                        });
+                        if (criticalForOtherA !== criticalForOtherB) {
+                            return criticalForOtherA - criticalForOtherB;
+                        }
+
+                        // 3. ƯU TIÊN SỐ 3: Nếu cần để dành YCCĐ mới cho các loại câu hỏi khác trong cùng bài/mức độ,
+                        // ưu tiên gom câu tiếp theo của cùng loại câu hỏi hiện tại vào YCCĐ mà chính loại này đã mở
+                        const usedBySameA = usedA.has(targetType) ? 1 : 0;
+                        const usedBySameB = usedB.has(targetType) ? 1 : 0;
+                        if (shouldPreserveUnusedForOtherTypes && usedBySameA !== usedBySameB) {
+                            return usedBySameB - usedBySameA;
+                        }
+
+                        // 4. ƯU TIÊN SỐ 4: Tránh lấy vào YCCĐ mà loại câu hỏi khác có ít lựa chọn hơn
+                        let sharedWithOtherA = 0;
+                        let sharedWithOtherB = 0;
+                        otherTypeAvailableCKeys.forEach(cSet => {
+                            if (cSet.has(ckA)) sharedWithOtherA++;
+                            if (cSet.has(ckB)) sharedWithOtherB++;
+                        });
+                        if (sharedWithOtherA !== sharedWithOtherB) {
+                            return sharedWithOtherA - sharedWithOtherB;
+                        }
+
+                        // 5. ƯU TIÊN SỐ 5: Khi không còn loại câu hỏi khác cần giữ chỗ, ưu tiên trải đều qua các YCCĐ còn trống trong cùng loại câu hỏi
+                        const sameCntA = criterionCountByType.get(ckA)?.get(targetType) || 0;
+                        const sameCntB = criterionCountByType.get(ckB)?.get(targetType) || 0;
+                        if (sameCntA !== sameCntB) {
+                            return sameCntA - sameCntB;
+                        }
+
+                        return 0;
+                    });
+
+                    const chosen = remainingInTier.shift()!;
+                    picked.push(chosen);
+                    usedIds.add(chosen.id);
+                    recordPickedCriterion(chosen, targetType, effectiveLabel);
+                }
+                if (picked.length >= count) break;
+            }
 
             if (picked.length < count) {
                 const diff = count - picked.length;
@@ -1015,6 +1150,81 @@ const ExamGenerator: React.FC = () => {
                 points: category === 'essay' ? 1.0 : 0.25,
                 uniqueId: Math.random()
             }));
+        };
+
+        // Helper sắp xếp thứ tự lấy các loại câu hỏi trong cùng 1 bài/mức độ:
+        // Loại câu hỏi nào có ít YCCĐ khả dụng trong ngân hàng hơn sẽ được ưu tiên chọn YCCĐ trước,
+        // giúp các loại câu hỏi có nhiều YCCĐ tự động né sang YCCĐ khác.
+        type RowLevelTask = {
+            level: string;
+            category: 'mc' | 'essay';
+            count: number;
+            preferredType: 'multiple-choice' | 'true-false' | 'short-answer' | 'essay';
+            partOrder: number;
+        };
+
+        const executeRowLevelTasks = (
+            tasks: RowLevelTask[],
+            lessonName: string,
+            subTopicName: string | undefined,
+            mainTopicName: string | undefined,
+            rowIdx: number
+        ) => {
+            const activeTasks = tasks.filter(t => t.count > 0);
+            if (activeTasks.length === 0) return;
+
+            const effectiveLabel = lessonName || subTopicName || mainTopicName || 'Bài chung';
+            const rowPool = activeBank.filter(q => {
+                if (usedIds.has(q.id)) return false;
+                return doesQuestionMatchRow(q, effectiveLabel, subTopicName, mainTopicName);
+            });
+
+            const countAvailableDistinctCriteria = (task: RowLevelTask): number => {
+                const cKeys = new Set<string>();
+                rowPool.forEach(q => {
+                    if (!isLevelMatch(q.level, task.level)) return;
+                    const typeOk =
+                        matchesPreferredType(q, task.preferredType) ||
+                        (task.preferredType === 'short-answer' && matchesPreferredType(q, 'true-false'));
+                    if (typeOk) {
+                        cKeys.add(getCanonicalCriterionKeyForQuestion(q, targetGrade, effectiveLabel));
+                    }
+                });
+                return cKeys.size;
+            };
+
+            const sortedTasks = [...activeTasks].sort((a, b) => {
+                const availA = countAvailableDistinctCriteria(a);
+                const availB = countAvailableDistinctCriteria(b);
+                if (availA !== availB) return availA - availB;
+                if (a.count !== b.count) return a.count - b.count;
+                return a.partOrder - b.partOrder;
+            });
+
+            sortedTasks.forEach((task, idx) => {
+                const remainingOtherTypes = sortedTasks
+                    .slice(idx + 1)
+                    .map(t => t.preferredType)
+                    .filter(t => t !== task.preferredType);
+
+                const pickedQs = findQuestions(
+                    lessonName,
+                    task.level,
+                    task.category,
+                    task.count,
+                    task.preferredType,
+                    subTopicName,
+                    mainTopicName,
+                    remainingOtherTypes
+                );
+                selected.push(
+                    ...pickedQs.map(q => ({
+                        ...q,
+                        _partOrder: task.partOrder,
+                        _rowIdx: rowIdx
+                    }))
+                );
+            });
         };
 
         if (configMode === 'manual') {
@@ -1079,36 +1289,62 @@ const ExamGenerator: React.FC = () => {
                     const esH = extractCnt(p4.tuLuan?.H);
                     const esVD = extractCnt(p4.tuLuan?.VD);
 
-                    if (mcB > 0) selected.push(...tagPicked(findQuestions(lessonName, 'NB', 'mc', mcB, 'multiple-choice', subTopicName, mainTopicName), 1));
-                    if (mcH > 0) selected.push(...tagPicked(findQuestions(lessonName, 'TH', 'mc', mcH, 'multiple-choice', subTopicName, mainTopicName), 1));
-                    if (mcVD > 0) selected.push(...tagPicked(findQuestions(lessonName, 'VD', 'mc', mcVD, 'multiple-choice', subTopicName, mainTopicName), 1));
+                    // Thực thi theo từng mức độ (NB, TH, VD), tự động ưu tiên phân tách YCCĐ giữa các loại câu hỏi
+                    executeRowLevelTasks(
+                        [
+                            { level: 'NB', category: 'mc', count: mcB, preferredType: 'multiple-choice', partOrder: 1 },
+                            { level: 'NB', category: 'mc', count: tfB, preferredType: 'true-false', partOrder: 2 },
+                            { level: 'NB', category: 'mc', count: saB, preferredType: 'short-answer', partOrder: 3 },
+                            { level: 'NB', category: 'essay', count: esB, preferredType: 'essay', partOrder: 4 }
+                        ],
+                        lessonName,
+                        subTopicName,
+                        mainTopicName,
+                        rowIdx
+                    );
 
-                    if (tfB > 0) selected.push(...tagPicked(findQuestions(lessonName, 'NB', 'mc', tfB, 'true-false', subTopicName, mainTopicName), 2));
-                    if (tfH > 0) selected.push(...tagPicked(findQuestions(lessonName, 'TH', 'mc', tfH, 'true-false', subTopicName, mainTopicName), 2));
-                    if (tfVD > 0) selected.push(...tagPicked(findQuestions(lessonName, 'VD', 'mc', tfVD, 'true-false', subTopicName, mainTopicName), 2));
+                    executeRowLevelTasks(
+                        [
+                            { level: 'TH', category: 'mc', count: mcH, preferredType: 'multiple-choice', partOrder: 1 },
+                            { level: 'TH', category: 'mc', count: tfH, preferredType: 'true-false', partOrder: 2 },
+                            { level: 'TH', category: 'mc', count: saH, preferredType: 'short-answer', partOrder: 3 },
+                            { level: 'TH', category: 'essay', count: esH, preferredType: 'essay', partOrder: 4 }
+                        ],
+                        lessonName,
+                        subTopicName,
+                        mainTopicName,
+                        rowIdx
+                    );
 
-                    if (saB > 0) selected.push(...tagPicked(findQuestions(lessonName, 'NB', 'mc', saB, 'short-answer', subTopicName, mainTopicName), 3));
-                    if (saH > 0) selected.push(...tagPicked(findQuestions(lessonName, 'TH', 'mc', saH, 'short-answer', subTopicName, mainTopicName), 3));
-                    if (saVD > 0) selected.push(...tagPicked(findQuestions(lessonName, 'VD', 'mc', saVD, 'short-answer', subTopicName, mainTopicName), 3));
-
-                    if (esB > 0) selected.push(...tagPicked(findQuestions(lessonName, 'NB', 'essay', esB, 'essay', subTopicName, mainTopicName), 4));
-                    if (esH > 0) selected.push(...tagPicked(findQuestions(lessonName, 'TH', 'essay', esH, 'essay', subTopicName, mainTopicName), 4));
-                    if (esVD > 0) selected.push(...tagPicked(findQuestions(lessonName, 'VD', 'essay', esVD, 'essay', subTopicName, mainTopicName), 4));
+                    executeRowLevelTasks(
+                        [
+                            { level: 'VD', category: 'mc', count: mcVD, preferredType: 'multiple-choice', partOrder: 1 },
+                            { level: 'VD', category: 'mc', count: tfVD, preferredType: 'true-false', partOrder: 2 },
+                            { level: 'VD', category: 'mc', count: saVD, preferredType: 'short-answer', partOrder: 3 },
+                            { level: 'VD', category: 'essay', count: esVD, preferredType: 'essay', partOrder: 4 }
+                        ],
+                        lessonName,
+                        subTopicName,
+                        mainTopicName,
+                        rowIdx
+                    );
                 } else {
                     const tnCounts = row.tracNghiem;
-                    if (tnCounts) {
-                        if (tnCounts.NB > 0) selected.push(...tagPicked(findQuestions(lessonName, 'NB', 'mc', tnCounts.NB, undefined, subTopicName, mainTopicName), 1));
-                        if (tnCounts.TH > 0) selected.push(...tagPicked(findQuestions(lessonName, 'TH', 'mc', tnCounts.TH, undefined, subTopicName, mainTopicName), 1));
-                        if (tnCounts.VD > 0) selected.push(...tagPicked(findQuestions(lessonName, 'VD', 'mc', tnCounts.VD, undefined, subTopicName, mainTopicName), 1));
-                        if (tnCounts.VDC > 0) selected.push(...tagPicked(findQuestions(lessonName, 'VDC', 'mc', tnCounts.VDC, undefined, subTopicName, mainTopicName), 1));
-                    }
                     const tlCounts = row.tuLuan;
-                    if (tlCounts) {
-                        if (tlCounts.NB > 0) selected.push(...tagPicked(findQuestions(lessonName, 'NB', 'essay', tlCounts.NB, undefined, subTopicName, mainTopicName), 4));
-                        if (tlCounts.TH > 0) selected.push(...tagPicked(findQuestions(lessonName, 'TH', 'essay', tlCounts.TH, undefined, subTopicName, mainTopicName), 4));
-                        if (tlCounts.VD > 0) selected.push(...tagPicked(findQuestions(lessonName, 'VD', 'essay', tlCounts.VD, undefined, subTopicName, mainTopicName), 4));
-                        if (tlCounts.VDC > 0) selected.push(...tagPicked(findQuestions(lessonName, 'VDC', 'essay', tlCounts.VDC, undefined, subTopicName, mainTopicName), 4));
-                    }
+                    (['NB', 'TH', 'VD', 'VDC'] as const).forEach(lvl => {
+                        const tnC = tnCounts?.[lvl] || 0;
+                        const tlC = tlCounts?.[lvl] || 0;
+                        executeRowLevelTasks(
+                            [
+                                { level: lvl, category: 'mc', count: tnC, preferredType: 'multiple-choice', partOrder: 1 },
+                                { level: lvl, category: 'essay', count: tlC, preferredType: 'essay', partOrder: 4 }
+                            ],
+                            lessonName,
+                            subTopicName,
+                            mainTopicName,
+                            rowIdx
+                        );
+                    });
                 }
             });
         }
@@ -1215,27 +1451,50 @@ const ExamGenerator: React.FC = () => {
         });
 
         let swappedCount = 0;
+        const targetG = detectGradeFromContext(bank, headerInfo, importedMatrix);
         newTest.forEach((q, index) => {
             if (targetLevel && q.level !== targetLevel) return;
 
             const qLesson = q.lesson.toLowerCase().trim();
-            const qCriteria = (q.criteria || '').trim().toLowerCase();
+            const qType = getQuestionTypeKey(q);
+            const qCKey = getCanonicalCriterionKeyForQuestion(q, targetG, q.lesson);
 
-            const isCompatible = (b: BankQuestion) => b.level === q.level && b.category === q.category;
+            // Tập hợp các YCCĐ đang được sử dụng bởi các câu hỏi thuộc LOẠI CÂU HỎI KHÁC trong đề
+            const cKeysUsedByOtherTypes = new Set<string>();
+            newTest.forEach((otherQ, otherIdx) => {
+                if (otherIdx === index) return;
+                if (getQuestionTypeKey(otherQ) !== qType) {
+                    cKeysUsedByOtherTypes.add(getCanonicalCriterionKeyForQuestion(otherQ, targetG, otherQ.lesson));
+                }
+            });
+
+            const isCompatible = (b: BankQuestion) =>
+                b.level === q.level && b.category === q.category && getQuestionTypeKey(b) === qType;
             const isLessonMatch = (b: BankQuestion) => {
                 const bLesson = b.lesson.toLowerCase().trim();
                 return bLesson.includes(qLesson) || qLesson.includes(bLesson);
             };
 
             let pool = bank.filter(b => isCompatible(b) && isLessonMatch(b));
+            if (pool.length === 0) {
+                pool = bank.filter(b => b.level === q.level && b.category === q.category && isLessonMatch(b));
+            }
             let validCandidates = pool.filter(b => !currentTestIds.has(b.id) && !newlySelectedIds.has(b.id));
 
+            // Ưu tiên 1: Các ứng viên có YCCĐ KHÔNG bị trùng với loại câu hỏi khác trong đề
+            const nonCollidingCandidates = validCandidates.filter(
+                b => !cKeysUsedByOtherTypes.has(getCanonicalCriterionKeyForQuestion(b, targetG, b.lesson))
+            );
+            const searchPool = nonCollidingCandidates.length > 0 ? nonCollidingCandidates : validCandidates;
+
             let finalCandidates: BankQuestion[] = [];
-            if (qCriteria) {
-                finalCandidates = validCandidates.filter(b => (b.criteria || '').trim().toLowerCase() === qCriteria);
+            if (!cKeysUsedByOtherTypes.has(qCKey)) {
+                finalCandidates = searchPool.filter(
+                    b => getCanonicalCriterionKeyForQuestion(b, targetG, b.lesson) === qCKey
+                );
             }
             if (finalCandidates.length === 0) {
-                finalCandidates = validCandidates;
+                finalCandidates = searchPool;
             }
 
             if (finalCandidates.length > 0) {
@@ -1243,8 +1502,10 @@ const ExamGenerator: React.FC = () => {
                 newTest[index] = {
                     ...replacement,
                     points: q.points,
+                    _partOrder: (q as any)._partOrder,
+                    _rowIdx: (q as any)._rowIdx,
                     uniqueId: Math.random()
-                };
+                } as any;
                 newlySelectedIds.add(replacement.id);
                 swappedCount++;
             } else {
@@ -1261,31 +1522,58 @@ const ExamGenerator: React.FC = () => {
     };
 
     const swapQuestion = (q: BankQuestion) => {
+        const targetG = detectGradeFromContext(bank, headerInfo, importedMatrix);
         const qLesson = q.lesson.toLowerCase().trim();
-        const qCriteria = (q.criteria || '').trim().toLowerCase();
+        const qType = getQuestionTypeKey(q);
+        const qCKey = getCanonicalCriterionKeyForQuestion(q, targetG, q.lesson);
 
-        const isCompatible = (b: BankQuestion) => b.level === q.level && b.category === q.category;
+        // Tập hợp các YCCĐ đang được sử dụng bởi các câu hỏi thuộc LOẠI CÂU HỎI KHÁC trong đề
+        const cKeysUsedByOtherTypes = new Set<string>();
+        generatedTest.forEach(otherQ => {
+            if (otherQ.uniqueId === q.uniqueId) return;
+            if (getQuestionTypeKey(otherQ) !== qType) {
+                cKeysUsedByOtherTypes.add(getCanonicalCriterionKeyForQuestion(otherQ, targetG, otherQ.lesson));
+            }
+        });
+
+        const isCompatible = (b: BankQuestion) =>
+            b.level === q.level && b.category === q.category && getQuestionTypeKey(b) === qType;
         const isLessonMatch = (b: BankQuestion) => {
             const bLesson = b.lesson.toLowerCase().trim();
             return bLesson.includes(qLesson) || qLesson.includes(bLesson);
         };
-        const isCriteriaMatch = (b: BankQuestion) => {
-            if (!qCriteria) return true;
-            return (b.criteria || '').trim().toLowerCase() === qCriteria;
-        };
 
         let pool = bank.filter(b => isCompatible(b) && isLessonMatch(b));
+        if (pool.length === 0) {
+            pool = bank.filter(b => b.level === q.level && b.category === q.category && isLessonMatch(b));
+        }
         const currentTestIds = new Set(generatedTest.map(gt => gt.id));
-        let candidates = pool.filter(b => !currentTestIds.has(b.id));
-        let bestCandidates = candidates.filter(b => isCriteriaMatch(b));
+        const candidates = pool.filter(b => !currentTestIds.has(b.id));
 
-        if (bestCandidates.length === 0 && candidates.length > 0) {
-            bestCandidates = candidates;
+        const nonColliding = candidates.filter(
+            b => !cKeysUsedByOtherTypes.has(getCanonicalCriterionKeyForQuestion(b, targetG, b.lesson))
+        );
+        const preferredPool = nonColliding.length > 0 ? nonColliding : candidates;
+
+        let bestCandidates: BankQuestion[] = [];
+        if (!cKeysUsedByOtherTypes.has(qCKey)) {
+            bestCandidates = preferredPool.filter(
+                b => getCanonicalCriterionKeyForQuestion(b, targetG, b.lesson) === qCKey
+            );
+        }
+        if (bestCandidates.length === 0) {
+            bestCandidates = preferredPool;
         }
 
         if (bestCandidates.length > 0) {
             const replacement = bestCandidates[Math.floor(Math.random() * bestCandidates.length)];
-            const newQ = { ...replacement, points: q.points, uniqueId: Math.random() };
+            const newQ = {
+                ...replacement,
+                points: q.points,
+                _partOrder: (q as any)._partOrder,
+                _rowIdx: (q as any)._rowIdx,
+                uniqueId: Math.random()
+            } as any;
             setGeneratedTest(prev => prev.map(item => item.uniqueId === q.uniqueId ? newQ : item));
         } else {
             alert(`Không tìm thấy câu hỏi nào khác cùng bài và mức độ để thay thế.`);

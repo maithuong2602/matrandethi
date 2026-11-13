@@ -1804,3 +1804,71 @@ export const syncSpecHtmlWithCustomStore = (
 
     return updatedHtml;
 };
+
+/**
+ * Xác định loại câu hỏi chuẩn hóa (nhiều lựa chọn, đúng-sai, trả lời ngắn, tự luận)
+ */
+export const getQuestionTypeKey = (q: any): 'multiple-choice' | 'true-false' | 'short-answer' | 'essay' => {
+    if (!q) return 'multiple-choice';
+    if (q.category === 'essay' || q.questionType === 'essay' || q.loai === 'tu-luan') {
+        return 'essay';
+    }
+    if (q.questionType === 'true-false' || q.mcType === 'true-false') {
+        return 'true-false';
+    }
+    if (q.questionType === 'short-answer' || q.questionType === 'fill-blank' || q.mcType === 'fill-blank') {
+        return 'short-answer';
+    }
+    return 'multiple-choice';
+};
+
+/**
+ * Trả về khóa định danh chuẩn hóa của Yêu cầu cần đạt (YCCĐ) gắn với câu hỏi `q`
+ * theo phạm vi bài học (ví dụ: "bài 1:::1.1", "bài 2:::2.1"), giúp so khớp chính xác
+ * kể cả khi câu hỏi lưu mã rút gọn ("1.1") hay lưu nguyên câu văn bản YCCĐ.
+ */
+export const getCanonicalCriterionKeyForQuestion = (
+    q: any,
+    defaultGrade?: string,
+    defaultLesson?: string,
+    customStore?: GradeCriteriaMap
+): string => {
+    if (!q) return 'general:::default';
+    const rawGrade = String(q.grade || defaultGrade || '');
+    const g = (rawGrade.match(/\d+/)?.[0] || rawGrade).trim();
+    const rawLesson = String(q.lesson || q.bai || defaultLesson || '').trim();
+    const canonicalLesson = g && rawLesson ? resolveCanonicalLessonName(g, rawLesson) : rawLesson;
+    const lessonScope = extractLessonNumber(canonicalLesson) || normalizeLessonString(canonicalLesson) || 'general';
+
+    const rawCriteria = String(q.criteria || q.tieuChi || '').trim();
+    const codeMatch = rawCriteria.match(/^(\d+\.\d+)\b/);
+    if (codeMatch) {
+        return `${lessonScope}:::${codeMatch[1]}`;
+    }
+
+    if (rawCriteria && g && canonicalLesson) {
+        const merged = getMergedCriteria(g, canonicalLesson, customStore);
+        if (merged) {
+            for (const [lvl, list] of Object.entries(merged)) {
+                if (lvl.startsWith('__') || !Array.isArray(list)) continue;
+                const matched = list.find(item => areCriteriaSemanticallySame(item, rawCriteria));
+                if (matched) {
+                    const m = matched.match(/^(\d+\.\d+)\b/);
+                    if (m) return `${lessonScope}:::${m[1]}`;
+                    return `${lessonScope}:::${normalizeCriterionText(matched)}`;
+                }
+            }
+        }
+    }
+
+    if (rawCriteria) {
+        return `${lessonScope}:::${normalizeCriterionText(rawCriteria)}`;
+    }
+
+    if (q.curriculum?.requirementId) {
+        return `${lessonScope}:::${q.curriculum.requirementId}`;
+    }
+
+    const lvl = getLevelCodeFromTitle(String(q.level || q.mucDo || 'NB'));
+    return `${lessonScope}:::${lvl}:default`;
+};

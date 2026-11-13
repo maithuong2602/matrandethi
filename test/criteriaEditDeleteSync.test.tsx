@@ -2,7 +2,9 @@ import React from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import QuestionManager from '../pages/QuestionManager';
+import ExamGenerator from '../pages/ExamGenerator';
 import MatrixView from '../components/MatrixView';
+import { saveQuestionBank } from '../services/storage/questionBankStorage';
 import { 
     updateCustomCriterion, 
     deleteCustomCriterion, 
@@ -13,7 +15,9 @@ import {
     parseYccdSections,
     CUSTOM_CRITERIA_STORAGE_KEY,
     filterQuestionsByActiveCriteria,
-    isQuestionCriteriaValidForLesson
+    isQuestionCriteriaValidForLesson,
+    getCanonicalCriterionKeyForQuestion,
+    getQuestionTypeKey
 } from '../services/criteriaService';
 import { getRequirementsHtml } from '../utils';
 import { MatrixData } from '../types';
@@ -397,5 +401,156 @@ describe('Chức năng Sửa/Xóa YCCĐ và Đồng Bộ Giữa Quản Lý Câu 
         expect(isQuestionCriteriaValidForLesson(uploadedQuestions[0], '8', 'Bài 3: Thực hành: Khai thác thông tin số')).toBe(false);
         expect(isQuestionCriteriaValidForLesson(uploadedQuestions[1], '8', 'Bài 3: Thực hành: Khai thác thông tin số')).toBe(false);
         expect(isQuestionCriteriaValidForLesson(uploadedQuestions[2], '8', 'Bài 3: Thực hành: Khai thác thông tin số')).toBe(true);
+    });
+
+    it('9. Tạo đề (ExamGenerator): Khi 1 YCCĐ đã lấy loại câu hỏi này thì loại câu hỏi khác tự động ưu tiên YCCĐ khác, hạn chế cùng 1 YCCĐ có 2 loại câu hỏi', async () => {
+        // Bài 1 Khối 6 có 2 YCCĐ mức NB: 1.1 và 1.2
+        // Kho câu hỏi có:
+        // - 2 câu Nhiều lựa chọn ở 1.1, 2 câu Nhiều lựa chọn ở 1.2
+        // - 1 câu Đúng-Sai chỉ có ở 1.1
+        // Ma trận yêu cầu lấy: 2 câu Nhiều lựa chọn (NB) + 1 câu Đúng-Sai (NB)
+        // Hệ thống phải ưu tiên để câu Đúng-Sai lấy 1.1 và 2 câu Nhiều lựa chọn cùng lấy 1.2 -> Không YCCĐ nào bị trùng 2 loại câu hỏi!
+        saveQuestionBank(
+            [
+                {
+                    id: 'mc-1.1-1',
+                    grade: '6',
+                    lesson: 'Bài 1. Thông tin và dữ liệu',
+                    category: 'mc',
+                    questionType: 'multiple-choice',
+                    level: 'NB',
+                    criteria: '1.1 Phân biệt được thông tin với vật mang tin.',
+                    content: 'Câu MC 1.1 số 1 [KEY_MC_1_1_A]',
+                    options: [
+                        { id: 'A', text: 'Đáp án A', isCorrect: true },
+                        { id: 'B', text: 'Đáp án B', isCorrect: false },
+                        { id: 'C', text: 'Đáp án C', isCorrect: false },
+                        { id: 'D', text: 'Đáp án D', isCorrect: false }
+                    ],
+                    answer: 'A'
+                },
+                {
+                    id: 'mc-1.1-2',
+                    grade: '6',
+                    lesson: 'Bài 1. Thông tin và dữ liệu',
+                    category: 'mc',
+                    questionType: 'multiple-choice',
+                    level: 'NB',
+                    criteria: '1.1 Phân biệt được thông tin với vật mang tin.',
+                    content: 'Câu MC 1.1 số 2 [KEY_MC_1_1_B]',
+                    options: [
+                        { id: 'A', text: 'Đáp án A', isCorrect: true },
+                        { id: 'B', text: 'Đáp án B', isCorrect: false },
+                        { id: 'C', text: 'Đáp án C', isCorrect: false },
+                        { id: 'D', text: 'Đáp án D', isCorrect: false }
+                    ],
+                    answer: 'A'
+                },
+                {
+                    id: 'mc-1.2-1',
+                    grade: '6',
+                    lesson: 'Bài 1. Thông tin và dữ liệu',
+                    category: 'mc',
+                    questionType: 'multiple-choice',
+                    level: 'NB',
+                    criteria: '1.2 Nhận biết được sự khác nhau giữa thông tin và dữ liệu.',
+                    content: 'Câu MC 1.2 số 1 [KEY_MC_1_2_A]',
+                    options: [
+                        { id: 'A', text: 'Đáp án A', isCorrect: true },
+                        { id: 'B', text: 'Đáp án B', isCorrect: false },
+                        { id: 'C', text: 'Đáp án C', isCorrect: false },
+                        { id: 'D', text: 'Đáp án D', isCorrect: false }
+                    ],
+                    answer: 'A'
+                },
+                {
+                    id: 'mc-1.2-2',
+                    grade: '6',
+                    lesson: 'Bài 1. Thông tin và dữ liệu',
+                    category: 'mc',
+                    questionType: 'multiple-choice',
+                    level: 'NB',
+                    criteria: '1.2 Nhận biết được sự khác nhau giữa thông tin và dữ liệu.',
+                    content: 'Câu MC 1.2 số 2 [KEY_MC_1_2_B]',
+                    options: [
+                        { id: 'A', text: 'Đáp án A', isCorrect: true },
+                        { id: 'B', text: 'Đáp án B', isCorrect: false },
+                        { id: 'C', text: 'Đáp án C', isCorrect: false },
+                        { id: 'D', text: 'Đáp án D', isCorrect: false }
+                    ],
+                    answer: 'A'
+                },
+                {
+                    id: 'tf-1.1-1',
+                    grade: '6',
+                    lesson: 'Bài 1. Thông tin và dữ liệu',
+                    category: 'mc',
+                    questionType: 'true-false',
+                    level: 'NB',
+                    criteria: '1.1 Phân biệt được thông tin với vật mang tin.',
+                    content: 'Câu Đúng Sai 1.1 duy nhất [KEY_TF_1_1]',
+                    options: [
+                        { id: 'Đúng', text: 'Đúng', isCorrect: true },
+                        { id: 'Sai', text: 'Sai', isCorrect: false }
+                    ],
+                    answer: 'Đúng'
+                }
+            ] as any,
+            { force: true }
+        );
+
+        const mockFs = {
+            name: 'Root',
+            type: 'folder',
+            children: [
+                {
+                    name: 'Lớp 6 - Giữa kì I',
+                    type: 'folder',
+                    matrixData: {
+                        matrixFormat: 'new_4part',
+                        matrix: {
+                            rows: [
+                                ['1', 'Chủ đề A. Máy tính và cộng đồng', '1. Thông tin và dữ liệu', 'Bài 1. Thông tin và dữ liệu', '2', '3', '0', '0', '0', '0', '0', '0', '0', '100', '0']
+                            ]
+                        },
+                        specifications: {
+                            rows: [
+                                ['1', 'Chủ đề A. Máy tính và cộng đồng', '1. Thông tin và dữ liệu', 'Bài 1. Thông tin và dữ liệu', '', '3-0', '0-0', '0-0', '0-0']
+                            ]
+                        },
+                        newFormatRows: {
+                            0: {
+                                mc: { B: { count: 2, competency: 'NLa' }, H: { count: 0, competency: 'NLa' }, VD: { count: 0, competency: 'NLa' } },
+                                tf: { B: { count: 1, competency: 'NLa' }, H: { count: 0, competency: 'NLa' }, VD: { count: 0, competency: 'NLa' } },
+                                sa: { B: { count: 0, competency: 'NLa' }, H: { count: 0, competency: 'NLa' }, VD: { count: 0, competency: 'NLa' } },
+                                essay: { B: { count: 0, competency: 'NLa' }, H: { count: 0, competency: 'NLa' }, VD: { count: 0, competency: 'NLa' } }
+                            }
+                        }
+                    }
+                }
+            ]
+        };
+        localStorage.setItem('matrixFileSystem', JSON.stringify(mockFs));
+
+        render(<ExamGenerator />);
+
+        // Chọn Ma trận "Lớp 6 - Giữa kì I"
+        const matrixBtn = await screen.findByText('Lớp 6 - Giữa kì I');
+        fireEvent.click(matrixBtn);
+
+        // Bấm nút tạo đề
+        const generateBtn = screen.getByText(/Tạo Đề Chính Thức/i);
+        fireEvent.click(generateBtn);
+
+        // Kiểm tra đề được sinh ra:
+        // - Có câu Đúng Sai 1.1 ([KEY_TF_1_1])
+        // - 2 câu Nhiều lựa chọn đều phải lấy từ YCCĐ 1.2 ([KEY_MC_1_2_A] và [KEY_MC_1_2_B]), KHÔNG lấy 1.1 để tránh trùng YCCĐ 1.1 giữa 2 loại câu hỏi!
+        await waitFor(() => {
+            expect(screen.getByText(/KEY_TF_1_1/)).toBeInTheDocument();
+            expect(screen.getByText(/KEY_MC_1_2_A/)).toBeInTheDocument();
+            expect(screen.getByText(/KEY_MC_1_2_B/)).toBeInTheDocument();
+        });
+        expect(screen.queryByText(/KEY_MC_1_1_A/)).not.toBeInTheDocument();
+        expect(screen.queryByText(/KEY_MC_1_1_B/)).not.toBeInTheDocument();
     });
 });
