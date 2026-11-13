@@ -97,4 +97,46 @@ describe('Criteria Service & Matrix Synchronization', () => {
         // Check "Bổ sung YCCĐ / Mức độ" button exists in sidebar
         expect(screen.getByText('Bổ sung YCCĐ / Mức độ')).toBeInTheDocument();
     });
+
+    it('renumbers criteria sequentially (3.1, 3.2...) when two matrix rows map to the same lesson so 3.1 is never duplicated', () => {
+        const mockMatrixData: MatrixData = {
+            matrix: {
+                rows: [
+                    ['1', 'Chủ đề C', '1. Đặc điểm của thông tin trong môi trường số', 'Bài 3: Thực hành: Khai thác thông tin số', '1', '', '', '', '', '1', '', '', '', '10', '0'],
+                    ['2', 'Chủ đề C', '2. Thông tin với giải quyết vấn đề', 'Bài 3: Thực hành: Khai thác thông tin số', '1', '', '', '', '', '1', '', '', '', '10', '0']
+                ]
+            },
+            specifications: {
+                rows: [
+                    [
+                        '1',
+                        'Chủ đề C',
+                        '1. Đặc điểm của thông tin trong môi trường số',
+                        'Bài 3: Thực hành: Khai thác thông tin số',
+                        '<strong class="block font-semibold">Vận dụng</strong><div class="pl-2">– Sử dụng được công cụ tìm kiếm, xử lí và trao đổi thông tin trong môi trường số.</div>',
+                        '0-0', '0-0', '1-0', '0-0'
+                    ],
+                    [
+                        '2',
+                        'Chủ đề C',
+                        '2. Thông tin với giải quyết vấn đề',
+                        'Bài 3: Thực hành: Khai thác thông tin số',
+                        '<strong class="block font-semibold">Vận dụng</strong><div class="pl-2">– Chủ động tìm kiếm được thông tin để thực hiện nhiệm vụ (thông qua bài tập cụ thể).</div>',
+                        '0-0', '0-0', '1-0', '0-0'
+                    ]
+                ]
+            },
+            availableCounts: [
+                { NB: { TN: 0, TL: 0 }, TH: { TN: 0, TL: 0 }, VD: { TN: 1, TL: 0 }, VDC: { TN: 0, TL: 0 } },
+                { NB: { TN: 0, TL: 0 }, TH: { TN: 0, TL: 0 }, VD: { TN: 1, TL: 0 }, VDC: { TN: 0, TL: 0 } }
+            ]
+        };
+
+        syncCriteriaFromMatrixData(mockMatrixData, 'Lớp 8');
+        const merged = getMergedCriteria('8', 'Bài 3: Thực hành: Khai thác thông tin số');
+        expect(merged?.VD).toBeDefined();
+        expect(merged?.VD.length).toBe(2);
+        expect(merged?.VD[0].startsWith('3.1 ')).toBe(true);
+        expect(merged?.VD[1].startsWith('3.2 ')).toBe(true);
+    });
 });

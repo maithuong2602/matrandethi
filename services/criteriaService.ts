@@ -27,10 +27,40 @@ export const normalizeCriterionText = (text: string): string => {
     return (text || '')
         .replace(/^\d+\.\d+\s*/, '')
         .replace(/^[\s–\-*•]+/, '')
-        .replace(/[:.\-–_]/g, ' ')
+        .replace(/[:.\-–_(),;]/g, ' ')
         .replace(/\s+/g, ' ')
         .trim()
         .toLowerCase();
+};
+
+/**
+ * Checks if two criterion strings represent the same semantic requirement
+ * (handles minor wording differences between CURRICULUM and REQUIREMENTS_DATA, e.g., "tìm kiếm được thông tin" vs "tìm kiếm thông tin", "thông qua" vs "qua", "nhiệm vụ học tập" vs "nhiệm vụ")
+ */
+export const areCriteriaSemanticallySame = (a: string, b: string): boolean => {
+    const na = normalizeCriterionText(a);
+    const nb = normalizeCriterionText(b);
+    if (na === nb) return true;
+    if (!na || !nb) return false;
+
+    const canonicalize = (s: string) =>
+        s
+            .replace(/\bthông qua\b/g, 'qua')
+            .replace(/\bnhiệm vụ học tập\b/g, 'nhiệm vụ')
+            .replace(/\btìm kiếm được\b/g, 'tìm kiếm')
+            .replace(/\bsử dụng được\b/g, 'sử dụng')
+            .replace(/\bthực hiện được\b/g, 'thực hiện')
+            .replace(/\bgiải thích được\b/g, 'giải thích')
+            .replace(/\bnêu được\b/g, 'nêu')
+            .replace(/\btrình bày được\b/g, 'trình bày')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+    const ca = canonicalize(na);
+    const cb = canonicalize(nb);
+    if (ca === cb) return true;
+    if (ca.length > 20 && cb.length > 20 && (ca.includes(cb) || cb.includes(ca))) return true;
+    return false;
 };
 
 /**
@@ -520,18 +550,22 @@ const harvestCriteriaFromFileSystem = (item: any, store: GradeCriteriaMap, curre
                         }
                         const deletedList: string[] = store[effectiveGrade][tKey].__deleted || [];
                         Object.entries(parsed).forEach(([lvl, list]) => {
-                            const filteredList = list.filter(it => !deletedList.includes(normalizeCriterionText(it)));
+                            const prefix = getLevelPrefixNumber(lvl);
+                            const filteredList = list.filter(it => !deletedList.some(d => areCriteriaSemanticallySame(d, it)));
                             if (!store[effectiveGrade][tKey][lvl] || store[effectiveGrade][tKey][lvl].length === 0) {
                                 if (filteredList.length > 0) {
-                                    store[effectiveGrade][tKey][lvl] = filteredList;
+                                    store[effectiveGrade][tKey][lvl] = filteredList.map((it, idx) => {
+                                        const clean = it.replace(/^\d+\.\d+\s*/, '').replace(/^[\s–\-*•]+/, '').trim();
+                                        return `${prefix}.${idx + 1} ${clean}`;
+                                    });
                                 }
                             } else {
-                                const existingNorms = new Set(store[effectiveGrade][tKey][lvl].map(s => normalizeCriterionText(s)));
                                 filteredList.forEach(it => {
-                                    const n = normalizeCriterionText(it);
-                                    if (!existingNorms.has(n)) {
-                                        store[effectiveGrade][tKey][lvl].push(it);
-                                        existingNorms.add(n);
+                                    const isDup = store[effectiveGrade][tKey][lvl].some(ex => areCriteriaSemanticallySame(ex, it));
+                                    if (!isDup) {
+                                        const clean = it.replace(/^\d+\.\d+\s*/, '').replace(/^[\s–\-*•]+/, '').trim();
+                                        const nextIdx = store[effectiveGrade][tKey][lvl].length + 1;
+                                        store[effectiveGrade][tKey][lvl].push(`${prefix}.${nextIdx} ${clean}`);
                                     }
                                 });
                             }
@@ -587,9 +621,25 @@ export const syncCriteriaFromMatrixData = (matrixData: MatrixData, context?: str
                 if (!store[grade][tKey]) store[grade][tKey] = {};
                 const deletedList: string[] = store[grade][tKey].__deleted || [];
                 Object.entries(parsed).forEach(([lvl, list]) => {
-                    const filteredList = list.filter(it => !deletedList.includes(normalizeCriterionText(it)));
+                    const prefix = getLevelPrefixNumber(lvl);
+                    const filteredList = list.filter(it => !deletedList.some(d => areCriteriaSemanticallySame(d, it)));
                     if (filteredList.length > 0) {
-                        store[grade][tKey][lvl] = filteredList;
+                        const existingList = store[grade][tKey][lvl] || [];
+                        if (existingList.length === 0) {
+                            store[grade][tKey][lvl] = filteredList.map((it, idx) => {
+                                const clean = it.replace(/^\d+\.\d+\s*/, '').replace(/^[\s–\-*•]+/, '').trim();
+                                return `${prefix}.${idx + 1} ${clean}`;
+                            });
+                        } else {
+                            filteredList.forEach(it => {
+                                const isDup = store[grade][tKey][lvl].some(ex => areCriteriaSemanticallySame(ex, it));
+                                if (!isDup) {
+                                    const clean = it.replace(/^\d+\.\d+\s*/, '').replace(/^[\s–\-*•]+/, '').trim();
+                                    const nextIdx = store[grade][tKey][lvl].length + 1;
+                                    store[grade][tKey][lvl].push(`${prefix}.${nextIdx} ${clean}`);
+                                }
+                            });
+                        }
                     }
                 });
             });
@@ -1152,16 +1202,38 @@ export const getMergedCriteria = (
             if (!merged[lvl]) {
                 if (validList.length > 0) merged[lvl] = [...validList];
             } else {
-                const existingSet = new Set(merged[lvl].map(s => normalizeCriterionText(s)));
                 validList.forEach(item => {
-                    const normItem = normalizeCriterionText(item);
-                    if (!existingSet.has(normItem)) {
+                    const isDup = merged[lvl].some(ex => areCriteriaSemanticallySame(ex, item));
+                    if (!isDup) {
                         merged[lvl].push(item);
-                        existingSet.add(normItem);
                     }
                 });
             }
         });
+    });
+
+    // 3. Đảm bảo mã đánh số (1.1, 1.2...; 2.1, 2.2...; 3.1, 3.2...) trong cùng một mức độ luôn duy nhất và tuần tự, không bao giờ bị trùng "3.1" hai lần
+    Object.entries(merged).forEach(([lvl, list]) => {
+        if (!Array.isArray(list) || list.length === 0) return;
+        const prefix = getLevelPrefixNumber(lvl);
+        const usedCodes = new Set<string>();
+        let hasCollisionOrMissing = false;
+
+        list.forEach(item => {
+            const m = item.match(/^(\d+\.\d+)\s/);
+            if (!m || usedCodes.has(m[1])) {
+                hasCollisionOrMissing = true;
+            } else {
+                usedCodes.add(m[1]);
+            }
+        });
+
+        if (hasCollisionOrMissing) {
+            merged[lvl] = list.map((item, idx) => {
+                const clean = item.replace(/^\d+\.\d+\s*/, '').replace(/^[\s–\-*•]+/, '').trim();
+                return `${prefix}.${idx + 1} ${clean}`;
+            });
+        }
     });
 
     return Object.keys(merged).length > 0 ? merged : null;
