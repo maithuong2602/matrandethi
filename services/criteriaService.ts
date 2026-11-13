@@ -1589,13 +1589,17 @@ export const isQuestionCriteriaValidForLesson = (
             }
         }
     } else {
-        // Nếu câu hỏi không ghi mã tiêu chí cụ thể, kiểm tra mức độ nhận thức (qLvl) của câu hỏi có YCCĐ nào trong bài học không
-        const hasLevelInLesson =
-            (allActiveByLevel[qLvl] && allActiveByLevel[qLvl].length > 0) ||
-            (qLvl === 'VD' && allActiveByLevel['VDC'] && allActiveByLevel['VDC'].length > 0) ||
-            (qLvl === 'VDC' && allActiveByLevel['VD'] && allActiveByLevel['VD'].length > 0);
-        if (!hasLevelInLesson) {
-            return false;
+        // Nếu câu hỏi không ghi mã tiêu chí cụ thể ("-- Mặc định (Theo bài học) --"),
+        // chỉ chặn khi người dùng đã xóa toàn bộ YCCĐ ở mức độ nhận thức đó của bài học
+        const hasDeletedInLevel = Array.from(deletedCodes).some(dc => dc.startsWith(`${qLvl}:`));
+        if (hasDeletedInLevel) {
+            const hasLevelInLesson =
+                (allActiveByLevel[qLvl] && allActiveByLevel[qLvl].length > 0) ||
+                (qLvl === 'VD' && allActiveByLevel['VDC'] && allActiveByLevel['VDC'].length > 0) ||
+                (qLvl === 'VDC' && allActiveByLevel['VD'] && allActiveByLevel['VD'].length > 0);
+            if (!hasLevelInLesson) {
+                return false;
+            }
         }
     }
 

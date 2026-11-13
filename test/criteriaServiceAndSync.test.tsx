@@ -262,4 +262,109 @@ describe('Criteria Service & Matrix Synchronization', () => {
         expect(totalSpecQuestions).toBe(totalMatrixQuestions);
         expect(totalMatrixQuestions).toBe(31); // 28 câu TN + 3 câu TL = 31 câu
     });
+
+    it('allocates exact 3-4-3 (MC - TF - Essay) and 4-3-3 (NB - TH - VD) ratios on 7-row Grade 8 Final Exam when Short Answer is disabled', () => {
+        const mockFs = {
+            name: 'Thư mục gốc',
+            type: 'folder',
+            children: [
+                {
+                    name: 'Lớp 8 - Cuối kì I (3-4-3 & 4-3-3)',
+                    type: 'folder',
+                    children: [],
+                    matrixData: {
+                        matrixFormat: 'new_4part',
+                        newPointsConfig: {
+                            mc: 0.25,
+                            tf: 0.25,
+                            sa: 0.25,
+                            essay: 1.0,
+                            useShortAnswer: false
+                        },
+                        matrix: {
+                            rows: [
+                                ['1', 'Chủ đề A', 'Sơ lược về lịch sử phát triển máy tính', 'Bài 1: Lược sử công cụ tính toán', '2', '', '', '', '', '', '', '', '', '14.3', '2'],
+                                ['2', 'Chủ đề C', '1. Đặc điểm của thông tin trong môi trường số', 'Bài 2: Thông tin trong môi trường số', '2', '', '', '', '', '', '', '', '', '14.3', '2'],
+                                ['3', 'Chủ đề C', '2. Thông tin với giải quyết vấn đề', 'Bài 3: Thực hành: Khai thác thông tin số', '2', '', '', '', '', '', '', '', '', '14.3', '2'],
+                                ['4', 'Chủ đề D', 'Đạo đức và văn hoá trong sử dụng công nghệ kĩ thuật số', 'Bài 4: Đạo đức và văn hóa trong sử dụng công nghệ kĩ thuật số', '2', '', '', '', '', '', '', '', '', '14.3', '0'],
+                                ['5', 'Chủ đề E', '1. Xử lí và trực quan hoá dữ liệu bằng bảng tính điện tử', 'Bài 5: Sử dụng bảng tính giải quyết bài toán thực tế', '2', '', '', '', '', '', '', '', '', '14.3', '0'],
+                                ['6', 'Chủ đề E', '1. Xử lí và trực quan hoá dữ liệu bằng bảng tính điện tử', 'Bài 6: Sắp xếp và lọc dữ liệu', '2', '', '', '', '', '', '', '', '', '14.3', '0'],
+                                ['7', 'Chủ đề E', '1. Xử lí và trực quan hoá dữ liệu bằng bảng tính điện tử', 'Bài 7: Trình bày dữ liệu bằng biểu đồ', '2', '', '', '', '', '', '', '', '', '14.3', '0']
+                            ]
+                        },
+                        specifications: {
+                            rows: [
+                                ['1', 'Chủ đề A', 'Sơ lược về lịch sử phát triển máy tính', 'Bài 1: Lược sử công cụ tính toán', '', '0-0', '0-0', '0-0', '0-0'],
+                                ['2', 'Chủ đề C', '1. Đặc điểm của thông tin trong môi trường số', 'Bài 2: Thông tin trong môi trường số', '', '0-0', '0-0', '0-0', '0-0'],
+                                ['3', 'Chủ đề C', '2. Thông tin với giải quyết vấn đề', 'Bài 3: Thực hành: Khai thác thông tin số', '', '0-0', '0-0', '0-0', '0-0'],
+                                ['4', 'Chủ đề D', 'Đạo đức và văn hoá trong sử dụng công nghệ kĩ thuật số', 'Bài 4: Đạo đức và văn hóa trong sử dụng công nghệ kĩ thuật số', '', '0-0', '0-0', '0-0', '0-0'],
+                                ['5', 'Chủ đề E', '1. Xử lí và trực quan hoá dữ liệu bằng bảng tính điện tử', 'Bài 5: Sử dụng bảng tính giải quyết bài toán thực tế', '', '0-0', '0-0', '0-0', '0-0'],
+                                ['6', 'Chủ đề E', '1. Xử lí và trực quan hoá dữ liệu bằng bảng tính điện tử', 'Bài 6: Sắp xếp và lọc dữ liệu', '', '0-0', '0-0', '0-0', '0-0'],
+                                ['7', 'Chủ đề E', '1. Xử lí và trực quan hoá dữ liệu bằng bảng tính điện tử', 'Bài 7: Trình bày dữ liệu bằng biểu đồ', '', '0-0', '0-0', '0-0', '0-0']
+                            ]
+                        },
+                        availableCounts: []
+                    }
+                }
+            ]
+        };
+        localStorage.setItem('matrixFileSystem', JSON.stringify(mockFs));
+
+        render(<MatrixBuilder />);
+
+        const folderItem = screen.getByText('Lớp 8 - Cuối kì I (3-4-3 & 4-3-3)');
+        fireEvent.click(folderItem);
+
+        const distBtn = screen.getByText('Phân bổ');
+        fireEvent.click(distBtn);
+
+        const savedFs = JSON.parse(localStorage.getItem('matrixFileSystem') || '{}');
+        const mData = savedFs.children[0].matrixData;
+        const rows = mData.matrix.rows;
+        const nfRows = mData.newFormatRows;
+
+        let totalMC = 0, totalTF = 0, totalSA = 0, totalEssay = 0;
+        let totalNB = 0, totalTH = 0, totalVD = 0;
+
+        for (let i = 0; i < rows.length; i++) {
+            const nf = nfRows[i];
+            const rowMC = (nf.mc.B.count || 0) + (nf.mc.H.count || 0) + (nf.mc.VD.count || 0);
+            const rowTF = (nf.tf.B.count || 0) + (nf.tf.H.count || 0) + (nf.tf.VD.count || 0);
+            const rowSA = (nf.sa.B.count || 0) + (nf.sa.H.count || 0) + (nf.sa.VD.count || 0);
+            const rowEssay = (nf.essay.B.count || 0) + (nf.essay.H.count || 0) + (nf.essay.VD.count || 0);
+
+            totalMC += rowMC;
+            totalTF += rowTF;
+            totalSA += rowSA;
+            totalEssay += rowEssay;
+
+            totalNB += (nf.mc.B.count || 0) + (nf.tf.B.count || 0) + (nf.sa.B.count || 0) + (nf.essay.B.count || 0);
+            totalTH += (nf.mc.H.count || 0) + (nf.tf.H.count || 0) + (nf.sa.H.count || 0) + (nf.essay.H.count || 0);
+            totalVD += (nf.mc.VD.count || 0) + (nf.tf.VD.count || 0) + (nf.sa.VD.count || 0) + (nf.essay.VD.count || 0);
+
+            // Mọi bài mới (Bài 4..Bài 7) đều phải có câu TNKQ (tỷ lệ điểm từ 15% - 17,5%, không bài nào bị rớt xuống 10%)
+            if (i >= 3) {
+                expect(rowMC + rowTF).toBeGreaterThanOrEqual(2);
+                expect(parseFloat(rows[i][13])).toBeGreaterThanOrEqual(15.0);
+                expect(parseFloat(rows[i][13])).toBeLessThanOrEqual(17.5);
+            }
+        }
+
+        // 1. Kiểm tra tỷ lệ loại câu hỏi 3 - 4 - 3:
+        // - Trắc nghiệm nhiều lựa chọn: 12 câu = 3,0 điểm (30%)
+        // - Đúng – Sai: 16 ý = 4,0 điểm (40%)
+        // - Tự luận: 3 câu = 3,0 điểm (30%)
+        expect(totalMC).toBe(12);
+        expect(totalTF).toBe(16);
+        expect(totalSA).toBe(0);
+        expect(totalEssay).toBe(3);
+
+        // 2. Kiểm tra tỷ lệ mức độ nhận thức 4 - 3 - 3:
+        // - Nhận biết (NB): 16 câu = 4,0 điểm (40%)
+        // - Thông hiểu (TH): 12 câu = 3,0 điểm (30%)
+        // - Vận dụng (VD): 3 câu = 3,0 điểm (30%)
+        expect(totalNB).toBe(16);
+        expect(totalTH).toBe(12);
+        expect(totalVD).toBe(3);
+    });
 });

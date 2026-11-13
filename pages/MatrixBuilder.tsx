@@ -210,28 +210,19 @@ const MatrixBuilder: React.FC = () => {
             const isFinal = currentFolderName.includes('cuối kì') || currentFolderName.includes('cuoi ki');
             
             if (isMidTerm) {
-                // Mid-term: Just check global VDC
-                if (countVDC > 0) recommendedRatio = '40-30-20-10';
-                else recommendedRatio = (countNB > countTH) ? '40-30-30' : '30-40-30';
+                // Chuẩn CV 7991: Mặc định tỷ lệ nhận thức luôn ưu tiên 4-3-3 (40% NB - 30% TH - 30% VD)
+                recommendedRatio = countVDC > 0 ? '40-30-20-10' : '40-30-30';
             } else if (isFinal) {
-                // Final: Only use 4 levels if NEW content has VDC
-                if (countVDC_New > 0) {
-                    recommendedRatio = '40-30-20-10';
-                } else {
-                    // Even if old content has VDC, we shouldn't test VDC again in Final
-                    recommendedRatio = (countNB > countTH) ? '40-30-30' : '30-40-30';
-                }
+                recommendedRatio = countVDC_New > 0 ? '40-30-20-10' : '40-30-30';
             } else {
-                // Default fallback
-                if (countVDC > 0) recommendedRatio = '40-30-20-10';
-                else recommendedRatio = (countNB > countTH) ? '40-30-30' : '30-40-30';
+                recommendedRatio = countVDC > 0 ? '40-30-20-10' : '40-30-30';
             }
 
             setRatioOption(recommendedRatio);
             setIsSmartRatioApplied(true);
             setTimeout(() => setIsSmartRatioApplied(false), 3000); 
         }
-    }, [currentPath, fileSystem]);
+    }, [currentPath]);
 
     // --- Helpers ---
     const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -635,20 +626,18 @@ const MatrixBuilder: React.FC = () => {
         }
 
         // --- 5. STEP 2: DISTRIBUTE MULTIPLE CHOICE (TN) ---
-        // Phân bổ theo đúng tỷ lệ targetScore của từng bài (Largest Gap / Quota Method),
-        // đảm bảo mỗi bài có cùng số tiết & trạng thái đã KT nhận số câu đồng đều sát gợi ý nhất!
-        let currentNB = 0;
-        let currentTH = 0;
-
-        // Xác định hạn mức điểm TN tối đa cho từng bài: max(0, targetScore - điểm Tự luận đã nhận)
+        // Pha 2A: Phân bổ tổng số câu TN (allocTN) cho từng bài theo đúng tỷ lệ targetScore (Largest Gap / Quota Method),
+        // đảm bảo bài đã kiểm tra <= 35% và mọi bài học đều nhận đúng tỷ lệ phần trăm điểm mục tiêu.
         rows.forEach((r: any) => {
+            r.allocTN = 0;
             r.tnTargetScore = Math.max(0, r.targetScore - r.currentScore);
             r.tnTargetQuestions = r.tnTargetScore / SCORE_TN;
         });
 
         const totalTargetTN = targetNB_TN + targetTH_TN;
+        let allocatedTN = 0;
         let safetyLoop = 0;
-        while ((currentNB + currentTH) < totalTargetTN && safetyLoop < 5000) {
+        while (allocatedTN < totalTargetTN && safetyLoop < 5000) {
             safetyLoop++;
 
             // Tính tổng điểm hiện tại của cụm bài học đã kiểm tra (không được vượt quá LIMIT_OLD_SCORE = 3.5đ = 35%)
@@ -663,16 +652,12 @@ const MatrixBuilder: React.FC = () => {
             // Chọn bài đang thiếu hụt nhiều nhất so với targetScore và đảm bảo tổng điểm bài đã KT <= 35%
             let rowCandidates = rows.filter((r: any) => {
                 if (r.soTiet <= 0) return false;
-                if (!r.hasNBSpec && !r.hasTHSpec) return false;
                 if (hasExaminedReduction && r.soTietExamined > 0) {
                     const addedOldScore = r.isOldLesson ? SCORE_TN : SCORE_TN * (r.soTietExamined / r.soTiet);
                     if (currentTotalOldScore + addedOldScore > LIMIT_OLD_SCORE + 1e-6) return false;
                 }
                 return true;
             });
-            if (rowCandidates.length === 0) {
-                rowCandidates = rows.filter((r: any) => r.soTiet > 0 && (r.hasNBSpec || r.hasTHSpec));
-            }
             if (rowCandidates.length === 0) {
                 rowCandidates = rows.filter((r: any) => r.soTiet > 0);
             }
@@ -683,73 +668,105 @@ const MatrixBuilder: React.FC = () => {
                 const bGap = b.targetScore - b.currentScore;
                 if (Math.abs(aGap - bGap) > 0.01) return bGap - aGap;
 
-                // Nếu cùng độ lệch điểm, ưu tiên bài có ít câu hơn để chia đều tuyệt đối (VD: 5 câu - 5 câu - 6 câu thay vì 7 - 6 - 1)
-                const aTotal = a.allocNB + a.allocTH + a.allocVD + a.allocVDC;
-                const bTotal = b.allocNB + b.allocTH + b.allocVD + b.allocVDC;
+                // Nếu cùng độ lệch điểm, ưu tiên bài có ít câu hơn để chia đều tuyệt đối
+                const aTotal = (a.allocTN || 0) + a.allocVD + a.allocVDC;
+                const bTotal = (b.allocTN || 0) + b.allocVD + b.allocVDC;
                 if (aTotal !== bTotal) return aTotal - bTotal;
 
                 return a.idx - b.idx;
             });
 
             const best = rowCandidates[0];
+            best.allocTN = (best.allocTN || 0) + 1;
+            allocatedTN++;
+            best.currentScore = best.allocTN * SCORE_TN + (best.allocVD + best.allocVDC) * SCORE_TL;
+        }
 
-            // Quyết định gán câu hỏi này vào mức Biết (NB) hay Hiểu (TH) cho bài `best`
-            // Chỉ gán vào mức độ thực sự tồn tại trong YCCĐ của bài đó (không tự sinh mức không tồn tại)
-            let chosenLevel: 'NB' | 'TH' = 'NB';
-            if (best.hasTHSpec && !best.hasNBSpec) {
-                chosenLevel = 'TH';
-            } else if (best.hasNBSpec && !best.hasTHSpec) {
-                chosenLevel = 'NB';
-            } else if (currentNB < targetNB_TN && currentTH < targetTH_TN) {
-                // Tính số câu TH cần giữ lại cho các bài chỉ có mức Thông hiểu (TH-only)
-                const thNeededByThOnlyRows = rows
-                    .filter((r: any) => r.idx !== best.idx && r.hasTHSpec && !r.hasNBSpec)
-                    .reduce((sum: number, r: any) => {
-                        const remQ = Math.max(0, Math.ceil((r.targetScore - r.currentScore - 0.05) / SCORE_TN));
-                        return sum + remQ;
-                    }, 0);
-                const nbNeededByNbOnlyRows = rows
-                    .filter((r: any) => r.idx !== best.idx && r.hasNBSpec && !r.hasTHSpec)
-                    .reduce((sum: number, r: any) => {
-                        const remQ = Math.max(0, Math.ceil((r.targetScore - r.currentScore - 0.05) / SCORE_TN));
-                        return sum + remQ;
-                    }, 0);
-                const freeTH = Math.max(0, (targetTH_TN - currentTH) - thNeededByThOnlyRows);
-                const freeNB = Math.max(0, (targetNB_TN - currentNB) - nbNeededByNbOnlyRows);
+        // Pha 2B: Tách số câu TN của từng bài (r.allocTN) thành mức Biết (allocNB) và Hiểu (allocTH)
+        // sao cho tổng toàn đề đạt chính xác tuyệt đối tỷ lệ targetNB_TN : targetTH_TN
+        // (VD: chuẩn 4-3-3 => 16 câu Biết = 4,0đ (40%) - 12 câu Hiểu = 3,0đ (30%) - 3 câu Vận dụng = 3,0đ (30%))
+        let remNB = targetNB_TN;
+        let remTH = targetTH_TN;
 
-                if (freeTH <= 0) {
-                    chosenLevel = 'NB';
-                } else if (freeNB <= 0) {
-                    chosenLevel = 'TH';
+        rows.forEach((r: any) => {
+            r.allocNB = 0;
+            r.allocTH = 0;
+            r.remRowTN = r.allocTN || 0;
+        });
+
+        // Bước 2B.1: Ưu tiên các bài chỉ có mức Nhận biết (hasNBSpec && !hasTHSpec) nhận câu NB trước
+        rows.forEach((r: any) => {
+            if (r.remRowTN > 0 && r.hasNBSpec && !r.hasTHSpec && remNB > 0) {
+                const take = Math.min(r.remRowTN, remNB);
+                r.allocNB += take;
+                r.remRowTN -= take;
+                remNB -= take;
+            }
+        });
+
+        // Bước 2B.2: Ưu tiên bài Thực hành chỉ có mức Thông hiểu (hasTHSpec && !hasNBSpec) nhận câu TH trước,
+        // hoặc mọi bài (hasTHSpec && !hasNBSpec) nếu tổng slot còn lại của các bài khác vẫn đủ chứa hết remNB
+        const totalOtherRemTN = rows
+            .filter((r: any) => !(r.hasTHSpec && !r.hasNBSpec))
+            .reduce((s: number, r: any) => s + r.remRowTN, 0);
+
+        rows.forEach((r: any) => {
+            if (r.remRowTN > 0 && r.hasTHSpec && !r.hasNBSpec && remTH > 0) {
+                const rowLessonStr = String(data.matrix.rows[r.idx]?.[3] || '');
+                const isPracticeLesson = /thực hành/i.test(rowLessonStr);
+                if (isPracticeLesson || totalOtherRemTN >= remNB) {
+                    const take = Math.min(r.remRowTN, remTH);
+                    r.allocTH += take;
+                    r.remRowTN -= take;
+                    remTH -= take;
+                }
+            }
+        });
+
+        // Bước 2B.3: Phân bổ phần câu TN còn lại (remRowTN > 0) theo tỷ lệ chuẩn giữa remNB và remTH
+        // đảm bảo tổng toàn đề khớp tuyệt đối targetNB_TN : targetTH_TN (4-3-3)
+        rows.forEach((r: any) => {
+            while (r.remRowTN > 0 && (remNB > 0 || remTH > 0)) {
+                if (remTH <= 0) {
+                    r.allocNB++;
+                    remNB--;
+                } else if (remNB <= 0) {
+                    r.allocTH++;
+                    remTH--;
                 } else {
-                    const desiredRowNBRatio = freeNB / (freeNB + freeTH);
-                    const nextTN = best.allocNB + best.allocTH + 1;
-                    const ratioIfNB = (best.allocNB + 1) / nextTN;
-                    const ratioIfTH = best.allocNB / nextTN;
-                    const diffIfNB = Math.abs(ratioIfNB - desiredRowNBRatio);
-                    const diffIfTH = Math.abs(ratioIfTH - desiredRowNBRatio);
+                    const desiredNBRatio = remNB / (remNB + remTH);
+                    const nextRowTN = r.allocNB + r.allocTH + 1;
+                    const ratioIfNB = (r.allocNB + 1) / nextRowTN;
+                    const ratioIfTH = r.allocNB / nextRowTN;
+                    const diffIfNB = Math.abs(ratioIfNB - desiredNBRatio);
+                    const diffIfTH = Math.abs(ratioIfTH - desiredNBRatio);
 
                     if (Math.abs(diffIfNB - diffIfTH) > 0.01) {
-                        chosenLevel = diffIfNB < diffIfTH ? 'NB' : 'TH';
+                        if (diffIfNB < diffIfTH) {
+                            r.allocNB++;
+                            remNB--;
+                        } else {
+                            r.allocTH++;
+                            remTH--;
+                        }
+                    } else if (r.hasTHSpec && !r.hasNBSpec) {
+                        r.allocTH++;
+                        remTH--;
+                    } else if (r.hasNBSpec && !r.hasTHSpec) {
+                        r.allocNB++;
+                        remNB--;
+                    } else if (remNB >= remTH) {
+                        r.allocNB++;
+                        remNB--;
                     } else {
-                        chosenLevel = freeNB >= freeTH ? 'NB' : 'TH';
+                        r.allocTH++;
+                        remTH--;
                     }
                 }
-            } else if (currentNB < targetNB_TN) {
-                chosenLevel = 'NB';
-            } else {
-                chosenLevel = 'TH';
+                r.remRowTN--;
             }
-
-            if (chosenLevel === 'NB') {
-                best.allocNB++;
-                currentNB++;
-            } else {
-                best.allocTH++;
-                currentTH++;
-            }
-            updateRowScore(best);
-        }
+            updateRowScore(r);
+        });
 
         // --- 6. APPLY TO DATA OBJECT (BOTH CLASSIC & NEW 4-PART FORMAT) ---
         if (!data.newFormatRows) data.newFormatRows = {};
