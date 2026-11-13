@@ -1295,11 +1295,12 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
         let req = String(specRow?.[4] || '');
         let yccdSections = parseYccdHtml(req);
 
+        const mainTopic = String(specRow?.[1] || mRow?.[1] || '');
+        const subTopic = String(specRow?.[2] || mRow?.[2] || '');
+        const lessonName = String(specRow?.[3] || mRow?.[3] || '');
+
         // Tự động phục hồi YCCĐ từ kho tiêu chuẩn nếu ô đặc tả từng bị rỗng do lỗi dữ liệu cũ
         if (yccdSections.length === 0) {
-            const mainTopic = String(specRow?.[1] || mRow?.[1] || '');
-            const subTopic = String(specRow?.[2] || mRow?.[2] || '');
-            const lessonName = String(specRow?.[3] || mRow?.[3] || '');
             const fallbackReq = getRequirementsHtml(examName || '', mainTopic, subTopic, lessonName);
             if (fallbackReq) {
                 req = fallbackReq;
@@ -1353,6 +1354,29 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                 });
             });
         });
+
+        // Nếu mức độ nào có số câu > 0 (levelQuotas[lvl] > 0) nhưng chưa có mục YCCĐ trong grouped[lvl],
+        // tự động lấy bổ sung từ YCCĐ chuẩn của bài học để không bao giờ hiển thị dòng "..." rỗng
+        if ((['B', 'H', 'VD'] as const).some(k => levelQuotas[k] > 0 && grouped[k].items.length === 0)) {
+            const fallbackReq = getRequirementsHtml(examName || '', mainTopic, subTopic, lessonName);
+            if (fallbackReq) {
+                const fallbackSections = parseYccdHtml(fallbackReq);
+                fallbackSections.forEach((section, fIdx) => {
+                    const { levelKey, displayTitle } = mapTitleToNewLevel(section.levelTitle);
+                    if (levelQuotas[levelKey] > 0 && grouped[levelKey].items.length === 0) {
+                        grouped[levelKey].rawTitle = section.levelTitle || displayTitle;
+                        section.items.forEach((it, iIdx) => {
+                            grouped[levelKey].items.push({
+                                ...it,
+                                checked: true,
+                                sectionIdx: yccdSections.length + fIdx,
+                                itemIdx: iIdx
+                            });
+                        });
+                    }
+                });
+            }
+        }
 
         if (showAllSpecCriteria) {
             return levelDefs.map(d => grouped[d.levelKey]);

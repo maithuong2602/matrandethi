@@ -529,4 +529,210 @@ describe('Criteria Service & Matrix Synchronization', () => {
         expect(specRows[2][4]).not.toMatch(/Xác định được lợi ích của thông tin tìm được/i);
         expect(specRows[2][4]).not.toMatch(/Nhận biết/i);
     });
+
+    it('guarantees 3-4-3 (MC-TF-TL) and 4-3-3 (16 NB - 12 TH - 3 VD) in Final Exam even when Bài 5 & Bài 6 JSON pools lack explicit NB questions', () => {
+        const mockFs = {
+            name: 'Thư mục gốc',
+            type: 'folder',
+            children: [
+                {
+                    name: 'Lớp 8 - Cuối kì I',
+                    type: 'folder',
+                    children: [
+                        {
+                            name: 'Sơ lược về lịch sử phát triển máy tính',
+                            type: 'folder',
+                            children: [
+                                {
+                                    name: 'Bài 1.json',
+                                    type: 'file',
+                                    content: {
+                                        info: { grade: '8', lesson: 'Bài 1: Lược sử công cụ tính toán', soTiet: 2 },
+                                        questions: [
+                                            { id: 'b1-nb', level: 'NB', category: 'mc', criteria: '1.1 Trình bày được sơ lược lịch sử phát triển máy tính.' }
+                                        ]
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            name: '1. Đặc điểm của thông tin trong môi trường số',
+                            type: 'folder',
+                            children: [
+                                {
+                                    name: 'Bài 2.json',
+                                    type: 'file',
+                                    content: {
+                                        info: { grade: '8', lesson: 'Bài 2: Thông tin trong môi trường số', soTiet: 2 },
+                                        questions: [
+                                            { id: 'b2-nb', level: 'NB', category: 'mc', criteria: '1.1 Nêu được các đặc điểm của thông tin số' }
+                                        ]
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            name: '2. Thông tin với giải quyết vấn đề',
+                            type: 'folder',
+                            children: [
+                                {
+                                    name: 'Bài 3.json',
+                                    type: 'file',
+                                    content: {
+                                        info: { grade: '8', lesson: 'Bài 3: Thực hành: Khai thác thông tin số', soTiet: 2 },
+                                        questions: [
+                                            { id: 'b3-th', level: 'TH', category: 'mc', criteria: '2.1 Nêu ví dụ minh hoạ sử dụng công cụ tìm kiếm' }
+                                        ]
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            name: 'Đạo đức và văn hoá trong sử dụng công nghệ kĩ thuật số',
+                            type: 'folder',
+                            children: [
+                                {
+                                    name: 'Bài 4.json',
+                                    type: 'file',
+                                    content: {
+                                        info: { grade: '8', lesson: 'Bài 4: Đạo đức và văn hóa trong sử dụng công nghệ kĩ thuật số', soTiet: 3 },
+                                        questions: [
+                                            { id: 'b4-th', level: 'TH', category: 'mc', criteria: '2.1 Nhận biết và giải thích được một số biểu hiện vi phạm đạo đức' },
+                                            { id: 'b4-vd', level: 'VD', category: 'essay', criteria: '3.1 Khi tạo sản phẩm số luôn thể hiện tính đạo đức' }
+                                        ]
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            name: '1. Xử lí và trực quan hoá dữ liệu bằng bảng tính điện tử',
+                            type: 'folder',
+                            children: [
+                                {
+                                    name: 'Bài 5.json',
+                                    type: 'file',
+                                    content: {
+                                        info: { grade: '8', lesson: 'Bài 5: Sử dụng bảng tính giải quyết bài toán thực tế', soTiet: 3 },
+                                        questions: [
+                                            { id: 'b5-th', level: 'TH', category: 'mc', criteria: '2.1 Giải thích sự khác nhau giữa địa chỉ tương đối và địa chỉ tuyệt đối' },
+                                            { id: 'b5-vd', level: 'VD', category: 'essay', criteria: '3.2 Sử dụng được phần mềm bảng tính trợ giúp giải quyết bài toán thực tế' }
+                                        ]
+                                    }
+                                },
+                                {
+                                    name: 'Bài 6.json',
+                                    type: 'file',
+                                    content: {
+                                        info: { grade: '8', lesson: 'Bài 6: Sắp xếp và lọc dữ liệu', soTiet: 3 },
+                                        questions: [
+                                            { id: 'b6-th', level: 'TH', category: 'mc', criteria: '2.1 Nêu được một số tình huống thực tế cần sử dụng chức năng lọc và sắp xếp dữ liệu' }
+                                        ]
+                                    }
+                                },
+                                {
+                                    name: 'Bài 7.json',
+                                    type: 'file',
+                                    content: {
+                                        info: { grade: '8', lesson: 'Bài 7: Trình bày dữ liệu bằng biểu đồ', soTiet: 2 },
+                                        questions: [
+                                            { id: 'b7-vd', level: 'VD', category: 'essay', criteria: '3.4 Thực hiện được thao tác tạo biểu đồ.' }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    matrixData: {
+                        matrixFormat: 'new_4part',
+                        newPointsConfig: { mc: 3.0, tf: 4.0, sa: 0, essay: 3.0, useShortAnswer: false },
+                        matrix: {
+                            rows: [
+                                ['1', 'Chủ đề A', 'Sơ lược về lịch sử phát triển máy tính', 'Bài 1: Lược sử công cụ tính toán', '2', '', '', '', '', '', '', '', '', '12.5', '2'],
+                                ['2', 'Chủ đề C', '1. Đặc điểm của thông tin trong môi trường số', 'Bài 2: Thông tin trong môi trường số', '2', '', '', '', '', '', '', '', '', '12.5', '2'],
+                                ['3', 'Chủ đề C', '2. Thông tin với giải quyết vấn đề', 'Bài 3: Thực hành: Khai thác thông tin số', '2', '', '', '', '', '', '', '', '', '10.0', '2'],
+                                ['4', 'Chủ đề D', 'Đạo đức và văn hoá trong sử dụng công nghệ kĩ thuật số', 'Bài 4: Đạo đức và văn hóa trong sử dụng công nghệ kĩ thuật số', '3', '', '', '', '', '', '', '', '', '20.0', '0'],
+                                ['5', 'Chủ đề E', '1. Xử lí và trực quan hoá dữ liệu bằng bảng tính điện tử', 'Bài 5: Sử dụng bảng tính giải quyết bài toán thực tế', '3', '', '', '', '', '', '', '', '', '17.5', '0'],
+                                ['6', 'Chủ đề E', '1. Xử lí và trực quan hoá dữ liệu bằng bảng tính điện tử', 'Bài 6: Sắp xếp và lọc dữ liệu', '3', '', '', '', '', '', '', '', '', '17.5', '0'],
+                                ['7', 'Chủ đề E', '1. Xử lí và trực quan hoá dữ liệu bằng bảng tính điện tử', 'Bài 7: Trình bày dữ liệu bằng biểu đồ', '2', '', '', '', '', '', '', '', '', '10.0', '0']
+                            ]
+                        },
+                        specifications: {
+                            rows: [
+                                ['1', 'Chủ đề A', 'Sơ lược về lịch sử phát triển máy tính', 'Bài 1: Lược sử công cụ tính toán', '', '0-0', '0-0', '0-0', '0-0'],
+                                ['2', 'Chủ đề C', '1. Đặc điểm của thông tin trong môi trường số', 'Bài 2: Thông tin trong môi trường số', '', '0-0', '0-0', '0-0', '0-0'],
+                                ['3', 'Chủ đề C', '2. Thông tin với giải quyết vấn đề', 'Bài 3: Thực hành: Khai thác thông tin số', '', '0-0', '0-0', '0-0', '0-0'],
+                                ['4', 'Chủ đề D', 'Đạo đức và văn hoá trong sử dụng công nghệ kĩ thuật số', 'Bài 4: Đạo đức và văn hóa trong sử dụng công nghệ kĩ thuật số', '', '0-0', '0-0', '0-0', '0-0'],
+                                ['5', 'Chủ đề E', '1. Xử lí và trực quan hoá dữ liệu bằng bảng tính điện tử', 'Bài 5: Sử dụng bảng tính giải quyết bài toán thực tế', '', '0-0', '0-0', '0-0', '0-0'],
+                                ['6', 'Chủ đề E', '1. Xử lí và trực quan hoá dữ liệu bằng bảng tính điện tử', 'Bài 6: Sắp xếp và lọc dữ liệu', '', '0-0', '0-0', '0-0', '0-0'],
+                                ['7', 'Chủ đề E', '1. Xử lí và trực quan hoá dữ liệu bằng bảng tính điện tử', 'Bài 7: Trình bày dữ liệu bằng biểu đồ', '', '0-0', '0-0', '0-0', '0-0']
+                            ]
+                        },
+                        availableCounts: []
+                    }
+                }
+            ]
+        };
+        localStorage.setItem('matrixFileSystem', JSON.stringify(mockFs));
+
+        render(<MatrixBuilder />);
+
+        const folderItem = screen.getByText('Lớp 8 - Cuối kì I');
+        fireEvent.click(folderItem);
+
+        const distBtn = screen.getByText('Phân bổ');
+        fireEvent.click(distBtn);
+
+        const savedFs = JSON.parse(localStorage.getItem('matrixFileSystem') || '{}');
+        const mData = savedFs.children[0].matrixData;
+        const nfRows = mData.newFormatRows;
+        const specRows = mData.specifications.rows;
+
+        let totalMC = 0, totalTF = 0, totalTL = 0;
+        let totalB = 0, totalH = 0, totalVD = 0;
+        let oldQuestions = 0;
+
+        for (let i = 0; i < 7; i++) {
+            const r = nfRows[i];
+            const rowMC = (r.mc.B.count || 0) + (r.mc.H.count || 0) + (r.mc.VD.count || 0);
+            const rowTF = (r.tf.B.count || 0) + (r.tf.H.count || 0) + (r.tf.VD.count || 0);
+            const rowTL = (r.essay.B.count || 0) + (r.essay.H.count || 0) + (r.essay.VD.count || 0);
+            const rowB = (r.mc.B.count || 0) + (r.tf.B.count || 0) + (r.sa.B.count || 0) + (r.essay.B.count || 0);
+            const rowH = (r.mc.H.count || 0) + (r.tf.H.count || 0) + (r.sa.H.count || 0) + (r.essay.H.count || 0);
+            const rowVD = (r.mc.VD.count || 0) + (r.tf.VD.count || 0) + (r.sa.VD.count || 0) + (r.essay.VD.count || 0);
+
+            totalMC += rowMC;
+            totalTF += rowTF;
+            totalTL += rowTL;
+            totalB += rowB;
+            totalH += rowH;
+            totalVD += rowVD;
+
+            if (i < 3) {
+                oldQuestions += rowB + rowH + rowVD * 4;
+            }
+        }
+
+        // 1. Tỷ lệ 3 - 4 - 3 theo dạng câu hỏi (3,0đ MC = 12 câu; 4,0đ TF = 16 ý; 3,0đ TL = 3 câu)
+        expect(totalMC).toBe(12);
+        expect(totalTF).toBe(16);
+        expect(totalTL).toBe(3);
+
+        // 2. Tỷ lệ 4 - 3 - 3 theo mức độ nhận thức (4,0đ Biết = 16 câu; 3,0đ Hiểu = 12 câu; 3,0đ Vận dụng = 3 câu)
+        expect(totalB).toBe(16);
+        expect(totalH).toBe(12);
+        expect(totalVD).toBe(3);
+
+        // 3. Tổng bài đã kiểm tra (Bài 1, 2, 3) <= 35% (14 câu = 3,5đ)
+        expect(oldQuestions).toBeLessThanOrEqual(14);
+
+        // 4. Bài 3 và Bài 4 không có YCCĐ Nhận biết -> tuyệt đối không nhận câu Biết
+        expect((nfRows[2].mc.B.count || 0) + (nfRows[2].tf.B.count || 0)).toBe(0);
+        expect((nfRows[3].mc.B.count || 0) + (nfRows[3].tf.B.count || 0)).toBe(0);
+
+        // 5. Bài 5 và Bài 6 có YCCĐ Nhận biết và Thông hiểu -> Bản đặc tả hiển thị đầy đủ cả Nhận biết và Thông hiểu (không bị rỗng)
+        expect(specRows[4][4]).toMatch(/Nhận biết/i);
+        expect(specRows[4][4]).toMatch(/Thông hiểu/i);
+        expect(specRows[5][4]).toMatch(/Nhận biết/i);
+        expect(specRows[5][4]).toMatch(/Thông hiểu/i);
+    });
 });

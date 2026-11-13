@@ -673,20 +673,19 @@ const MatrixBuilder: React.FC = () => {
                 : null;
 
             const freshSpecHtml = getRequirementsHtml(gradeNum || currentDir.name, String(row[1] || ''), rowSubTopic, rowLesson, customStore);
-            let specHtml =
-                poolSpec?.specHtml ||
+            const baseCurriculumHtml =
                 freshSpecHtml ||
                 syncSpecHtmlWithCustomStore(String(data.specifications?.rows?.[idx]?.[4] || ''), gradeNum, rowSubTopic, rowLesson, customStore);
 
-            let hasNBSpec = poolSpec
-                ? poolSpec.hasNB
-                : /<strong[^>]*>\s*(?:\d+[\.\)]\s*)?(?:nhận biết|biết|- biết)/i.test(specHtml);
-            let hasTHSpec = poolSpec
-                ? poolSpec.hasTH
-                : /<strong[^>]*>\s*(?:\d+[\.\)]\s*)?(?:thông hiểu|hiểu|- hiểu)/i.test(specHtml);
-            let hasVDSpec = poolSpec
-                ? poolSpec.hasVD
-                : /<strong[^>]*>\s*(?:\d+[\.\)]\s*)?(?:vận dụng|- vận dụng)/i.test(specHtml);
+            const currHasNB = /<strong[^>]*>\s*(?:\d+[\.\)]\s*)?(?:nhận biết|biết|- biết)/i.test(baseCurriculumHtml);
+            const currHasTH = /<strong[^>]*>\s*(?:\d+[\.\)]\s*)?(?:thông hiểu|hiểu|- hiểu)/i.test(baseCurriculumHtml);
+            const currHasVD = /<strong[^>]*>\s*(?:\d+[\.\)]\s*)?(?:vận dụng|- vận dụng)/i.test(baseCurriculumHtml);
+
+            let specHtml = poolSpec?.specHtml || baseCurriculumHtml;
+
+            let hasNBSpec = poolSpec ? (poolSpec.hasNB && currHasNB) : currHasNB;
+            let hasTHSpec = poolSpec ? (poolSpec.hasTH && currHasTH) : currHasTH;
+            let hasVDSpec = poolSpec ? (poolSpec.hasVD && currHasVD) : currHasVD;
 
             // Nếu dòng không có mảng câu hỏi chi tiết nhưng có cấu hình availableCounts > 0,
             // cũng giới hạn mức độ YCCĐ theo đúng các mức có số lượng câu hỏi > 0 trong kho câu hỏi của dòng đó
@@ -723,6 +722,10 @@ const MatrixBuilder: React.FC = () => {
                 isOldLesson: validExamined > 0 && validNew === 0,
                 isNewLesson: validNew > 0,
                 avail: mergedAvail,
+                currHasNB,
+                currHasTH,
+                currHasVD,
+                baseCurriculumHtml,
                 hasNBSpec,
                 hasTHSpec,
                 hasVDSpec,
@@ -775,6 +778,17 @@ const MatrixBuilder: React.FC = () => {
         const tasksTL: ('VDC'|'VD')[] = [];
         for(let i=0; i<targetVDC_TL; i++) tasksTL.push('VDC');
         for(let i=0; i<targetVD_TL; i++) tasksTL.push('VD');
+
+        const eligibleVDNewCount = rows.filter(
+            (r: any) => r.soTiet > 0 && r.hasVDSpec && !(hasExaminedReduction && r.isOldLesson)
+        ).length;
+        if (eligibleVDNewCount < tasksTL.length) {
+            rows.forEach((r: any) => {
+                if (r.soTiet > 0 && !r.hasVDSpec && r.currHasVD) {
+                    r.hasVDSpec = true;
+                }
+            });
+        }
 
         for (const type of tasksTL) {
             // Ưu tiên bài học mới (chưa thi), có YCCĐ Vận dụng trong bài học và còn hạn mức điểm
@@ -834,6 +848,8 @@ const MatrixBuilder: React.FC = () => {
             r.allocTN = 0;
             r.tnTargetScore = Math.max(0, r.targetScore - r.currentScore);
             r.tnTargetQuestions = r.tnTargetScore / SCORE_TN;
+            r.canTakeNB = Boolean(r.hasNBSpec || r.currHasNB);
+            r.canTakeTH = Boolean(r.hasTHSpec || r.currHasTH);
         });
 
         const totalTargetTN = targetNB_TN + targetTH_TN;
@@ -851,12 +867,25 @@ const MatrixBuilder: React.FC = () => {
                 return sum;
             }, 0);
 
+            // Tổng số câu TN đã cấp cho nhóm bài chỉ có thể nhận TH (!canTakeNB) hoặc chỉ có thể nhận NB (!canTakeTH)
+            const currentTHOnlyTN = rows.reduce(
+                (sum: number, r: any) => sum + (!r.canTakeNB && r.canTakeTH ? (r.allocTN || 0) : 0),
+                0
+            );
+            const currentNBOnlyTN = rows.reduce(
+                (sum: number, r: any) => sum + (r.canTakeNB && !r.canTakeTH ? (r.allocTN || 0) : 0),
+                0
+            );
+
             // Chọn bài đang thiếu hụt nhiều nhất so với targetScore và đảm bảo:
-            // 1. Bài học phải có YCCĐ mức Biết hoặc Hiểu (hasNBSpec || hasTHSpec)
+            // 1. Bài học phải có YCCĐ mức Biết hoặc Hiểu (canTakeNB || canTakeTH)
             // 2. Tổng điểm bài đã KT <= 35%
+            // 3. Nhóm bài không có NB (!canTakeNB) không vượt quá targetTH_TN; nhóm bài không có TH (!canTakeTH) không vượt quá targetNB_TN
             let rowCandidates = rows.filter((r: any) => {
                 if (r.soTiet <= 0) return false;
-                if (!r.hasNBSpec && !r.hasTHSpec) return false;
+                if (!r.canTakeNB && !r.canTakeTH) return false;
+                if (!r.canTakeNB && currentTHOnlyTN >= targetTH_TN) return false;
+                if (!r.canTakeTH && currentNBOnlyTN >= targetNB_TN) return false;
                 if (hasExaminedReduction && r.soTietExamined > 0) {
                     const addedOldScore = r.isOldLesson ? SCORE_TN : SCORE_TN * (r.soTietExamined / r.soTiet);
                     if (currentTotalOldScore + addedOldScore > LIMIT_OLD_SCORE + 1e-6) return false;
@@ -864,7 +893,18 @@ const MatrixBuilder: React.FC = () => {
                 return true;
             });
             if (rowCandidates.length === 0) {
-                rowCandidates = rows.filter((r: any) => r.soTiet > 0 && (r.hasNBSpec || r.hasTHSpec));
+                rowCandidates = rows.filter((r: any) => {
+                    if (r.soTiet <= 0) return false;
+                    if (!r.canTakeNB && !r.canTakeTH) return false;
+                    if (hasExaminedReduction && r.soTietExamined > 0) {
+                        const addedOldScore = r.isOldLesson ? SCORE_TN : SCORE_TN * (r.soTietExamined / r.soTiet);
+                        if (currentTotalOldScore + addedOldScore > LIMIT_OLD_SCORE + 1e-6) return false;
+                    }
+                    return true;
+                });
+            }
+            if (rowCandidates.length === 0) {
+                rowCandidates = rows.filter((r: any) => r.soTiet > 0 && (r.canTakeNB || r.canTakeTH));
             }
             if (rowCandidates.length === 0) {
                 rowCandidates = rows.filter((r: any) => r.soTiet > 0);
@@ -888,6 +928,37 @@ const MatrixBuilder: React.FC = () => {
             best.allocTN = (best.allocTN || 0) + 1;
             allocatedTN++;
             best.currentScore = best.allocTN * SCORE_TN + (best.allocVD + best.allocVDC) * SCORE_TL;
+        }
+
+        // Đảm bảo tính khả thi toán học cho tỷ lệ 4-3-3 (targetNB_TN : targetTH_TN) trước khi bước vào Pha 2B:
+        // 1. Nếu bài học nhận allocTN > 0 nhưng kho câu hỏi chỉ có Tự luận (!hasNBSpec && !hasTHSpec), mở mức YCCĐ theo chương trình (currHasNB / currHasTH)
+        rows.forEach((r: any) => {
+            if ((r.allocTN || 0) > 0 && !r.hasNBSpec && !r.hasTHSpec) {
+                r.hasNBSpec = Boolean(r.currHasNB);
+                r.hasTHSpec = Boolean(r.currHasTH);
+            }
+        });
+
+        // 2. Nếu tổng dung lượng câu TN của các bài có hasNBSpec < targetNB_TN (ví dụ Bài 5, Bài 6 chưa có câu NB trong file JSON cũ),
+        //    mở thêm mức Nhận biết cho các bài có YCCĐ Nhận biết hợp lệ trong chương trình (currHasNB === true, tuyệt đối không mở cho Bài 3, Bài 4 không có NB)
+        const currentNBCapacity = rows.reduce((sum: number, r: any) => sum + (r.hasNBSpec ? (r.allocTN || 0) : 0), 0);
+        if (currentNBCapacity < targetNB_TN) {
+            rows.forEach((r: any) => {
+                if ((r.allocTN || 0) > 0 && !r.hasNBSpec && r.currHasNB) {
+                    r.hasNBSpec = true;
+                }
+            });
+        }
+
+        // 3. Tương tự, nếu tổng dung lượng câu TN của các bài có hasTHSpec < targetTH_TN,
+        //    mở thêm mức Thông hiểu cho các bài có YCCĐ Thông hiểu hợp lệ trong chương trình (currHasTH === true)
+        const currentTHCapacity = rows.reduce((sum: number, r: any) => sum + (r.hasTHSpec ? (r.allocTN || 0) : 0), 0);
+        if (currentTHCapacity < targetTH_TN) {
+            rows.forEach((r: any) => {
+                if ((r.allocTN || 0) > 0 && !r.hasTHSpec && r.currHasTH) {
+                    r.hasTHSpec = true;
+                }
+            });
         }
 
         // Pha 2B: Tách số câu TN của từng bài (r.allocTN) thành mức Biết (allocNB) và Hiểu (allocTH)
@@ -990,7 +1061,7 @@ const MatrixBuilder: React.FC = () => {
         // Track remaining quotas for 4-part split across rows:
         // Standard 10.0pt exam:
         // - Nhiều lựa chọn (mc): 12 câu = 3,0đ (30%) -> 8 Biết + 4 Hiểu (hoặc 6 Biết + 6 Hiểu)
-        // - "Đúng – Sai" (tf): 8 lệnh hỏi = 2,0đ (20%) -> 4 Biết + 4 Hiểu
+        // - "Đúng – Sai" (tf): 8 lệnh hỏi = 2,0đ (20%) -> 4 Biết + 4 Hiểu (hoặc 16 lệnh hỏi = 4,0đ (40%) -> 8 Biết + 8 Hiểu khi tắt Trả lời ngắn)
         // - Trả lời ngắn (sa): 8 câu = 2,0đ (20%) -> 4 Biết + 4 Hiểu
         // - Tự luận (essay): 3 câu = 3,0đ (30%) -> 3 Vận dụng
         const useShortAnswer = data.newPointsConfig?.useShortAnswer !== false;
@@ -1079,16 +1150,40 @@ const MatrixBuilder: React.FC = () => {
             data.newFormatRows[idx] = rowCfg;
 
             // Tự động đồng bộ cột Yêu cầu cần đạt trên Bản đặc tả:
-            // Đảm bảo chỉ giữ các YCCĐ thực sự có trong bài học (không tự sinh mức đã xóa hoặc không tồn tại)
-            const rawReqHtml = String(data.specifications.rows[idx]?.[4] || '');
+            // Đảm bảo mọi mức độ được phân bổ câu hỏi (quota > 0) đều có đầy đủ YCCĐ từ kho câu hỏi hoặc chương trình học của bài đó
+            let rawReqHtml = String(data.specifications.rows[idx]?.[4] || '');
+            const quotaByLevel: Record<'B' | 'H' | 'VD', number> = {
+                B: r.allocNB || 0,
+                H: r.allocTH || 0,
+                VD: totalRowVD
+            };
+
+            const currentSecs = parseYccdSections(rawReqHtml);
+            const currSecs = parseYccdSections(r.baseCurriculumHtml || '');
+            const mapSecToQuotaKey = (secTitle: string): 'B' | 'H' | 'VD' => {
+                const code = getLevelCodeFromTitle(secTitle);
+                if (code === 'NB') return 'B';
+                if (code === 'TH') return 'H';
+                return 'VD';
+            };
+
+            const finalSecs = (['B', 'H', 'VD'] as const).flatMap(qKey => {
+                const existingInCurrent = currentSecs.filter(s => mapSecToQuotaKey(s.levelTitle) === qKey && s.items.length > 0);
+                if (existingInCurrent.length > 0) {
+                    return existingInCurrent;
+                }
+                if (quotaByLevel[qKey] > 0) {
+                    return currSecs.filter(s => mapSecToQuotaKey(s.levelTitle) === qKey && s.items.length > 0);
+                }
+                return [];
+            });
+
+            if (finalSecs.length > 0) {
+                rawReqHtml = serializeYccdSections(finalSecs);
+            }
 
             if (rawReqHtml) {
                 const keptByLevel: Record<'B' | 'H' | 'VD', number> = { B: 0, H: 0, VD: 0 };
-                const quotaByLevel: Record<'B' | 'H' | 'VD', number> = {
-                    B: r.allocNB || 0,
-                    H: r.allocTH || 0,
-                    VD: totalRowVD
-                };
 
                 const updatedReqHtml = rawReqHtml.replace(
                     /<strong\b[^>]*>([\s\S]*?)<\/strong>([\s\S]*?)(?=(?:<strong\b[^>]*>|$))/gi,
