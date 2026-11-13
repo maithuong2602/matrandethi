@@ -9,6 +9,7 @@ import {
   CUSTOM_CRITERIA_STORAGE_KEY 
 } from '../services/criteriaService';
 import QuestionManager from '../pages/QuestionManager';
+import MatrixBuilder from '../pages/MatrixBuilder';
 import { MatrixData } from '../types';
 
 describe('Criteria Service & Matrix Synchronization', () => {
@@ -138,5 +139,81 @@ describe('Criteria Service & Matrix Synchronization', () => {
         expect(merged?.VD.length).toBe(2);
         expect(merged?.VD[0].startsWith('3.1 ')).toBe(true);
         expect(merged?.VD[1].startsWith('3.2 ')).toBe(true);
+    });
+
+    it('distributes questions evenly across examined lessons with equal periods instead of 7 - 6 - 1 skew', () => {
+        const mockFs = {
+            name: 'Thư mục gốc',
+            type: 'folder',
+            children: [
+                {
+                    name: 'Lớp 8 - Cuối kì I',
+                    type: 'folder',
+                    children: [
+                        { name: 'Sơ lược về lịch sử phát triển máy tính', type: 'folder', children: [] },
+                        { name: '1. Đặc điểm của thông tin trong môi trường số', type: 'folder', children: [] },
+                        { name: '2. Thông tin với giải quyết vấn đề', type: 'folder', children: [] },
+                        { name: 'Đạo đức và văn hoá trong sử dụng công nghệ kĩ thuật số', type: 'folder', children: [] },
+                        { name: '1. Xử lí và trực quan hoá dữ liệu bằng bảng tính điện tử', type: 'folder', children: [] },
+                        { name: 'Lập trình trực quan', type: 'folder', children: [] }
+                    ],
+                    matrixData: {
+                        matrixFormat: 'new_4part',
+                        matrix: {
+                            rows: [
+                                ['1', 'Chủ đề A', 'Sơ lược về lịch sử phát triển máy tính', 'Bài 1: Lược sử công cụ tính toán', '2', '', '', '', '', '', '', '', '', '16.7', '2'],
+                                ['2', 'Chủ đề C', '1. Đặc điểm của thông tin trong môi trường số', 'Bài 2: Thông tin trong môi trường số', '2', '', '', '', '', '', '', '', '', '16.7', '2'],
+                                ['3', 'Chủ đề C', '2. Thông tin với giải quyết vấn đề', 'Bài 3: Thực hành: Khai thác thông tin số', '2', '', '', '', '', '', '', '', '', '16.7', '2'],
+                                ['4', 'Chủ đề D', 'Đạo đức và văn hoá trong sử dụng công nghệ kĩ thuật số', 'Bài 4: Đạo đức và văn hóa', '2', '', '', '', '', '', '', '', '', '16.7', '0'],
+                                ['5', 'Chủ đề E', '1. Xử lí và trực quan hoá dữ liệu bằng bảng tính điện tử', 'Bài 5: Sử dụng bảng tính', '2', '', '', '', '', '', '', '', '', '16.7', '0'],
+                                ['6', 'Chủ đề F', 'Lập trình trực quan', 'Bài 12: Từ thuật toán đến chương trình', '2', '', '', '', '', '', '', '', '', '16.7', '0']
+                            ]
+                        },
+                        specifications: {
+                            rows: [
+                                ['1', 'Chủ đề A', 'Sơ lược về lịch sử phát triển máy tính', 'Bài 1: Lược sử công cụ tính toán', '', '0-0', '0-0', '0-0', '0-0'],
+                                ['2', 'Chủ đề C', '1. Đặc điểm của thông tin trong môi trường số', 'Bài 2: Thông tin trong môi trường số', '', '0-0', '0-0', '0-0', '0-0'],
+                                ['3', 'Chủ đề C', '2. Thông tin với giải quyết vấn đề', 'Bài 3: Thực hành: Khai thác thông tin số', '', '0-0', '0-0', '0-0', '0-0'],
+                                ['4', 'Chủ đề D', 'Đạo đức và văn hoá trong sử dụng công nghệ kĩ thuật số', 'Bài 4: Đạo đức và văn hóa', '', '0-0', '0-0', '0-0', '0-0'],
+                                ['5', 'Chủ đề E', '1. Xử lí và trực quan hoá dữ liệu bằng bảng tính điện tử', 'Bài 5: Sử dụng bảng tính', '', '0-0', '0-0', '0-0', '0-0'],
+                                ['6', 'Chủ đề F', 'Lập trình trực quan', 'Bài 12: Từ thuật toán đến chương trình', '', '0-0', '0-0', '0-0', '0-0']
+                            ]
+                        },
+                        // Simulate imbalanced file counts that previously caused 7 - 6 - 1 skew
+                        availableCounts: [
+                            { NB: { TN: 10, TL: 0 }, TH: { TN: 2, TL: 0 }, VD: { TN: 0, TL: 0 }, VDC: { TN: 0, TL: 0 } },
+                            { NB: { TN: 10, TL: 0 }, TH: { TN: 2, TL: 0 }, VD: { TN: 0, TL: 0 }, VDC: { TN: 0, TL: 0 } },
+                            { NB: { TN: 0, TL: 0 }, TH: { TN: 1, TL: 0 }, VD: { TN: 0, TL: 0 }, VDC: { TN: 0, TL: 0 } },
+                            { NB: { TN: 5, TL: 0 }, TH: { TN: 5, TL: 0 }, VD: { TN: 0, TL: 2 }, VDC: { TN: 0, TL: 1 } },
+                            { NB: { TN: 5, TL: 0 }, TH: { TN: 5, TL: 0 }, VD: { TN: 0, TL: 2 }, VDC: { TN: 0, TL: 1 } },
+                            { NB: { TN: 5, TL: 0 }, TH: { TN: 5, TL: 0 }, VD: { TN: 0, TL: 2 }, VDC: { TN: 0, TL: 1 } }
+                        ]
+                    }
+                }
+            ]
+        };
+        localStorage.setItem('matrixFileSystem', JSON.stringify(mockFs));
+
+        render(<MatrixBuilder />);
+
+        // Click to navigate into "Lớp 8 - Cuối kì I"
+        const folderItem = screen.getByText('Lớp 8 - Cuối kì I');
+        fireEvent.click(folderItem);
+
+        // Click "Phân bổ"
+        const distBtn = screen.getByText('Phân bổ');
+        fireEvent.click(distBtn);
+
+        const savedFs = JSON.parse(localStorage.getItem('matrixFileSystem') || '{}');
+        const rows = savedFs.children[0].matrixData.matrix.rows;
+
+        // First 3 rows (2 tiết, 2 tiết đã KT -> Gợi ý ~5 câu / 1,33đ) must each get 5 or 6 TN questions, NEVER 1!
+        for (let i = 0; i < 3; i++) {
+            const nb = parseInt(rows[i][5] || '0', 10);
+            const th = parseInt(rows[i][7] || '0', 10);
+            const totalRowQ = nb + th;
+            expect(totalRowQ).toBeGreaterThanOrEqual(5);
+            expect(totalRowQ).toBeLessThanOrEqual(6);
+        }
     });
 });

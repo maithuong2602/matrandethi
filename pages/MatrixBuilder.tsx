@@ -449,12 +449,49 @@ const MatrixBuilder: React.FC = () => {
             targetVD_TL = 3;  targetVDC_TL = 0; // 30 VD
         }
 
-        // --- 2. PREPARE ROW DATA ---
+        // --- 2. PREPARE ROW DATA & REFRESH AVAILABLE COUNTS FROM LIVE QUESTION BANK ---
+        const gradeMatch = currentDir.name.match(/\d+/);
+        const gradeNum = gradeMatch ? gradeMatch[0] : '';
+        const liveBankRes = loadQuestionBank();
+        const liveBankQuestions = (liveBankRes.data || []).filter(q => !gradeNum || !q.grade || String(q.grade) === gradeNum);
+
         const rows = data.matrix.rows.map((row: any[], idx: number) => {
             const st = parseFloat(row[4] as string) || 0;
             const examined = parseFloat(row[14] as string) || 0;
             const validExamined = Math.min(Math.max(examined, 0), st);
             const validNew = Math.max(st - validExamined, 0);
+            const rowLesson = String(row[3] || '').trim();
+            const rowSubTopic = String(row[2] || '').trim();
+
+            // Kết hợp số lượng câu có sẵn trong thư mục và trong Ngân hàng câu hỏi nội bộ
+            const baseAvail = data.availableCounts?.[idx] || { NB: { TN: 0, TL: 0 }, TH: { TN: 0, TL: 0 }, VD: { TN: 0, TL: 0 }, VDC: { TN: 0, TL: 0 } };
+            const liveCounts = { NB: { TN: 0, TL: 0 }, TH: { TN: 0, TL: 0 }, VD: { TN: 0, TL: 0 }, VDC: { TN: 0, TL: 0 } };
+            if (rowLesson || rowSubTopic) {
+                const lessonNum = rowLesson.match(/Bài\s*\d+[ab]?/i)?.[0]?.toLowerCase();
+                liveBankQuestions.forEach(q => {
+                    const qLesson = (q.lesson || '').trim();
+                    const qLessonNum = qLesson.match(/Bài\s*\d+[ab]?/i)?.[0]?.toLowerCase();
+                    const isMatch =
+                        (rowLesson && (qLesson === rowLesson || (lessonNum && qLessonNum === lessonNum))) ||
+                        (!rowLesson && rowSubTopic && qLesson.toLowerCase().includes(rowSubTopic.replace(/^\d+\.\s*/, '').toLowerCase()));
+                    if (isMatch) {
+                        const lvl = ((q.level || 'NB').toUpperCase()) as 'NB' | 'TH' | 'VD' | 'VDC';
+                        if (liveCounts[lvl]) {
+                            if (q.category === 'essay') liveCounts[lvl].TL++;
+                            else liveCounts[lvl].TN++;
+                        }
+                    }
+                });
+            }
+            const mergedAvail = {
+                NB: { TN: Math.max(baseAvail.NB?.TN || 0, liveCounts.NB.TN), TL: Math.max(baseAvail.NB?.TL || 0, liveCounts.NB.TL) },
+                TH: { TN: Math.max(baseAvail.TH?.TN || 0, liveCounts.TH.TN), TL: Math.max(baseAvail.TH?.TL || 0, liveCounts.TH.TL) },
+                VD: { TN: Math.max(baseAvail.VD?.TN || 0, liveCounts.VD.TN), TL: Math.max(baseAvail.VD?.TL || 0, liveCounts.VD.TL) },
+                VDC: { TN: Math.max(baseAvail.VDC?.TN || 0, liveCounts.VDC.TN), TL: Math.max(baseAvail.VDC?.TL || 0, liveCounts.VDC.TL) }
+            };
+            if (data.availableCounts) {
+                data.availableCounts[idx] = mergedAvail;
+            }
 
             return { 
                 idx, 
@@ -463,7 +500,7 @@ const MatrixBuilder: React.FC = () => {
                 soTietNew: validNew,           // For Final Exam logic
                 isOldLesson: validExamined > 0 && validNew === 0,
                 isNewLesson: validNew > 0,
-                avail: data.availableCounts[idx],
+                avail: mergedAvail,
                 allocNB: 0, allocTH: 0, allocVD: 0, allocVDC: 0,
                 targetScore: 0,
                 currentScore: 0,
@@ -475,11 +512,11 @@ const MatrixBuilder: React.FC = () => {
             r.currentScore = (r.allocNB + r.allocTH) * SCORE_TN + (r.allocVD + r.allocVDC) * SCORE_TL;
         };
 
-        // --- 3. CALCULATE TARGET SCORES PER LESSON ---
+        // Calculate Target Score for Old Pool (30% - 40%, unified with MatrixView & buildMatrixNotesSummary)
         const totalSoTietAll = rows.reduce((s: number, r: any) => s + r.soTiet, 0);
         const totalSoTietExaminedAll = rows.reduce((s: number, r: any) => s + r.soTietExamined, 0);
         const totalSoTietNewAll = rows.reduce((s: number, r: any) => s + r.soTietNew, 0);
-        const hasExaminedReduction = (isFinalExam || totalSoTietExaminedAll > 0) && totalSoTietExaminedAll > 0 && totalSoTietNewAll > 0;
+        const hasExaminedReduction = totalSoTietExaminedAll > 0 && totalSoTietNewAll > 0;
 
         if (!hasExaminedReduction) {
             // --- PROPORTIONAL TO TOTAL PERIODS ---
@@ -489,10 +526,10 @@ const MatrixBuilder: React.FC = () => {
                 }
             });
         } else {
-            // --- WEIGHTED OLD VS NEW (Giảm tỷ lệ bài đã kiểm tra còn 30% - 35%) ---
-            const naturalOldRatio = totalSoTietExaminedAll / totalSoTietAll;
-            const reducedOldRatio = Math.min(Math.max(naturalOldRatio * 0.5, 0.30), MAX_OLD_PERCENT);
-            const scoreForOld = TOTAL_SCORE * reducedOldRatio;
+            // --- WEIGHTED OLD VS NEW (Giảm tỷ lệ bài đã kiểm tra còn 30% - 40% khớp với gợi ý trên bảng) ---
+            const naturalOldPct = (totalSoTietExaminedAll / totalSoTietAll) * 100;
+            const targetOldPct = Math.max(30, Math.min(40, naturalOldPct));
+            const scoreForOld = TOTAL_SCORE * (targetOldPct / 100);
             const scoreForNew = TOTAL_SCORE - scoreForOld;
 
             rows.forEach((r: any) => {
@@ -514,12 +551,24 @@ const MatrixBuilder: React.FC = () => {
         for(let i=0; i<targetVD_TL; i++) tasksTL.push('VD');
 
         for (const type of tasksTL) {
-            // Filter candidates that have availability (or fallback to any row with periods > 0 if bank not loaded into folder)
+            // Ưu tiên bài học mới (chưa thi) và còn hạn mức điểm (targetScore - currentScore >= 0.75)
             let candidates = rows.filter((r: any) => {
+                if (r.soTiet <= 0) return false;
+                if (hasExaminedReduction && r.isOldLesson) return false;
+                if ((r.allocVD + r.allocVDC) > 0) return false;
                 const avail = type === 'VD' ? r.avail.VD.TL : r.avail.VDC.TL;
                 const allocated = type === 'VD' ? r.allocVD : r.allocVDC;
-                return avail > allocated;
+                return avail > allocated && (r.targetScore - r.currentScore) >= 0.5;
             });
+            // Fallback 1: Bài mới bất kỳ chưa có câu tự luận (kể cả khi thư mục chưa đồng bộ file câu hỏi tự luận)
+            if (candidates.length === 0) {
+                candidates = rows.filter((r: any) => {
+                    if (r.soTiet <= 0) return false;
+                    if (hasExaminedReduction && r.isOldLesson) return false;
+                    return (r.allocVD + r.allocVDC) === 0;
+                });
+            }
+            // Fallback 2: Bất kỳ bài nào còn trống tự luận
             if (candidates.length === 0) {
                 candidates = rows.filter((r: any) => r.soTiet > 0 && (r.allocVD + r.allocVDC) === 0);
             }
@@ -527,20 +576,16 @@ const MatrixBuilder: React.FC = () => {
                 candidates = rows.filter((r: any) => r.soTiet > 0);
             }
 
-            // Sorting Strategy
             candidates.sort((a: any, b: any) => {
                 if (hasExaminedReduction) {
-                    // Priority: New Content > Mixed Content > Old Content
                     if (a.isNewLesson && !b.isNewLesson) return -1;
                     if (!a.isNewLesson && b.isNewLesson) return 1;
                 }
-                
-                // Secondary Sort: Gap in score (Prioritize row with most unused score capacity)
+                // Ưu tiên bài có khoảng trống điểm mục tiêu lớn nhất
                 const aGap = a.targetScore - a.currentScore;
                 const bGap = b.targetScore - b.currentScore;
-                if (Math.abs(aGap - bGap) > 0.1) return bGap - aGap; // Descending Gap
+                if (Math.abs(aGap - bGap) > 0.05) return bGap - aGap;
 
-                // Tertiary: Available Questions
                 const availA = type === 'VD' ? a.avail.VD.TL : a.avail.VDC.TL;
                 const availB = type === 'VD' ? b.avail.VD.TL : b.avail.VDC.TL;
                 return availB - availA;
@@ -548,118 +593,71 @@ const MatrixBuilder: React.FC = () => {
 
             if (candidates.length > 0) {
                 const r = candidates[0];
-                if(type === 'VD') r.allocVD++; else r.allocVDC++;
+                if (type === 'VD') r.allocVD++; else r.allocVDC++;
                 updateRowScore(r);
             }
         }
 
         // --- 5. STEP 2: DISTRIBUTE MULTIPLE CHOICE (TN) ---
+        // Phân bổ theo đúng tỷ lệ targetScore của từng bài (Largest Gap / Quota Method),
+        // đảm bảo mỗi bài có cùng số tiết & trạng thái đã KT nhận số câu đồng đều sát gợi ý nhất!
         let currentNB = 0;
         let currentTH = 0;
-        const TOLERANCE = 0.25; 
-        
-        // Define Score Limits for Examined Lessons
-        const LIMIT_OLD_SCORE = hasExaminedReduction ? (TOTAL_SCORE * MAX_OLD_PERCENT) : 10; // 3.5
+
+        // Xác định hạn mức điểm TN tối đa cho từng bài: max(0, targetScore - điểm Tự luận đã nhận)
+        rows.forEach((r: any) => {
+            r.tnTargetScore = Math.max(0, r.targetScore - r.currentScore);
+            r.tnTargetQuestions = r.tnTargetScore / SCORE_TN;
+        });
 
         let safetyLoop = 0;
-        
         while ((currentNB < targetNB_TN || currentTH < targetTH_TN) && safetyLoop < 5000) {
             safetyLoop++;
 
-            // Decide which level to try filling in this iteration
-            let targetLevel: 'NB' | 'TH' | null = null;
-            if (currentNB < targetNB_TN && currentTH < targetTH_TN) {
-                // Balance proportional filling
-                const ratioNB = currentNB / targetNB_TN;
-                const ratioTH = currentTH / targetTH_TN;
-                targetLevel = ratioNB <= ratioTH ? 'NB' : 'TH';
-            } else if (currentNB < targetNB_TN) {
-                targetLevel = 'NB';
-            } else if (currentTH < targetTH_TN) {
-                targetLevel = 'TH';
-            } else {
-                break; // Met all targets
-            }
+            // Chọn bài đang thiếu hụt nhiều nhất so với targetScore (targetScore - currentScore lớn nhất)
+            let rowCandidates = rows.filter((r: any) => r.soTiet > 0);
+            if (rowCandidates.length === 0) break;
 
-            // Calculate current total score of OLD lessons
-            const currentTotalOldScore = rows
-                .filter((r: any) => r.isOldLesson)
-                .reduce((acc: number, r: any) => acc + r.currentScore, 0);
-
-            // FILTER CANDIDATES
-            let candidates = rows.filter((r: any) => {
-                // 1. Must have availability
-                const avail = targetLevel === 'NB' ? r.avail.NB.TN : r.avail.TH.TN;
-                const alloc = targetLevel === 'NB' ? r.allocNB : r.allocTH;
-                if (avail <= alloc) return false;
-
-                // 2. GLOBAL CAP CHECK FOR OLD LESSONS
-                if (hasExaminedReduction && r.isOldLesson) {
-                    if (currentTotalOldScore + SCORE_TN > LIMIT_OLD_SCORE + 0.05) return false;
-                }
-
-                // 3. INDIVIDUAL SCORE CHECK
-                const current = r.currentScore;
-                const target = r.targetScore;
-                if (current >= target + TOLERANCE) return false;
-                
-                return true;
-            });
-
-            // Fallback 1: Relax individual tolerance if still within bank availability
-            if (candidates.length === 0) {
-                 candidates = rows.filter((r: any) => {
-                    const avail = targetLevel === 'NB' ? r.avail.NB.TN : r.avail.TH.TN;
-                    const alloc = targetLevel === 'NB' ? r.allocNB : r.allocTH;
-                    if (hasExaminedReduction && r.isOldLesson) {
-                        if (currentTotalOldScore + SCORE_TN > LIMIT_OLD_SCORE + 0.05) return false;
-                    }
-                    return avail > alloc;
-                });
-            }
-
-            // Fallback 2: Distribute purely by period ratio & examined reduction when folder has no pre-loaded question files
-            if (candidates.length === 0) {
-                candidates = rows.filter((r: any) => {
-                    if (r.soTiet <= 0) return false;
-                    if (hasExaminedReduction && r.isOldLesson) {
-                        if (currentTotalOldScore + SCORE_TN > LIMIT_OLD_SCORE + 0.05) return false;
-                    }
-                    return r.currentScore < r.targetScore + TOLERANCE;
-                });
-            }
-            if (candidates.length === 0) {
-                candidates = rows.filter((r: any) => r.soTiet > 0);
-            }
-
-            if (candidates.length === 0) break; 
-
-            // SORTING STRATEGY
-            candidates.sort((a: any, b: any) => {
-                const aAlloc = targetLevel === 'NB' ? a.allocNB : a.allocTH;
-                const bAlloc = targetLevel === 'NB' ? b.allocNB : b.allocTH;
-                
-                // Priority 1: Coverage (Empty slots first)
-                // This ensures "các bài cùng chủ đề cần giảm dần TN (để ít nhất 1 TN cho mỗi mức độ)"
-                // If Lesson A has 2.0 pts (alloc > 0 via TL) and Lesson B has 0 pts, Lesson B is picked.
-                // Wait, TL is separate. We check specifically TN alloc here? 
-                // Better: Check TOTAL score gap. Low score = High Priority.
-                
-                // Priority 1: Ensure minimal representation (If alloc is 0 for this level, prioritize)
-                if (aAlloc === 0 && bAlloc > 0) return -1;
-                if (bAlloc === 0 && aAlloc > 0) return 1;
-
-                // Priority 2: Score Gap (Fill lessons that are furthest behind their target)
-                // If Lesson A has 2 VD (2.0 pts) and Target is 0.5 -> Gap is -1.5 (Way behind)
-                // If Lesson B has 0 pts and Target is 0.5 -> Gap is +0.5 (Needs points)
-                // Sorting descending by gap puts Lesson B first.
+            rowCandidates.sort((a: any, b: any) => {
                 const aGap = a.targetScore - a.currentScore;
                 const bGap = b.targetScore - b.currentScore;
-                return bGap - aGap;
+                if (Math.abs(aGap - bGap) > 0.01) return bGap - aGap;
+
+                // Nếu cùng độ lệch điểm, ưu tiên bài có ít câu hơn để chia đều tuyệt đối (VD: 5 câu - 5 câu - 6 câu thay vì 7 - 6 - 1)
+                const aTotal = a.allocNB + a.allocTH + a.allocVD + a.allocVDC;
+                const bTotal = b.allocNB + b.allocTH + b.allocVD + b.allocVDC;
+                if (aTotal !== bTotal) return aTotal - bTotal;
+
+                return a.idx - b.idx;
             });
 
-            const best = candidates[0];
-            if (targetLevel === 'NB') {
+            const best = rowCandidates[0];
+
+            // Quyết định gán câu hỏi này vào mức Biết (NB) hay Hiểu (TH) cho bài `best`
+            let chosenLevel: 'NB' | 'TH' = 'NB';
+            if (currentNB < targetNB_TN && currentTH < targetTH_TN) {
+                // Giữ tỷ lệ NB : TH cân đối trên từng bài học (tránh 1 bài bị dồn 5 NB - 1 TH hay 0 NB - 1 TH)
+                const desiredRowNBRatio = targetNB_TN / (targetNB_TN + targetTH_TN);
+                const bestTN = best.allocNB + best.allocTH;
+                const currentRowNBRatio = bestTN > 0 ? (best.allocNB / bestTN) : 0;
+
+                if (bestTN === 0) {
+                    // Câu đầu tiên của bài: chọn mức đang thiếu tỷ lệ toàn cục hơn
+                    chosenLevel = (currentNB / targetNB_TN) <= (currentTH / targetTH_TN) ? 'NB' : 'TH';
+                } else if (currentRowNBRatio < desiredRowNBRatio - 0.01) {
+                    chosenLevel = 'NB';
+                } else if (currentRowNBRatio > desiredRowNBRatio + 0.01) {
+                    chosenLevel = 'TH';
+                } else {
+                    chosenLevel = (currentNB / targetNB_TN) <= (currentTH / targetTH_TN) ? 'NB' : 'TH';
+                }
+            } else if (currentNB < targetNB_TN) {
+                chosenLevel = 'NB';
+            } else {
+                chosenLevel = 'TH';
+            }
+
+            if (chosenLevel === 'NB') {
                 best.allocNB++;
                 currentNB++;
             } else {
