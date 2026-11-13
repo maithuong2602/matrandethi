@@ -1423,11 +1423,14 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             matrixBodyHtml += '</tr>';
 
             // --- SPEC ROW ---
-            // Use customized specification row HTML if available, otherwise fallback to getRequirementsHtml
-            const rawCustomReq = (firstRow && data.specifications?.rows) 
-                ? (data.specifications.rows[data.matrix.rows.indexOf(firstRow)]?.[4] || '')
-                : '';
-            const reqHtml = rawCustomReq || getRequirementsHtml(gradeStr, mainTopic, subTopic);
+            // Merge customized specification row HTML across all lessons in this subTopic, fallback to getRequirementsHtml
+            const customReqs = subRows
+                .map((r: any) => {
+                    const idx = data.matrix.rows.indexOf(r);
+                    return idx >= 0 ? (data.specifications?.rows?.[idx]?.[4] || '') : '';
+                })
+                .filter(Boolean);
+            const reqHtml = customReqs.length > 0 ? customReqs.join('') : getRequirementsHtml(gradeStr, mainTopic, subTopic);
 
             // Filter out unchecked YCCĐ items (marked with data-unchecked="true")
             let activeReqHtml = reqHtml;
@@ -1443,32 +1446,30 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             const hasAnySubQuestions = (subTotalNB + subTotalTH + subTotalVD + subTotalVDC) > 0;
 
             if (hasAnySubQuestions) {
+                const keptByLevel: Record<'B' | 'H' | 'VD', number> = { B: 0, H: 0, VD: 0 };
                 activeReqHtml = activeReqHtml.replace(
                     /<strong\b[^>]*>([\s\S]*?)<\/strong>([\s\S]*?)(?=(?:<strong\b[^>]*>|$))/gi,
-                    (fullMatch, rawTitle, bodyHtml) => {
+                    (_fullMatch, rawTitle, bodyHtml) => {
                         const lower = String(rawTitle || '').replace(/<[^>]*>/g, '').trim().toLowerCase();
+                        let lvlKey: 'B' | 'H' | 'VD' = 'VD';
                         let lvlQuota = 0;
                         if (lower.startsWith('nhận biết') || lower.startsWith('biết') || lower.startsWith('- biết')) {
+                            lvlKey = 'B';
                             lvlQuota = subTotalNB;
                         } else if (lower.startsWith('thông hiểu') || lower.startsWith('hiểu') || lower.startsWith('- hiểu')) {
+                            lvlKey = 'H';
                             lvlQuota = subTotalTH;
-                        } else if (lower.startsWith('vận dụng cao')) {
-                            lvlQuota = subTotalVDC > 0 ? subTotalVDC : subTotalVD;
                         } else {
+                            lvlKey = 'VD';
                             lvlQuota = subTotalVD + subTotalVDC;
                         }
                         if (lvlQuota <= 0) return '';
 
-                        // Nếu chưa đánh dấu thủ công (data-unchecked) mà số dòng tiêu chí nhiều hơn số câu ra đề -> chỉ lấy đúng số tiêu chí được chọn
-                        if (!reqHtml.includes('data-unchecked="true"')) {
-                            let kept = 0;
-                            const filteredBody = String(bodyHtml).replace(/<div[^>]*>[\s\S]*?<\/div>/gi, (divMatch) => {
-                                kept++;
-                                return kept <= lvlQuota ? divMatch : '';
-                            });
-                            return `<strong class="block font-semibold">${rawTitle}</strong>${filteredBody}`;
-                        }
-                        return fullMatch;
+                        const filteredBody = String(bodyHtml).replace(/<div[^>]*>[\s\S]*?<\/div>/gi, (divMatch) => {
+                            keptByLevel[lvlKey]++;
+                            return keptByLevel[lvlKey] <= lvlQuota ? divMatch : '';
+                        });
+                        return `<strong class="block font-semibold">${rawTitle}</strong>${filteredBody}`;
                     }
                 );
             }
@@ -1503,17 +1504,19 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             };
 
             // NB(TN), TH(TN), VD(TL)
+            const totalVdTlCount = subCounts[10] + subCounts[12];
+            const totalVdTlPoints = subPoints[10] + subPoints[12];
             specBodyHtml += `<td>${renderCountPoints(subCounts[5], subPoints[5])}</td>`;
             specBodyHtml += `<td>${renderCountPoints(subCounts[7], subPoints[7])}</td>`;
-            specBodyHtml += `<td>${renderCountPoints(subCounts[10], subPoints[10])}</td>`;
+            specBodyHtml += `<td>${renderCountPoints(totalVdTlCount, totalVdTlPoints)}</td>`;
             
             specBodyHtml += '</tr>';
 
             // Spec Totals (Matching the specific columns)
             specTotals.nb += subCounts[5];
             specTotals.th += subCounts[7];
-            specTotals.vd += subCounts[10];
-            specTotals.vdc += subCounts[12];
+            specTotals.vd += totalVdTlCount;
+            specTotals.vdc += 0;
             
             stt++;
         });
@@ -1708,15 +1711,11 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             reqHtmlStr: string,
             levelQuotas?: Record<'B' | 'H' | 'VD', number>
         ): PrintSpecSubRow[] => {
-            const hasManualUnchecked = (reqHtmlStr || '').includes('data-unchecked="true"');
-            let cleaned = reqHtmlStr || '';
-            if (hasManualUnchecked) {
-                cleaned = cleaned.replace(/<div[^>]*data-unchecked="true"[^>]*>[\s\S]*?<\/div>/gi, '');
-            }
+            const rawHtml = reqHtmlStr || '';
             const strongRegex = /<strong[^>]*>([\s\S]*?)<\/strong>/gi;
             const matches: { title: string; index: number; endIndex: number }[] = [];
             let m;
-            while ((m = strongRegex.exec(cleaned)) !== null) {
+            while ((m = strongRegex.exec(rawHtml)) !== null) {
                 matches.push({
                     title: m[1].trim(),
                     index: m.index,
@@ -1724,15 +1723,20 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 });
             }
 
-            const groupedItems: Record<'B' | 'H' | 'VD', string[]> = {
+            const checkedItems: Record<'B' | 'H' | 'VD', string[]> = {
+                B: [],
+                H: [],
+                VD: []
+            };
+            const allItems: Record<'B' | 'H' | 'VD', string[]> = {
                 B: [],
                 H: [],
                 VD: []
             };
 
             matches.forEach((sec, sIdx) => {
-                const nextStart = sIdx + 1 < matches.length ? matches[sIdx + 1].index : cleaned.length;
-                const block = cleaned.substring(sec.endIndex, nextStart);
+                const nextStart = sIdx + 1 < matches.length ? matches[sIdx + 1].index : rawHtml.length;
+                const block = rawHtml.substring(sec.endIndex, nextStart);
                 const lower = sec.title.toLowerCase();
                 const levelKey: 'B' | 'H' | 'VD' =
                     lower.startsWith('nhận biết') || lower.startsWith('biết') || lower.startsWith('- biết')
@@ -1741,12 +1745,20 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                         ? 'H'
                         : 'VD';
 
-                const divRegex = /<div[^>]*>([\s\S]*?)<\/div>/gi;
+                const divRegex = /<div\b([^>]*)>([\s\S]*?)<\/div>/gi;
                 let dm;
                 while ((dm = divRegex.exec(block)) !== null) {
-                    const txt = dm[1].trim();
+                    const attrs = dm[1] || '';
+                    const txt = dm[2].trim();
                     if (txt) {
-                        groupedItems[levelKey].push(txt);
+                        if (!allItems[levelKey].includes(txt)) {
+                            allItems[levelKey].push(txt);
+                        }
+                        if (!/data-unchecked="true"/i.test(attrs)) {
+                            if (!checkedItems[levelKey].includes(txt)) {
+                                checkedItems[levelKey].push(txt);
+                            }
+                        }
                     }
                 }
             });
@@ -1768,9 +1780,8 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                     if (totalQuotaInSub > 0 && quota <= 0) {
                         return null;
                     }
-                    let items = groupedItems[d.k];
-                    // Nếu chưa chọn thủ công từng tiêu chí và số tiêu chí nhiều hơn số câu ra đề -> chỉ lấy đúng số tiêu chí được chọn
-                    if (!hasManualUnchecked && quota > 0 && items.length > quota) {
+                    let items = checkedItems[d.k].length > 0 ? checkedItems[d.k] : allItems[d.k];
+                    if (quota > 0 && items.length > quota) {
                         items = items.slice(0, quota);
                     }
                     if (items.length === 0 && totalQuotaInSub > 0 && quota <= 0) {
@@ -1783,7 +1794,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                         items: items.length > 0 ? items : []
                     };
                 })
-                .filter((r): r is PrintSpecSubRow => r !== null && r.items.length > 0);
+                .filter((r): r is PrintSpecSubRow => r !== null && ((levelQuotas?.[r.levelKey] || 0) > 0 || r.items.length > 0));
 
             if (activeRows.length > 0) {
                 return activeRows;
@@ -1795,7 +1806,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                     subRowId: `header_${idx}`,
                     levelKey: d.k,
                     title: d.t,
-                    items: groupedItems[d.k]
+                    items: allItems[d.k]
                 }))
                 .filter(r => r.items.length > 0);
         };
@@ -1824,11 +1835,15 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             let mainSpecRowSpan = 0;
             subs.forEach(subTopic => {
                 const subRows = groupedSub[subTopic];
-                const firstRow = subRows[0];
-                const rawCustomReq = (firstRow && data.specifications?.rows)
-                    ? (data.specifications.rows[data.matrix.rows.indexOf(firstRow)]?.[4] || '')
-                    : '';
-                const reqHtmlStr = rawCustomReq || getRequirementsHtml(gradeStr, mainTopic, subTopic);
+                const customReqs = subRows
+                    .map((r: any) => {
+                        const idx = data.matrix.rows.indexOf(r);
+                        return idx >= 0 ? (data.specifications?.rows?.[idx]?.[4] || '') : '';
+                    })
+                    .filter(Boolean);
+                const reqHtmlStr = customReqs.length > 0
+                    ? customReqs.join('')
+                    : getRequirementsHtml(gradeStr, mainTopic, subTopic);
 
                 const subQuotas: Record<'B' | 'H' | 'VD', number> = { B: 0, H: 0, VD: 0 };
                 subRows.forEach((r: any) => {

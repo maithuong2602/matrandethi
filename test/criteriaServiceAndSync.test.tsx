@@ -222,5 +222,44 @@ describe('Criteria Service & Matrix Synchronization', () => {
         // Tổng tỷ lệ % đã kiểm tra cuối kỳ không vượt quá 35% (tối đa 14 câu TN = 3,5đ = 35%)
         expect(totalExaminedQuestions).toBeLessThanOrEqual(14);
         expect(totalExaminedPercent).toBeLessThanOrEqual(35.0);
+
+        // Kiểm tra Bản đặc tả phải khớp 100% số lượng câu hỏi với Ma trận ở mọi dòng
+        const specRows = savedFs.children[0].matrixData.specifications.rows;
+        const newFormatRows = savedFs.children[0].matrixData.newFormatRows;
+        let totalMatrixQuestions = 0;
+        let totalSpecQuestions = 0;
+
+        for (let i = 0; i < rows.length; i++) {
+            const mRow = rows[i];
+            const sRow = specRows[i];
+            const nfRow = newFormatRows[i];
+
+            const mNB = (parseInt(mRow[5] || '0', 10) || 0) + (parseInt(mRow[6] || '0', 10) || 0);
+            const mTH = (parseInt(mRow[7] || '0', 10) || 0) + (parseInt(mRow[8] || '0', 10) || 0);
+            const mVD = (parseInt(mRow[9] || '0', 10) || 0) + (parseInt(mRow[10] || '0', 10) || 0) + (parseInt(mRow[11] || '0', 10) || 0) + (parseInt(mRow[12] || '0', 10) || 0);
+
+            const [sNbTn, sNbTl] = String(sRow[5] || '0-0').split('-').map((n: string) => parseInt(n, 10) || 0);
+            const [sThTn, sThTl] = String(sRow[6] || '0-0').split('-').map((n: string) => parseInt(n, 10) || 0);
+            const [sVdTn, sVdTl] = String(sRow[7] || '0-0').split('-').map((n: string) => parseInt(n, 10) || 0);
+            const [sVdcTn, sVdcTl] = String(sRow[8] || '0-0').split('-').map((n: string) => parseInt(n, 10) || 0);
+
+            expect(sNbTn + sNbTl).toBe(mNB);
+            expect(sThTn + sThTl).toBe(mTH);
+            expect(sVdTn + sVdTl + sVdcTn + sVdcTl).toBe(mVD);
+
+            const nfB = (nfRow.mc.B.count || 0) + (nfRow.tf.B.count || 0) + (nfRow.sa.B.count || 0) + (nfRow.essay.B.count || 0);
+            const nfH = (nfRow.mc.H.count || 0) + (nfRow.tf.H.count || 0) + (nfRow.sa.H.count || 0) + (nfRow.essay.H.count || 0);
+            const nfVD = (nfRow.mc.VD.count || 0) + (nfRow.tf.VD.count || 0) + (nfRow.sa.VD.count || 0) + (nfRow.essay.VD.count || 0);
+
+            expect(nfB).toBe(mNB);
+            expect(nfH).toBe(mTH);
+            expect(nfVD).toBe(mVD);
+
+            totalMatrixQuestions += mNB + mTH + mVD;
+            totalSpecQuestions += (sNbTn + sNbTl) + (sThTn + sThTl) + (sVdTn + sVdTl + sVdcTn + sVdcTl);
+        }
+
+        expect(totalSpecQuestions).toBe(totalMatrixQuestions);
+        expect(totalMatrixQuestions).toBe(31); // 28 câu TN + 3 câu TL = 31 câu
     });
 });

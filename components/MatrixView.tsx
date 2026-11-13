@@ -293,6 +293,17 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
         const row = data.matrix.rows[rIdx] || [];
         const defaultNL = getDefaultCompetencyForTopic(String(row[1] || ''), String(row[2] || ''));
         if (existing) {
+            if (!useShortAnswer && ((existing.sa?.B?.count || 0) > 0 || (existing.sa?.H?.count || 0) > 0 || (existing.sa?.VD?.count || 0) > 0)) {
+                const cloned: NewMatrixFormatRowConfig = JSON.parse(JSON.stringify(existing));
+                (['B', 'H', 'VD'] as const).forEach(lvl => {
+                    const saCount = cloned.sa?.[lvl]?.count || 0;
+                    if (saCount > 0) {
+                        cloned.tf[lvl].count = (cloned.tf[lvl]?.count || 0) + saCount;
+                        cloned.sa[lvl].count = 0;
+                    }
+                });
+                return cloned;
+            }
             return existing;
         }
         // Fallback auto-convert from classic columns if not yet set
@@ -310,6 +321,70 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
         cfg.essay.H.count = thTl;
         cfg.essay.VD.count = vdTl;
         return cfg;
+    };
+
+    const syncSpecYccdWithQuotas = (
+        reqHtml: string,
+        quotas: { B: number; H: number; VD: number },
+        lessonLabel: string = ''
+    ): string => {
+        let updatedHtml = String(reqHtml || '');
+        const cleanLabel = String(lessonLabel || 'bài học').trim();
+        const hasNBSection = /<strong\b[^>]*>\s*(?:nhận biết|biết|- biết)/i.test(updatedHtml);
+        const hasTHSection = /<strong\b[^>]*>\s*(?:thông hiểu|hiểu|- hiểu)/i.test(updatedHtml);
+        const hasVDSection = /<strong\b[^>]*>\s*(?:vận dụng|- vận dụng)/i.test(updatedHtml);
+
+        let prefixBlocks = '';
+        if (quotas.B > 0 && !hasNBSection) {
+            prefixBlocks += `<strong class="block font-semibold">Nhận biết</strong><div class="pl-2">- Nêu được các khái niệm, nội dung cơ bản thuộc ${cleanLabel}.</div>`;
+        }
+        if (quotas.H > 0 && !hasTHSection) {
+            prefixBlocks += `<strong class="block font-semibold">Thông hiểu</strong><div class="pl-2">- Giải thích và phân biệt được các nội dung trọng tâm thuộc ${cleanLabel}.</div>`;
+        }
+        if (prefixBlocks) {
+            updatedHtml = prefixBlocks + updatedHtml;
+        }
+        if (quotas.VD > 0 && !hasVDSection) {
+            updatedHtml += `<strong class="block font-semibold">Vận dụng</strong><div class="pl-2">- Vận dụng được kiến thức thuộc ${cleanLabel} để giải quyết tình huống thực tiễn.</div>`;
+        }
+
+        const totalQ = quotas.B + quotas.H + quotas.VD;
+        if (totalQ <= 0) return updatedHtml;
+
+        const keptByLevel: Record<'B' | 'H' | 'VD', number> = { B: 0, H: 0, VD: 0 };
+        return updatedHtml.replace(
+            /<strong\b[^>]*>([\s\S]*?)<\/strong>([\s\S]*?)(?=(?:<strong\b[^>]*>|$))/gi,
+            (_fullMatch, rawTitle, bodyHtml) => {
+                const lower = String(rawTitle || '').replace(/<[^>]*>/g, '').trim().toLowerCase();
+                let lvlKey: 'B' | 'H' | 'VD' = 'VD';
+                if (lower.startsWith('nhận biết') || lower.startsWith('biết') || lower.startsWith('- biết')) {
+                    lvlKey = 'B';
+                } else if (lower.startsWith('thông hiểu') || lower.startsWith('hiểu') || lower.startsWith('- hiểu')) {
+                    lvlKey = 'H';
+                } else {
+                    lvlKey = 'VD';
+                }
+                const lvlQuota = quotas[lvlKey];
+
+                const updatedBody = String(bodyHtml).replace(
+                    /<div\b([^>]*)>([\s\S]*?)<\/div>/gi,
+                    (_divMatch, rawAttrs, innerText) => {
+                        const cleanAttrs = String(rawAttrs || '')
+                            .replace(/\s*data-unchecked="true"/gi, '')
+                            .trim();
+                        const attrStr = cleanAttrs ? ` ${cleanAttrs}` : ' class="pl-2"';
+                        keptByLevel[lvlKey]++;
+                        if (keptByLevel[lvlKey] <= lvlQuota) {
+                            return `<div${attrStr}>${innerText}</div>`;
+                        } else {
+                            return `<div${attrStr} data-unchecked="true">${innerText}</div>`;
+                        }
+                    }
+                );
+
+                return `<strong class="block font-semibold">${rawTitle}</strong>${updatedBody}`;
+            }
+        );
     };
 
     const handleSwitchMatrixFormat = (format: 'classic' | 'new_4part') => {
@@ -489,6 +564,16 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
             sRow[5] = `${totalB_TN}-${totalB_TL}`;
             sRow[6] = `${totalH_TN}-${totalH_TL}`;
             sRow[7] = `${totalVD_TN}-${totalVD_TL}`;
+            sRow[8] = `0-0`;
+            sRow[4] = syncSpecYccdWithQuotas(
+                String(sRow[4] || ''),
+                {
+                    B: totalB_TN + totalB_TL,
+                    H: totalH_TN + totalH_TL,
+                    VD: totalVD_TN + totalVD_TL
+                },
+                String(sRow[3] || sRow[2] || '')
+            );
         }
 
         handleUpdateMatrixWithSync(newData);
@@ -750,6 +835,38 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
             specRow[6] = `${th_tn}-${th_tl}`;
             specRow[7] = `${vd_tn}-${vd_tl}`;
             specRow[8] = `${vdc_tn}-${vdc_tl}`;
+
+            const totalB = nb_tn + nb_tl;
+            const totalH = th_tn + th_tl;
+            const totalVD = vd_tn + vd_tl + vdc_tn + vdc_tl;
+            specRow[4] = syncSpecYccdWithQuotas(
+                String(specRow[4] || ''),
+                { B: totalB, H: totalH, VD: totalVD },
+                String(specRow[3] || specRow[2] || '')
+            );
+
+            // Sync newFormatRows for this row so Classic and 4-Part stay in sync
+            if (!newData.newFormatRows) newData.newFormatRows = {};
+            const defaultNL = getDefaultCompetencyForTopic(String(newData.matrix.rows[rowIndex]?.[1] || ''), String(newData.matrix.rows[rowIndex]?.[2] || ''));
+            const rowCfg = newData.newFormatRows[rowIndex] || createEmptyNewFormatRow(defaultNL);
+            if (colIndex === 5) {
+                const diff = nb_tn - ((rowCfg.mc.B.count || 0) + (rowCfg.tf.B.count || 0) + (rowCfg.sa.B.count || 0));
+                rowCfg.mc.B.count = Math.max(0, (rowCfg.mc.B.count || 0) + diff);
+            } else if (colIndex === 6) {
+                rowCfg.essay.B.count = nb_tl;
+            } else if (colIndex === 7) {
+                const diff = th_tn - ((rowCfg.mc.H.count || 0) + (rowCfg.tf.H.count || 0) + (rowCfg.sa.H.count || 0));
+                rowCfg.mc.H.count = Math.max(0, (rowCfg.mc.H.count || 0) + diff);
+            } else if (colIndex === 8) {
+                rowCfg.essay.H.count = th_tl;
+            } else if (colIndex === 9 || colIndex === 11) {
+                const totalVdTn = vd_tn + vdc_tn;
+                const diff = totalVdTn - ((rowCfg.mc.VD.count || 0) + (rowCfg.tf.VD.count || 0) + (rowCfg.sa.VD.count || 0));
+                rowCfg.mc.VD.count = Math.max(0, (rowCfg.mc.VD.count || 0) + diff);
+            } else if (colIndex === 10 || colIndex === 12) {
+                rowCfg.essay.VD.count = vd_tl + vdc_tl;
+            }
+            newData.newFormatRows[rowIndex] = rowCfg;
         }
 
         // Update essay points if custom TL point was provided
@@ -1242,7 +1359,9 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                 if (quota <= 0) return null;
                 const baseGroup = grouped[d.levelKey];
                 let selectedItems = baseGroup.items.filter(it => it.checked);
-                if (!hasManualUnchecked && selectedItems.length > quota) {
+                if (selectedItems.length === 0 && baseGroup.items.length > 0) {
+                    selectedItems = baseGroup.items.slice(0, quota);
+                } else if (selectedItems.length > quota) {
                     selectedItems = selectedItems.slice(0, quota);
                 }
                 return {
@@ -1973,7 +2092,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                         {/* Specific Columns: NB(TN), TH(TN), VD(TL) */}
                         {renderCell(nb_tn, avail.NB.TN, 'TN', 5)}
                         {renderCell(th_tn, avail.TH.TN, 'TN', 7)}
-                        {renderCell(vd_tl, avail.VD.TL, 'TL', 10)}
+                        {renderCell(vd_tl + vdc_tl, avail.VD.TL + avail.VDC.TL, 'TL', 10)}
                     </>
                 )}
             </tr>

@@ -493,6 +493,15 @@ const MatrixBuilder: React.FC = () => {
                 data.availableCounts[idx] = mergedAvail;
             }
 
+            // Kiểm tra Bản đặc tả của dòng này có sẵn mức Nhận biết / Thông hiểu không
+            const specHtml = String(data.specifications?.rows?.[idx]?.[4] || '') ||
+                getRequirementsHtml(currentDir.name, String(row[1] || ''), rowSubTopic, rowLesson);
+            if (data.specifications?.rows?.[idx] && !data.specifications.rows[idx][4] && specHtml) {
+                data.specifications.rows[idx][4] = specHtml;
+            }
+            const hasNBSpec = /<strong[^>]*>\s*(?:\d+[\.\)]\s*)?(?:nhận biết|biết|- biết)/i.test(specHtml) || mergedAvail.NB.TN > 0;
+            const hasTHSpec = /<strong[^>]*>\s*(?:\d+[\.\)]\s*)?(?:thông hiểu|hiểu|- hiểu)/i.test(specHtml) || mergedAvail.TH.TN > 0;
+
             return { 
                 idx, 
                 soTiet: st,
@@ -501,6 +510,8 @@ const MatrixBuilder: React.FC = () => {
                 isOldLesson: validExamined > 0 && validNew === 0,
                 isNewLesson: validNew > 0,
                 avail: mergedAvail,
+                hasNBSpec: hasNBSpec || (!hasNBSpec && !hasTHSpec),
+                hasTHSpec: hasTHSpec || (!hasNBSpec && !hasTHSpec),
                 allocNB: 0, allocTH: 0, allocVD: 0, allocVDC: 0,
                 targetScore: 0,
                 currentScore: 0,
@@ -654,22 +665,41 @@ const MatrixBuilder: React.FC = () => {
             const best = rowCandidates[0];
 
             // Quyết định gán câu hỏi này vào mức Biết (NB) hay Hiểu (TH) cho bài `best`
+            // Ưu tiên khớp với các mức độ có sẵn trong Bản đặc tả của bài đó (ví dụ Bài 3 chỉ có Thông hiểu -> ưu tiên TH)
             let chosenLevel: 'NB' | 'TH' = 'NB';
             if (currentNB < targetNB_TN && currentTH < targetTH_TN) {
-                // Giữ tỷ lệ NB : TH cân đối trên từng bài học (tránh 1 bài bị dồn 5 NB - 1 TH hay 0 NB - 1 TH)
-                const desiredRowNBRatio = targetNB_TN / (targetNB_TN + targetTH_TN);
-                const bestTN = best.allocNB + best.allocTH;
-                const currentRowNBRatio = bestTN > 0 ? (best.allocNB / bestTN) : 0;
-
-                if (bestTN === 0) {
-                    // Câu đầu tiên của bài: chọn mức đang thiếu tỷ lệ toàn cục hơn
-                    chosenLevel = (currentNB / targetNB_TN) <= (currentTH / targetTH_TN) ? 'NB' : 'TH';
-                } else if (currentRowNBRatio < desiredRowNBRatio - 0.01) {
-                    chosenLevel = 'NB';
-                } else if (currentRowNBRatio > desiredRowNBRatio + 0.01) {
+                if (best.hasTHSpec && !best.hasNBSpec) {
                     chosenLevel = 'TH';
+                } else if (best.hasNBSpec && !best.hasTHSpec) {
+                    chosenLevel = 'NB';
                 } else {
-                    chosenLevel = (currentNB / targetNB_TN) <= (currentTH / targetTH_TN) ? 'NB' : 'TH';
+                    // Tính số câu TH cần giữ lại cho các bài chỉ có mức Thông hiểu (TH-only)
+                    const thNeededByThOnlyRows = rows
+                        .filter((r: any) => r.idx !== best.idx && r.hasTHSpec && !r.hasNBSpec)
+                        .reduce((sum: number, r: any) => {
+                            const remQ = Math.max(0, Math.round((r.targetScore - r.currentScore) / SCORE_TN));
+                            return sum + remQ;
+                        }, 0);
+                    const freeTH = Math.max(0, (targetTH_TN - currentTH) - thNeededByThOnlyRows);
+                    const remNB = targetNB_TN - currentNB;
+
+                    if (freeTH <= 0) {
+                        chosenLevel = 'NB';
+                    } else {
+                        const desiredRowNBRatio = remNB / (remNB + freeTH);
+                        const bestTN = best.allocNB + best.allocTH;
+                        const currentRowNBRatio = bestTN > 0 ? (best.allocNB / bestTN) : 0;
+
+                        if (bestTN === 0) {
+                            chosenLevel = remNB >= freeTH ? 'NB' : 'TH';
+                        } else if (currentRowNBRatio < desiredRowNBRatio - 0.01) {
+                            chosenLevel = 'NB';
+                        } else if (currentRowNBRatio > desiredRowNBRatio + 0.01) {
+                            chosenLevel = 'TH';
+                        } else {
+                            chosenLevel = remNB >= freeTH ? 'NB' : 'TH';
+                        }
+                    }
                 }
             } else if (currentNB < targetNB_TN) {
                 chosenLevel = 'NB';
@@ -711,16 +741,17 @@ const MatrixBuilder: React.FC = () => {
 
         rows.forEach((r: any) => {
             const idx = r.idx;
+            const totalRowVD = (r.allocVD || 0) + (r.allocVDC || 0);
             data.specifications.rows[idx][5] = `${r.allocNB}-0`;      
             data.specifications.rows[idx][6] = `${r.allocTH}-0`;      
-            data.specifications.rows[idx][7] = `0-${r.allocVD}`; 
-            data.specifications.rows[idx][8] = `0-${r.allocVDC}`;
+            data.specifications.rows[idx][7] = `0-${totalRowVD}`; 
+            data.specifications.rows[idx][8] = `0-0`;
 
             const mRow = data.matrix.rows[idx];
             mRow[5] = r.allocNB > 0 ? r.allocNB.toString() : ''; mRow[6] = '';
             mRow[7] = r.allocTH > 0 ? r.allocTH.toString() : ''; mRow[8] = '';
-            mRow[9] = '';                                        mRow[10] = r.allocVD > 0 ? r.allocVD.toString() : '';
-            mRow[11] = '';                                       mRow[12] = r.allocVDC > 0 ? r.allocVDC.toString() : '';
+            mRow[9] = '';                                        mRow[10] = totalRowVD > 0 ? totalRowVD.toString() : '';
+            mRow[11] = '';                                       mRow[12] = '';
 
             const pts = r.currentScore;
             mRow[13] = (pts / TOTAL_SCORE * 100).toFixed(1);
@@ -757,32 +788,50 @@ const MatrixBuilder: React.FC = () => {
                 thLeft--;
             }
 
-            rowCfg.essay.VD.count = (r.allocVD || 0) + (r.allocVDC || 0);
+            rowCfg.essay.VD.count = totalRowVD;
             data.newFormatRows[idx] = rowCfg;
 
-            // Tự động đồng bộ cột Yêu cầu cần đạt trên Bản đặc tả: chỉ bật các tiêu chí tương ứng với mức độ & số câu được chọn ra đề
-            const rawReqHtml = String(data.specifications.rows[idx]?.[4] || '');
+            // Tự động đồng bộ cột Yêu cầu cần đạt trên Bản đặc tả:
+            // Đảm bảo mỗi mức độ (Biết, Hiểu, Vận dụng) có số tiêu chí được chọn khớp với số câu trên Ma trận
+            let rawReqHtml = String(data.specifications.rows[idx]?.[4] || '');
+            const lessonLabel = String(mRow[3] || mRow[2] || 'bài học').replace(/^(?:Bài\s*\d+[ab]?[\.\:]?\s*|\d+[\.\)]\s*)/i, '').trim();
+
+            if ((r.allocNB || 0) > 0 && !/<strong[^>]*>\s*(?:\d+[\.\)]\s*)?(?:nhận biết|biết|- biết)/i.test(rawReqHtml)) {
+                rawReqHtml = `<strong class="block font-semibold">Nhận biết</strong><div class="pl-2">– Nêu và nhận biết được các khái niệm, kiến thức cơ bản về ${lessonLabel.toLowerCase()}.</div>` + rawReqHtml;
+            }
+            if ((r.allocTH || 0) > 0 && !/<strong[^>]*>\s*(?:\d+[\.\)]\s*)?(?:thông hiểu|hiểu|- hiểu)/i.test(rawReqHtml)) {
+                rawReqHtml += `<strong class="block font-semibold mt-2">Thông hiểu</strong><div class="pl-2">– Giải thích và nêu được ví dụ minh hoạ về ${lessonLabel.toLowerCase()}.</div>`;
+            }
+            if (totalRowVD > 0 && !/<strong[^>]*>\s*(?:\d+[\.\)]\s*)?(?:vận dụng|- vận dụng)/i.test(rawReqHtml)) {
+                rawReqHtml += `<strong class="block font-semibold mt-2">Vận dụng</strong><div class="pl-2">– Vận dụng được kiến thức về ${lessonLabel.toLowerCase()} để giải quyết nhiệm vụ thực tế.</div>`;
+            }
+
             if (rawReqHtml) {
+                const keptByLevel: Record<'B' | 'H' | 'VD', number> = { B: 0, H: 0, VD: 0 };
+                const quotaByLevel: Record<'B' | 'H' | 'VD', number> = {
+                    B: r.allocNB || 0,
+                    H: r.allocTH || 0,
+                    VD: totalRowVD
+                };
+
                 const updatedReqHtml = rawReqHtml.replace(
                     /<strong\b[^>]*>([\s\S]*?)<\/strong>([\s\S]*?)(?=(?:<strong\b[^>]*>|$))/gi,
                     (_fullMatch, rawTitle, bodyHtml) => {
                         const lower = String(rawTitle || '').replace(/<[^>]*>/g, '').trim().toLowerCase();
-                        let lvlQuota = 0;
+                        let lvlKey: 'B' | 'H' | 'VD' = 'VD';
                         if (lower.startsWith('nhận biết') || lower.startsWith('biết') || lower.startsWith('- biết')) {
-                            lvlQuota = r.allocNB || 0;
+                            lvlKey = 'B';
                         } else if (lower.startsWith('thông hiểu') || lower.startsWith('hiểu') || lower.startsWith('- hiểu')) {
-                            lvlQuota = r.allocTH || 0;
-                        } else if (lower.startsWith('vận dụng cao')) {
-                            lvlQuota = r.allocVDC || r.allocVD || 0;
+                            lvlKey = 'H';
                         } else {
-                            lvlQuota = (r.allocVD || 0) + (r.allocVDC || 0);
+                            lvlKey = 'VD';
                         }
-                        let itemIdx = 0;
+                        const lvlQuota = quotaByLevel[lvlKey];
                         const updatedBody = String(bodyHtml).replace(
                             /<div([^>]*)>([\s\S]*?)<\/div>/gi,
                             (_divMatch, _attrs, innerTxt) => {
-                                itemIdx++;
-                                const isSelected = lvlQuota > 0 && itemIdx <= lvlQuota;
+                                keptByLevel[lvlKey]++;
+                                const isSelected = lvlQuota > 0 && keptByLevel[lvlKey] <= lvlQuota;
                                 return `<div class="pl-2"${isSelected ? '' : ' data-unchecked="true"'}>${innerTxt}</div>`;
                             }
                         );
