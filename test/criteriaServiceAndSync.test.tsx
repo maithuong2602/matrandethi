@@ -735,4 +735,90 @@ describe('Criteria Service & Matrix Synchronization', () => {
         expect(specRows[5][4]).toMatch(/Nhận biết/i);
         expect(specRows[5][4]).toMatch(/Thông hiểu/i);
     });
+
+    it('allocates exact 3-4-3 and 4-3-3 (16 NB - 12 TH - 3 VD) on Grade 8 Final Exam with Chủ đề F (Bài 1, 2, 3, 4, 12, 13, 14)', () => {
+        const mockFs = {
+            name: 'Thư mục gốc',
+            type: 'folder',
+            children: [
+                {
+                    name: 'Lớp 8 - Cuối kì II',
+                    type: 'folder',
+                    children: [],
+                    matrixData: {
+                        matrixFormat: 'new_4part',
+                        newPointsConfig: { mc: 3.0, tf: 4.0, sa: 0, essay: 3.0, useShortAnswer: false },
+                        matrix: {
+                            rows: [
+                                ['1', 'Chủ đề A. Máy tính và cộng đồng', 'Sơ lược về lịch sử phát triển máy tính', 'Bài 1: Lược sử công cụ tính toán', '2', '', '', '', '', '', '', '', '', '12.5', '2'],
+                                ['2', 'Chủ đề C. Tổ chức lưu trữ, tìm kiếm và trao đổi thông tin', '1. Đặc điểm của thông tin trong môi trường số', 'Bài 2: Thông tin trong môi trường số', '2', '', '', '', '', '', '', '', '', '12.5', '2'],
+                                ['3', 'Chủ đề C. Tổ chức lưu trữ, tìm kiếm và trao đổi thông tin', '2. Thông tin với giải quyết vấn đề', 'Bài 3: Thực hành: Khai thác thông tin số', '2', '', '', '', '', '', '', '', '', '10.0', '2'],
+                                ['4', 'Chủ đề D. Đạo đức và văn hoá trong môi trường số', 'Đạo đức và văn hoá trong sử dụng công nghệ kĩ thuật số', 'Bài 4: Đạo đức và văn hóa trong sử dụng công nghệ kĩ thuật số', '1', '', '', '', '', '', '', '', '', '20.0', '0'],
+                                ['5', 'Chủ đề F. Giải quyết vấn đề với sự trợ giúp của máy tính', 'Lập trình trực quan', 'Bài 12: Từ thuật toán đến chương trình', '1', '', '', '', '', '', '', '', '', '17.5', '0'],
+                                ['6', 'Chủ đề F. Giải quyết vấn đề với sự trợ giúp của máy tính', 'Lập trình trực quan', 'Bài 13: Biểu diễn dữ liệu', '1', '', '', '', '', '', '', '', '', '17.5', '0'],
+                                ['7', 'Chủ đề F. Giải quyết vấn đề với sự trợ giúp của máy tính', 'Lập trình trực quan', 'Bài 14: Cấu trúc điều khiển', '1', '', '', '', '', '', '', '', '', '10.0', '0']
+                            ]
+                        },
+                        specifications: {
+                            rows: [
+                                ['1', 'Chủ đề A. Máy tính và cộng đồng', 'Sơ lược về lịch sử phát triển máy tính', 'Bài 1: Lược sử công cụ tính toán', '', '0-0', '0-0', '0-0', '0-0'],
+                                ['2', 'Chủ đề C. Tổ chức lưu trữ, tìm kiếm và trao đổi thông tin', '1. Đặc điểm của thông tin trong môi trường số', 'Bài 2: Thông tin trong môi trường số', '', '0-0', '0-0', '0-0', '0-0'],
+                                ['3', 'Chủ đề C. Tổ chức lưu trữ, tìm kiếm và trao đổi thông tin', '2. Thông tin với giải quyết vấn đề', 'Bài 3: Thực hành: Khai thác thông tin số', '', '0-0', '0-0', '0-0', '0-0'],
+                                ['4', 'Chủ đề D. Đạo đức và văn hoá trong môi trường số', 'Đạo đức và văn hoá trong sử dụng công nghệ kĩ thuật số', 'Bài 4: Đạo đức và văn hóa trong sử dụng công nghệ kĩ thuật số', '', '0-0', '0-0', '0-0', '0-0'],
+                                ['5', 'Chủ đề F. Giải quyết vấn đề với sự trợ giúp của máy tính', 'Lập trình trực quan', 'Bài 12: Từ thuật toán đến chương trình', '', '0-0', '0-0', '0-0', '0-0'],
+                                ['6', 'Chủ đề F. Giải quyết vấn đề với sự trợ giúp của máy tính', 'Lập trình trực quan', 'Bài 13: Biểu diễn dữ liệu', '', '0-0', '0-0', '0-0', '0-0'],
+                                ['7', 'Chủ đề F. Giải quyết vấn đề với sự trợ giúp của máy tính', 'Lập trình trực quan', 'Bài 14: Cấu trúc điều khiển', '', '0-0', '0-0', '0-0', '0-0']
+                            ]
+                        },
+                        availableCounts: []
+                    }
+                }
+            ]
+        };
+        localStorage.setItem('matrixFileSystem', JSON.stringify(mockFs));
+
+        render(<MatrixBuilder />);
+
+        const folderItem = screen.getByText('Lớp 8 - Cuối kì II');
+        fireEvent.click(folderItem);
+
+        const distBtn = screen.getByText('Phân bổ');
+        fireEvent.click(distBtn);
+
+        const savedFs = JSON.parse(localStorage.getItem('matrixFileSystem') || '{}');
+        const mData = savedFs.children[0].matrixData;
+        const nfRows = mData.newFormatRows;
+        const specRows = mData.specifications.rows;
+
+        let totalMC = 0, totalTF = 0, totalTL = 0;
+        let totalB = 0, totalH = 0, totalVD = 0;
+
+        for (let i = 0; i < 7; i++) {
+            const r = nfRows[i];
+            totalMC += (r.mc.B.count || 0) + (r.mc.H.count || 0) + (r.mc.VD.count || 0);
+            totalTF += (r.tf.B.count || 0) + (r.tf.H.count || 0) + (r.tf.VD.count || 0);
+            totalTL += (r.essay.B.count || 0) + (r.essay.H.count || 0) + (r.essay.VD.count || 0);
+            totalB += (r.mc.B.count || 0) + (r.tf.B.count || 0) + (r.sa.B.count || 0) + (r.essay.B.count || 0);
+            totalH += (r.mc.H.count || 0) + (r.tf.H.count || 0) + (r.sa.H.count || 0) + (r.essay.H.count || 0);
+            totalVD += (r.mc.VD.count || 0) + (r.tf.VD.count || 0) + (r.sa.VD.count || 0) + (r.essay.VD.count || 0);
+        }
+
+        // 3 - 4 - 3 theo loại câu hỏi (12 câu MC = 3,0đ; 16 ý TF = 4,0đ; 3 câu TL = 3,0đ)
+        expect(totalMC).toBe(12);
+        expect(totalTF).toBe(16);
+        expect(totalTL).toBe(3);
+
+        // 4 - 3 - 3 theo mức độ nhận thức (16 Biết = 4,0đ = 40%; 12 Hiểu = 3,0đ = 30%; 3 Vận dụng = 3,0đ = 30%)
+        expect(totalB).toBe(16);
+        expect(totalH).toBe(12);
+        expect(totalVD).toBe(3);
+
+        // Bài 3 và Bài 4 không có YCCĐ Nhận biết -> 0 câu Biết
+        expect((nfRows[2].mc.B.count || 0) + (nfRows[2].tf.B.count || 0)).toBe(0);
+        expect((nfRows[3].mc.B.count || 0) + (nfRows[3].tf.B.count || 0)).toBe(0);
+
+        // Bài 12 và Bài 13 có cả Biết và Hiểu trên Bản đặc tả
+        expect(specRows[4][4]).toMatch(/Nhận biết/i);
+        expect(specRows[5][4]).toMatch(/Nhận biết/i);
+    });
 });

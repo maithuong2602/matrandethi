@@ -939,26 +939,58 @@ const MatrixBuilder: React.FC = () => {
             }
         });
 
-        // 2. Nếu tổng dung lượng câu TN của các bài có hasNBSpec < targetNB_TN (ví dụ Bài 5, Bài 6 chưa có câu NB trong file JSON cũ),
+        // 2. Nếu tổng dung lượng câu TN của các bài có hasNBSpec < targetNB_TN (ví dụ Bài 5, Bài 6, Bài 12, Bài 13 chưa có câu NB trong file JSON cũ),
         //    mở thêm mức Nhận biết cho các bài có YCCĐ Nhận biết hợp lệ trong chương trình (currHasNB === true, tuyệt đối không mở cho Bài 3, Bài 4 không có NB)
-        const currentNBCapacity = rows.reduce((sum: number, r: any) => sum + (r.hasNBSpec ? (r.allocTN || 0) : 0), 0);
+        let currentNBCapacity = rows.reduce((sum: number, r: any) => sum + (r.hasNBSpec ? (r.allocTN || 0) : 0), 0);
         if (currentNBCapacity < targetNB_TN) {
             rows.forEach((r: any) => {
                 if ((r.allocTN || 0) > 0 && !r.hasNBSpec && r.currHasNB) {
                     r.hasNBSpec = true;
                 }
             });
+            currentNBCapacity = rows.reduce((sum: number, r: any) => sum + (r.hasNBSpec ? (r.allocTN || 0) : 0), 0);
+        }
+        // Dự phòng cuối: nếu tổ hợp bài học được chọn trong ma trận vẫn thiếu dung lượng NB (< targetNB_TN),
+        // mở bổ sung trên các bài mới có nhiều câu TN nhất để đảm bảo tỷ lệ toàn đề luôn đạt chuẩn tuyệt đối 4 : 3 : 3
+        if (currentNBCapacity < targetNB_TN) {
+            const fallbackNBRows = rows
+                .filter((r: any) => (r.allocTN || 0) > 0 && !r.hasNBSpec)
+                .sort((a: any, b: any) => {
+                    if (a.isNewLesson !== b.isNewLesson) return a.isNewLesson ? -1 : 1;
+                    if ((b.allocTN || 0) !== (a.allocTN || 0)) return (b.allocTN || 0) - (a.allocTN || 0);
+                    return b.idx - a.idx;
+                });
+            for (const r of fallbackNBRows) {
+                if (currentNBCapacity >= targetNB_TN) break;
+                r.hasNBSpec = true;
+                currentNBCapacity += r.allocTN || 0;
+            }
         }
 
         // 3. Tương tự, nếu tổng dung lượng câu TN của các bài có hasTHSpec < targetTH_TN,
         //    mở thêm mức Thông hiểu cho các bài có YCCĐ Thông hiểu hợp lệ trong chương trình (currHasTH === true)
-        const currentTHCapacity = rows.reduce((sum: number, r: any) => sum + (r.hasTHSpec ? (r.allocTN || 0) : 0), 0);
+        let currentTHCapacity = rows.reduce((sum: number, r: any) => sum + (r.hasTHSpec ? (r.allocTN || 0) : 0), 0);
         if (currentTHCapacity < targetTH_TN) {
             rows.forEach((r: any) => {
                 if ((r.allocTN || 0) > 0 && !r.hasTHSpec && r.currHasTH) {
                     r.hasTHSpec = true;
                 }
             });
+            currentTHCapacity = rows.reduce((sum: number, r: any) => sum + (r.hasTHSpec ? (r.allocTN || 0) : 0), 0);
+        }
+        if (currentTHCapacity < targetTH_TN) {
+            const fallbackTHRows = rows
+                .filter((r: any) => (r.allocTN || 0) > 0 && !r.hasTHSpec)
+                .sort((a: any, b: any) => {
+                    if (a.isNewLesson !== b.isNewLesson) return a.isNewLesson ? -1 : 1;
+                    if ((b.allocTN || 0) !== (a.allocTN || 0)) return (b.allocTN || 0) - (a.allocTN || 0);
+                    return b.idx - a.idx;
+                });
+            for (const r of fallbackTHRows) {
+                if (currentTHCapacity >= targetTH_TN) break;
+                r.hasTHSpec = true;
+                currentTHCapacity += r.allocTN || 0;
+            }
         }
 
         // Pha 2B: Tách số câu TN của từng bài (r.allocTN) thành mức Biết (allocNB) và Hiểu (allocTH)
