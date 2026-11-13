@@ -1,22 +1,24 @@
 import { REQUIREMENTS_DATA, getDefaultCompetencyForTopic, createEmptyNewFormatRow } from './data/matrixConstants';
 import { MatrixData, ExerciseQuestion, NewMatrixFormatRowConfig } from './types';
 import { CURRICULUM } from './data/curriculum';
+import { syncSpecHtmlWithCustomStore } from './services/criteriaService';
 
-export const getRequirementsHtml = (grade: string, mainTopic: string, subTopic: string): string => {
+export const getRequirementsHtml = (grade: string, mainTopic: string, subTopic: string, lessonName?: string): string => {
     const gradeNumberMatch = grade.match(/\d+/);
     if (!gradeNumberMatch) return '';
-    const gradeKey = `Lớp ${gradeNumberMatch[0]}`;
+    const gradeNum = gradeNumberMatch[0];
+    const gradeKey = `Lớp ${gradeNum}`;
     const gradeData = REQUIREMENTS_DATA[gradeKey];
 
     if (!gradeData || !gradeData[mainTopic] || !gradeData[mainTopic][subTopic]) {
-        return '';
+        return syncSpecHtmlWithCustomStore('', gradeNum, subTopic, lessonName);
     }
     const requirementsText: string = gradeData[mainTopic][subTopic];
     
     const levelKeywords = ["nhận biết", "thông hiểu", "vận dụng", "vận dụng cao"];
     let isFirstLevel = true;
     
-    return requirementsText.split('\n').map(line => {
+    const baseHtml = requirementsText.split('\n').map(line => {
         const trimmedLine = line.trim();
         if (!trimmedLine) return '';
 
@@ -31,6 +33,8 @@ export const getRequirementsHtml = (grade: string, mainTopic: string, subTopic: 
             return `<div class="pl-2">${trimmedLine}</div>`;
         }
     }).join('');
+
+    return syncSpecHtmlWithCustomStore(baseHtml, gradeNum, subTopic, lessonName);
 };
 
 export const formatDiem = (diem: number): string => {

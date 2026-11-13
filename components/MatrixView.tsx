@@ -981,12 +981,17 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
             newData.specifications.rows[rowIndex][4] = newHtml;
             handleUpdateMatrixWithSync(newData);
 
-            const lessonName = data.specifications.rows[rowIndex]?.[3] || data.matrix?.rows?.[rowIndex]?.[3] || '';
+            const lessonOrSubTopic =
+                data.specifications.rows[rowIndex]?.[3] ||
+                data.matrix?.rows?.[rowIndex]?.[3] ||
+                data.specifications.rows[rowIndex]?.[2] ||
+                data.matrix?.rows?.[rowIndex]?.[2] ||
+                '';
             const lvlCode = getLevelCodeFromTitle(sections[sectionIdx].levelTitle);
-            const grade = detectGradeFromLessonOrContext(lessonName, examName);
-            if (grade && lessonName) {
+            const grade = detectGradeFromLessonOrContext(lessonOrSubTopic, examName);
+            if (grade && lessonOrSubTopic) {
                 try {
-                    addCustomCriterion(grade, lessonName, lvlCode, trimmed);
+                    addCustomCriterion(grade, lessonOrSubTopic, lvlCode, trimmed);
                 } catch (e) {
                     console.error('Error recording add to criteriaStore:', e);
                 }
@@ -1002,23 +1007,28 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
         const itemToUpdate = sections[sectionIdx]?.items[itemIdx];
         if (itemToUpdate) {
             const oldText = itemToUpdate.text;
-            const lessonName = data.specifications.rows[rowIndex]?.[3] || data.matrix?.rows?.[rowIndex]?.[3] || '';
+            const lessonOrSubTopic =
+                data.specifications.rows[rowIndex]?.[3] ||
+                data.matrix?.rows?.[rowIndex]?.[3] ||
+                data.specifications.rows[rowIndex]?.[2] ||
+                data.matrix?.rows?.[rowIndex]?.[2] ||
+                '';
             const lvlCode = getLevelCodeFromTitle(sections[sectionIdx].levelTitle);
-            const grade = detectGradeFromLessonOrContext(lessonName, examName);
-
-            if (grade && lessonName) {
-                try {
-                    updateCustomCriterion(grade, lessonName, lvlCode, oldText, trimmed);
-                } catch (e) {
-                    console.error('Error updating criterion in criteriaStore:', e);
-                }
-            }
+            const grade = detectGradeFromLessonOrContext(lessonOrSubTopic, examName);
 
             itemToUpdate.text = trimmed.startsWith('–') || trimmed.startsWith('-') ? trimmed : `– ${trimmed}`;
             const newHtml = serializeYccdSections(sections);
             const newData = JSON.parse(JSON.stringify(data));
             newData.specifications.rows[rowIndex][4] = newHtml;
             handleUpdateMatrixWithSync(newData);
+
+            if (grade && lessonOrSubTopic) {
+                try {
+                    updateCustomCriterion(grade, lessonOrSubTopic, lvlCode, oldText, trimmed);
+                } catch (e) {
+                    console.error('Error updating criterion in criteriaStore:', e);
+                }
+            }
         }
         setEditingYccdFor(null);
         setEditingYccdText('');
@@ -1029,23 +1039,29 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
         const sections = parseYccdHtml(currentReq);
         const itemToDelete = sections[sectionIdx]?.items[itemIdx];
         if (itemToDelete) {
-            const lessonName = data.specifications.rows[rowIndex]?.[3] || data.matrix?.rows?.[rowIndex]?.[3] || '';
+            const oldText = itemToDelete.text;
+            const lessonOrSubTopic =
+                data.specifications.rows[rowIndex]?.[3] ||
+                data.matrix?.rows?.[rowIndex]?.[3] ||
+                data.specifications.rows[rowIndex]?.[2] ||
+                data.matrix?.rows?.[rowIndex]?.[2] ||
+                '';
             const lvlCode = getLevelCodeFromTitle(sections[sectionIdx].levelTitle);
-            const grade = detectGradeFromLessonOrContext(lessonName, examName);
-
-            if (grade && lessonName) {
-                try {
-                    deleteCustomCriterion(grade, lessonName, lvlCode, itemToDelete.text);
-                } catch (e) {
-                    console.error('Error recording deletion in criteriaStore:', e);
-                }
-            }
+            const grade = detectGradeFromLessonOrContext(lessonOrSubTopic, examName);
 
             sections[sectionIdx].items.splice(itemIdx, 1);
             const newHtml = serializeYccdSections(sections);
             const newData = JSON.parse(JSON.stringify(data));
             newData.specifications.rows[rowIndex][4] = newHtml;
             handleUpdateMatrixWithSync(newData);
+
+            if (grade && lessonOrSubTopic) {
+                try {
+                    deleteCustomCriterion(grade, lessonOrSubTopic, lvlCode, oldText);
+                } catch (e) {
+                    console.error('Error recording deletion in criteriaStore:', e);
+                }
+            }
         }
     };
 
@@ -1114,12 +1130,32 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
         const currentReq = data.specifications?.rows?.[rowIndex]?.[4] || '';
         const sections = parseYccdHtml(currentReq);
         if (sections[sectionIdx]) {
+            const deletedSection = sections[sectionIdx];
+            const lessonOrSubTopic =
+                data.specifications?.rows?.[rowIndex]?.[3] ||
+                data.matrix?.rows?.[rowIndex]?.[3] ||
+                data.specifications?.rows?.[rowIndex]?.[2] ||
+                data.matrix?.rows?.[rowIndex]?.[2] ||
+                '';
+            const lvlCode = getLevelCodeFromTitle(deletedSection.levelTitle);
+            const grade = detectGradeFromLessonOrContext(lessonOrSubTopic, examName);
+
             sections.splice(sectionIdx, 1);
             const newHtml = serializeYccdSections(sections);
             const newData = JSON.parse(JSON.stringify(data));
             if (newData.specifications?.rows?.[rowIndex]) {
                 newData.specifications.rows[rowIndex][4] = newHtml;
                 handleUpdateMatrixWithSync(newData);
+            }
+
+            if (grade && lessonOrSubTopic) {
+                deletedSection.items.forEach(it => {
+                    try {
+                        deleteCustomCriterion(grade, lessonOrSubTopic, lvlCode, it.text);
+                    } catch (e) {
+                        console.error('Error recording level item deletion in criteriaStore:', e);
+                    }
+                });
             }
         }
         if (addingYccdFor?.rowIndex === rowIndex && addingYccdFor?.sectionIdx === sectionIdx) {
@@ -1440,7 +1476,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                                                     setEditingYccdText(item.text.replace(/^[–\-*•]\s*/, ''));
                                                                 }}
                                                                 className="text-slate-400 hover:text-blue-600 p-0.5 rounded hover:bg-blue-50 cursor-pointer"
-                                                                title="Sửa YCCĐ này"
+                                                                title="Sửa yêu cầu cần đạt này"
                                                             >
                                                                 <Pencil size={12} />
                                                             </button>
@@ -1448,7 +1484,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                                                 type="button"
                                                                 onClick={() => handleDeleteYccd(rowIndex, sIdx, iIdx)}
                                                                 className="text-red-400 hover:text-red-600 p-0.5 rounded hover:bg-red-50 cursor-pointer"
-                                                                title="Xóa dòng YCCĐ này"
+                                                                title="Xóa yêu cầu cần đạt này"
                                                             >
                                                                 <X size={12} />
                                                             </button>

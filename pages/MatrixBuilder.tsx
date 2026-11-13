@@ -9,6 +9,7 @@ import { PREDEFINED_FOLDERS as predefinedFoldersByGrade, REQUIREMENTS_DATA as re
 import { getRequirementsHtml, generatePrintHTML } from '../utils';
 import { loadQuestionBank } from '../services/storage/questionBankStorage';
 import { CANONICAL_REQUIREMENTS, KNTT_LESSON_MAPPINGS } from '../data/curriculum/index';
+import { syncSpecHtmlWithCustomStore, CUSTOM_CRITERIA_STORAGE_KEY } from '../services/criteriaService';
 
 const MatrixBuilder: React.FC = () => {
     // --- State ---
@@ -43,11 +44,35 @@ const MatrixBuilder: React.FC = () => {
 
     // --- Persistence ---
     useEffect(() => {
+        const syncTreeWithCustomCriteria = (node: FileSystemItem, currentGrade?: string) => {
+            if (!node) return;
+            let g = currentGrade;
+            const m = node.name?.match(/(?:Lớp|Khối)\s*(\d+)/i) || node.name?.match(/\b([6-9])\b/);
+            if (m && ['6', '7', '8', '9'].includes(m[1])) {
+                g = m[1];
+            }
+            if (node.matrixData?.specifications?.rows && Array.isArray(node.matrixData.specifications.rows)) {
+                const effGrade = g || '7';
+                node.matrixData.specifications.rows.forEach((row: string[], rIdx: number) => {
+                    const subTopic = row[2] || node.matrixData?.matrix?.rows?.[rIdx]?.[2] || '';
+                    const lessonName = row[3] || node.matrixData?.matrix?.rows?.[rIdx]?.[3] || '';
+                    if (row[4]) {
+                        row[4] = syncSpecHtmlWithCustomStore(row[4], effGrade, subTopic, lessonName);
+                    }
+                });
+            }
+            if (Array.isArray(node.children)) {
+                node.children.forEach(c => syncTreeWithCustomCriteria(c, g));
+            }
+        };
+
         const reloadFs = () => {
             const saved = localStorage.getItem('matrixFileSystem');
             if (saved) {
                 try {
-                    setFileSystem(JSON.parse(saved));
+                    const parsed = JSON.parse(saved);
+                    syncTreeWithCustomCriteria(parsed);
+                    setFileSystem(parsed);
                 } catch (e) {
                     console.error("Failed to load file system", e);
                 }
@@ -57,16 +82,18 @@ const MatrixBuilder: React.FC = () => {
         reloadFs();
 
         const handleStorage = (e: StorageEvent) => {
-            if (e.key === 'matrixFileSystem') {
+            if (e.key === 'matrixFileSystem' || e.key === CUSTOM_CRITERIA_STORAGE_KEY) {
                 reloadFs();
             }
         };
 
         window.addEventListener('storage', handleStorage);
         window.addEventListener('matrix_filesystem_updated', reloadFs);
+        window.addEventListener('criteria_updated', reloadFs);
         return () => {
             window.removeEventListener('storage', handleStorage);
             window.removeEventListener('matrix_filesystem_updated', reloadFs);
+            window.removeEventListener('criteria_updated', reloadFs);
         };
     }, []);
 
@@ -242,7 +269,7 @@ const MatrixBuilder: React.FC = () => {
                             // Support both old and new formats for Lesson Name
                             const lessonName = file.content?.info?.lesson || file.content?.thongTinChung?.bai || file.name.replace('.json', '');
                             const soTiet = (file.content?.info?.soTiet || file.content?.thongTinChung?.soTiet || 1).toString();
-                            const requirements = getRequirementsHtml(grade, mainTopic, subTopic);
+                            const requirements = getRequirementsHtml(grade, mainTopic, subTopic, lessonName);
                             
                             // Count available questions
                             const counts = { NB: {TN:0,TL:0}, TH: {TN:0,TL:0}, VD: {TN:0,TL:0}, VDC: {TN:0,TL:0} };
@@ -295,8 +322,14 @@ const MatrixBuilder: React.FC = () => {
                                 r[1] === mainTopic && r[2] === subTopic && r[3] === lessonName
                             );
                             if (existingSpec) {
+                                const syncedExistingHtml = syncSpecHtmlWithCustomStore(
+                                    existingSpec[4] || requirements,
+                                    gradeNumberMatch[0],
+                                    subTopic,
+                                    lessonName
+                                );
                                 specRows.push([
-                                    stt.toString(), mainTopic, subTopic, lessonName, existingSpec[4] || requirements, 
+                                    stt.toString(), mainTopic, subTopic, lessonName, syncedExistingHtml, 
                                     existingSpec[5] || '0-0', existingSpec[6] || '0-0', existingSpec[7] || '0-0', existingSpec[8] || '0-0'
                                 ]);
                             } else {
@@ -332,8 +365,13 @@ const MatrixBuilder: React.FC = () => {
                             r[1] === mainTopic && r[2] === subTopic && (r[3] === '' || !r[3])
                         );
                         if (existingSpec) {
+                            const syncedExistingHtml = syncSpecHtmlWithCustomStore(
+                                existingSpec[4] || requirements,
+                                gradeNumberMatch[0],
+                                subTopic
+                            );
                             specRows.push([
-                                stt.toString(), mainTopic, subTopic, '', existingSpec[4] || requirements, 
+                                stt.toString(), mainTopic, subTopic, '', syncedExistingHtml, 
                                 existingSpec[5] || '0-0', existingSpec[6] || '0-0', existingSpec[7] || '0-0', existingSpec[8] || '0-0'
                             ]);
                         } else {

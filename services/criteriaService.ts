@@ -1,4 +1,6 @@
 import { CURRICULUM } from '../data/curriculum';
+import { CANONICAL_REQUIREMENTS, KNTT_LESSON_MAPPINGS } from '../data/curriculum/index';
+import { REQUIREMENTS_DATA } from '../data/matrixConstants';
 import { MatrixData } from '../types';
 
 export const CUSTOM_CRITERIA_STORAGE_KEY = 'matrandethi_custom_criteria_data';
@@ -93,16 +95,17 @@ export const extractLessonNumber = (str: string): string | null => {
 };
 
 /**
- * Detects grade ('6' | '7' | '8' | '9') from context strings
+ * Detects grade ('6' | '7' | '8' | '9') from context strings, lesson names, or subTopic names
  */
-export const detectGradeFromLessonOrContext = (lessonName: string, context?: string): string => {
+export const detectGradeFromLessonOrContext = (lessonOrSubTopic: string, context?: string): string => {
     if (context) {
         const m = context.match(/(?:lớp|khối|grade|tin)\s*(\d+)/i) || context.match(/\b([6-9])\b/);
         if (m && ['6', '7', '8', '9'].includes(m[1])) return m[1];
     }
 
-    const normTarget = normalizeLessonString(lessonName);
-    const targetNum = extractLessonNumber(lessonName);
+    const normTarget = normalizeLessonString(lessonOrSubTopic);
+    const strippedTarget = normalizeLessonString((lessonOrSubTopic || '').replace(/^\d+\.\s*/, ''));
+    const targetNum = extractLessonNumber(lessonOrSubTopic);
 
     for (const g of ['6', '7', '8', '9']) {
         const lessons = CURRICULUM.lessonData[g] || [];
@@ -112,7 +115,235 @@ export const detectGradeFromLessonOrContext = (lessonName: string, context?: str
         }
     }
 
+    for (const g of ['6', '7', '8', '9']) {
+        const gradeReqs = REQUIREMENTS_DATA[`Lớp ${g}`];
+        if (gradeReqs && normTarget) {
+            for (const [mainTopic, subTopics] of Object.entries(gradeReqs)) {
+                if (normalizeLessonString(mainTopic) === normTarget) return g;
+                for (const subKey of Object.keys(subTopics as object)) {
+                    const normSub = normalizeLessonString(subKey);
+                    const strippedSub = normalizeLessonString(subKey.replace(/^\d+\.\s*/, ''));
+                    if (normSub === normTarget || (strippedTarget && strippedSub === strippedTarget)) {
+                        return g;
+                    }
+                }
+            }
+        }
+    }
+
     return '7';
+};
+
+/**
+ * Resolves a lesson name to its canonical key in CURRICULUM.lessonData[grade] if one exists
+ */
+export const resolveCanonicalLessonName = (grade: string, lessonName: string): string => {
+    if (!grade || !lessonName) return lessonName || '';
+    const g = grade.trim();
+    const lessons = CURRICULUM.lessonData[g] || [];
+    if (lessons.includes(lessonName)) return lessonName;
+
+    const normTarget = normalizeLessonString(lessonName);
+    const targetNum = extractLessonNumber(lessonName);
+
+    for (const l of lessons) {
+        if (normalizeLessonString(l) === normTarget) return l;
+    }
+    if (targetNum) {
+        for (const l of lessons) {
+            if (extractLessonNumber(l) === targetNum) return l;
+        }
+    }
+    return lessonName.trim();
+};
+
+/**
+ * Finds all canonical lesson names in CURRICULUM.lessonData[grade] that belong to a Matrix subTopic
+ */
+export const getLessonsForSubTopic = (grade: string, subTopic: string): string[] => {
+    if (!grade || !subTopic) return [];
+    const g = grade.trim();
+    const gradeNum = Number(g);
+    const normSub = normalizeLessonString(subTopic);
+    const strippedSub = normalizeLessonString(subTopic.replace(/^\d+\.\s*/, ''));
+    if (!normSub) return [];
+
+    // If subTopic is already a lesson name in CURRICULUM.lessonData[g]
+    const lessonsInGrade = CURRICULUM.lessonData[g] || [];
+    const directLesson = lessonsInGrade.find(
+        l => normalizeLessonString(l) === normSub || (extractLessonNumber(subTopic) && extractLessonNumber(l) === extractLessonNumber(subTopic))
+    );
+    if (directLesson) return [directLesson];
+
+    const matchedLessons: string[] = [];
+
+    // 1. Match via CANONICAL_REQUIREMENTS & KNTT_LESSON_MAPPINGS
+    const matchingReqIds = new Set(
+        CANONICAL_REQUIREMENTS.filter(req => {
+            if (req.grade !== gradeNum) return false;
+            const reqNormSub = normalizeLessonString(req.subTopicName);
+            const reqStrippedSub = normalizeLessonString(req.subTopicName.replace(/^\d+\.\s*/, ''));
+            return reqNormSub === normSub || (strippedSub && reqStrippedSub === strippedSub);
+        }).map(req => req.id)
+    );
+
+    if (matchingReqIds.size > 0) {
+        KNTT_LESSON_MAPPINGS.forEach(mapping => {
+            if (mapping.grade === gradeNum && mapping.requirementIds.some(id => matchingReqIds.has(id))) {
+                const canonical = resolveCanonicalLessonName(g, mapping.lessonTitle || mapping.lessonNumber);
+                if (canonical && !matchedLessons.includes(canonical)) {
+                    matchedLessons.push(canonical);
+                }
+            }
+        });
+    }
+
+    // 2. Fallback: Match by overlapping YCCĐ text between REQUIREMENTS_DATA and CURRICULUM.criteriaData
+    if (matchedLessons.length === 0) {
+        const gradeReqs = REQUIREMENTS_DATA[`Lớp ${g}`] || {};
+        let rawSubTopicText = '';
+        for (const subTopics of Object.values(gradeReqs)) {
+            for (const [sKey, sVal] of Object.entries(subTopics as Record<string, string>)) {
+                if (
+                    normalizeLessonString(sKey) === normSub ||
+                    normalizeLessonString(sKey.replace(/^\d+\.\s*/, '')) === strippedSub
+                ) {
+                    rawSubTopicText = sVal;
+                    break;
+                }
+            }
+            if (rawSubTopicText) break;
+        }
+
+        if (rawSubTopicText) {
+            const subLinesNorm = rawSubTopicText
+                .split('\n')
+                .map(l => normalizeCriterionText(l))
+                .filter(l => l.length > 10);
+            const criteriaForGrade = CURRICULUM.criteriaData[g] || {};
+            for (const [lessonKey, critMap] of Object.entries(criteriaForGrade)) {
+                const allLessonNorms = Object.values(critMap)
+                    .flat()
+                    .map(c => normalizeCriterionText(c));
+                const hasOverlap = allLessonNorms.some(ln =>
+                    subLinesNorm.some(sn => sn === ln || (sn.length > 12 && ln.includes(sn)) || (ln.length > 12 && sn.includes(ln)))
+                );
+                if (hasOverlap && !matchedLessons.includes(lessonKey)) {
+                    matchedLessons.push(lessonKey);
+                }
+            }
+        }
+    }
+
+    return matchedLessons;
+};
+
+/**
+ * Finds all Matrix subTopics that correspond to a given lesson
+ */
+export const getSubTopicsForLesson = (grade: string, lessonName: string): string[] => {
+    if (!grade || !lessonName) return [];
+    const g = grade.trim();
+    const gradeNum = Number(g);
+    const canonicalLesson = resolveCanonicalLessonName(g, lessonName);
+    const lessonNum = extractLessonNumber(canonicalLesson);
+    const normLesson = normalizeLessonString(canonicalLesson);
+
+    const subTopics: string[] = [];
+
+    // 1. Lookup via KNTT_LESSON_MAPPINGS -> CANONICAL_REQUIREMENTS
+    const mappings = KNTT_LESSON_MAPPINGS.filter(
+        m =>
+            m.grade === gradeNum &&
+            (normalizeLessonString(m.lessonTitle) === normLesson ||
+                (lessonNum && extractLessonNumber(m.lessonNumber) === lessonNum))
+    );
+    const reqIdSet = new Set(mappings.flatMap(m => m.requirementIds));
+    if (reqIdSet.size > 0) {
+        CANONICAL_REQUIREMENTS.forEach(req => {
+            if (req.grade === gradeNum && reqIdSet.has(req.id) && req.subTopicName) {
+                if (!subTopics.includes(req.subTopicName)) {
+                    subTopics.push(req.subTopicName);
+                }
+            }
+        });
+    }
+
+    // 2. Also match against REQUIREMENTS_DATA['Lớp ' + g] subTopic keys
+    const gradeReqs = REQUIREMENTS_DATA[`Lớp ${g}`] || {};
+    for (const subTopicMap of Object.values(gradeReqs)) {
+        for (const sKey of Object.keys(subTopicMap as object)) {
+            if (getLessonsForSubTopic(g, sKey).some(l => normalizeLessonString(l) === normLesson)) {
+                if (!subTopics.includes(sKey)) {
+                    subTopics.push(sKey);
+                }
+            }
+        }
+    }
+
+    return subTopics;
+};
+
+/**
+ * Resolves the target lesson key(s) when a user edits/adds/deletes a YCCĐ in either QuestionManager or MatrixView
+ */
+export const resolveTargetLessons = (
+    grade: string,
+    lessonOrSubTopic: string,
+    oldCriterionText?: string,
+    store?: GradeCriteriaMap
+): string[] => {
+    if (!grade || !lessonOrSubTopic) return [];
+    const g = grade.trim();
+    const lessonsInGrade = CURRICULUM.lessonData[g] || [];
+    const normInput = normalizeLessonString(lessonOrSubTopic);
+    const inputLessonNum = extractLessonNumber(lessonOrSubTopic);
+
+    // Case 1: Input is directly a lesson (e.g. "Bài 1..." or matches CURRICULUM.lessonData)
+    const isDirectLesson =
+        lessonsInGrade.some(l => normalizeLessonString(l) === normInput) ||
+        Boolean(inputLessonNum);
+
+    if (isDirectLesson) {
+        const canonical = resolveCanonicalLessonName(g, lessonOrSubTopic);
+        return canonical !== lessonOrSubTopic.trim()
+            ? [canonical, lessonOrSubTopic.trim()]
+            : [canonical];
+    }
+
+    // Case 2: Input is a Matrix subTopic (when row[3] lesson is empty)
+    const candidateLessons = getLessonsForSubTopic(g, lessonOrSubTopic);
+    if (candidateLessons.length === 0) {
+        return [lessonOrSubTopic.trim()];
+    }
+
+    // If editing or deleting a specific criterion, narrow down to the candidate lesson(s) that actually contain oldCriterionText
+    if (oldCriterionText && candidateLessons.length > 1) {
+        const targetNorm = normalizeCriterionText(oldCriterionText);
+        const matchingCandidates = candidateLessons.filter(cand => {
+            const baseMap = CURRICULUM.criteriaData[g]?.[cand] || {};
+            const customMap = store?.[g]?.[cand] || {};
+            const allTexts = [
+                ...Object.values(baseMap).flat(),
+                ...Object.entries(customMap)
+                    .filter(([k]) => !k.startsWith('__'))
+                    .flatMap(([, v]) => (Array.isArray(v) ? v : []))
+            ];
+            return allTexts.some(t => {
+                const n = normalizeCriterionText(t);
+                return (
+                    n === targetNorm ||
+                    (targetNorm.length > 5 && n.includes(targetNorm)) ||
+                    (n.length > 5 && targetNorm.includes(n))
+                );
+            });
+        });
+        if (matchingCandidates.length > 0) {
+            return matchingCandidates;
+        }
+    }
+
+    return candidateLessons;
 };
 
 /**
@@ -259,7 +490,7 @@ export const loadCustomCriteriaStore = (): GradeCriteriaMap => {
 };
 
 /**
- * Recursively harvests criteria from matrixFileSystem directory tree
+ * Recursively harvests criteria from matrixFileSystem directory tree without overwriting custom edits/deletions
  */
 const harvestCriteriaFromFileSystem = (item: any, store: GradeCriteriaMap, currentGrade?: string) => {
     if (!item) return;
@@ -282,11 +513,29 @@ const harvestCriteriaFromFileSystem = (item: any, store: GradeCriteriaMap, curre
             if (lessonName && reqHtml) {
                 const parsed = parseYccdHtmlToCriteria(reqHtml);
                 if (Object.keys(parsed).length > 0) {
-                    if (!store[effectiveGrade][lessonName]) {
-                        store[effectiveGrade][lessonName] = {};
-                    }
-                    Object.entries(parsed).forEach(([lvl, list]) => {
-                        store[effectiveGrade][lessonName][lvl] = list;
+                    const targetKeys = resolveTargetLessons(effectiveGrade, lessonName, undefined, store);
+                    targetKeys.forEach(tKey => {
+                        if (!store[effectiveGrade][tKey]) {
+                            store[effectiveGrade][tKey] = {};
+                        }
+                        const deletedList: string[] = store[effectiveGrade][tKey].__deleted || [];
+                        Object.entries(parsed).forEach(([lvl, list]) => {
+                            const filteredList = list.filter(it => !deletedList.includes(normalizeCriterionText(it)));
+                            if (!store[effectiveGrade][tKey][lvl] || store[effectiveGrade][tKey][lvl].length === 0) {
+                                if (filteredList.length > 0) {
+                                    store[effectiveGrade][tKey][lvl] = filteredList;
+                                }
+                            } else {
+                                const existingNorms = new Set(store[effectiveGrade][tKey][lvl].map(s => normalizeCriterionText(s)));
+                                filteredList.forEach(it => {
+                                    const n = normalizeCriterionText(it);
+                                    if (!existingNorms.has(n)) {
+                                        store[effectiveGrade][tKey][lvl].push(it);
+                                        existingNorms.add(n);
+                                    }
+                                });
+                            }
+                        });
                     });
                 }
             }
@@ -318,19 +567,31 @@ export const syncCriteriaFromMatrixData = (matrixData: MatrixData, context?: str
     const store = loadCustomCriteriaStore();
 
     matrixData.specifications.rows.forEach((row: string[], idx: number) => {
-        const lessonName = row[3] || matrixData.matrix?.rows?.[idx]?.[3];
+        const subTopic = row[2] || matrixData.matrix?.rows?.[idx]?.[2] || '';
+        const lessonName = row[3] || matrixData.matrix?.rows?.[idx]?.[3] || '';
         const reqHtml = row[4];
-        if (!lessonName || !reqHtml) return;
+        if ((!lessonName && !subTopic) || !reqHtml) return;
 
-        const grade = detectGradeFromLessonOrContext(lessonName, context);
+        const grade = detectGradeFromLessonOrContext(lessonName || subTopic, context);
         const parsed = parseYccdHtmlToCriteria(reqHtml);
 
         if (Object.keys(parsed).length > 0) {
             if (!store[grade]) store[grade] = {};
-            if (!store[grade][lessonName]) store[grade][lessonName] = {};
+            const targetKeys = lessonName
+                ? resolveTargetLessons(grade, lessonName, undefined, store)
+                : getLessonsForSubTopic(grade, subTopic).length === 1
+                ? getLessonsForSubTopic(grade, subTopic)
+                : [];
 
-            Object.entries(parsed).forEach(([lvl, list]) => {
-                store[grade][lessonName][lvl] = list;
+            targetKeys.forEach(tKey => {
+                if (!store[grade][tKey]) store[grade][tKey] = {};
+                const deletedList: string[] = store[grade][tKey].__deleted || [];
+                Object.entries(parsed).forEach(([lvl, list]) => {
+                    const filteredList = list.filter(it => !deletedList.includes(normalizeCriterionText(it)));
+                    if (filteredList.length > 0) {
+                        store[grade][tKey][lvl] = filteredList;
+                    }
+                });
             });
         }
     });
@@ -439,23 +700,57 @@ export const applyCriterionChangeToHtml = (
 
 /**
  * ĐỒNG BỘ 2 CHIỀU SANG BẢNG ĐẶC TẢ (matrixFileSystem & saved exams in localStorage)
+ * Hỗ trợ đồng bộ cả dòng Bài học (row[3] = lesson) LẪN dòng Chủ đề con / Nội dung (row[2] = subTopic, row[3] = "")
  */
 export const syncCriterionChangeToMatrixFileSystem = (
     grade: string,
-    lesson: string,
+    lessonOrSubTopic: string,
     levelCode: string,
     action: 'add' | 'update' | 'delete',
     data: { oldText?: string; newText?: string }
 ): void => {
     if (typeof window === 'undefined') return;
 
-    const targetNormLesson = normalizeLessonString(lesson);
-    const targetLessonNum = extractLessonNumber(lesson);
+    const g = (grade || '').trim();
+    const targetLessons = resolveTargetLessons(g, lessonOrSubTopic, data.oldText);
+    const targetNormLessons = new Set([
+        normalizeLessonString(lessonOrSubTopic),
+        ...targetLessons.map(l => normalizeLessonString(l))
+    ]);
+    const targetLessonNums = new Set(
+        [extractLessonNumber(lessonOrSubTopic), ...targetLessons.map(l => extractLessonNumber(l))].filter(Boolean) as string[]
+    );
+    const targetSubTopicsNorm = new Set<string>();
+    targetLessons.forEach(l => {
+        getSubTopicsForLesson(g, l).forEach(st => {
+            targetSubTopicsNorm.add(normalizeLessonString(st));
+            targetSubTopicsNorm.add(normalizeLessonString(st.replace(/^\d+\.\s*/, '')));
+        });
+    });
+    if (!extractLessonNumber(lessonOrSubTopic)) {
+        targetSubTopicsNorm.add(normalizeLessonString(lessonOrSubTopic));
+        targetSubTopicsNorm.add(normalizeLessonString(lessonOrSubTopic.replace(/^\d+\.\s*/, '')));
+    }
 
-    const matchesLesson = (rowLesson: string): boolean => {
-        if (!rowLesson) return false;
-        if (normalizeLessonString(rowLesson) === targetNormLesson) return true;
-        if (targetLessonNum && extractLessonNumber(rowLesson) === targetLessonNum) return true;
+    const matchesRow = (row: string[], folderGrade?: string): boolean => {
+        if (folderGrade && g && folderGrade !== g) return false;
+        const rowSubTopic = row[2] || '';
+        const rowLesson = row[3] || '';
+
+        if (rowLesson) {
+            if (targetNormLessons.has(normalizeLessonString(rowLesson))) return true;
+            const rNum = extractLessonNumber(rowLesson);
+            if (rNum && targetLessonNums.has(rNum)) return true;
+        }
+
+        if (rowSubTopic) {
+            const normSub = normalizeLessonString(rowSubTopic);
+            const strippedSub = normalizeLessonString(rowSubTopic.replace(/^\d+\.\s*/, ''));
+            if (targetSubTopicsNorm.has(normSub) || (strippedSub && targetSubTopicsNorm.has(strippedSub))) {
+                return true;
+            }
+        }
+
         return false;
     };
 
@@ -466,13 +761,20 @@ export const syncCriterionChangeToMatrixFileSystem = (
             const fs = JSON.parse(raw);
             let modified = false;
 
-            const updateInTree = (item: any) => {
+            const updateInTree = (item: any, currentGrade?: string) => {
                 if (!item) return;
+
+                let folderGrade = currentGrade;
+                if (item.name) {
+                    const m = item.name.match(/(?:Lớp|Khối)\s*(\d+)/i) || item.name.match(/\b([6-9])\b/);
+                    if (m && ['6', '7', '8', '9'].includes(m[1])) {
+                        folderGrade = m[1];
+                    }
+                }
 
                 if (item.matrixData?.specifications?.rows && Array.isArray(item.matrixData.specifications.rows)) {
                     item.matrixData.specifications.rows.forEach((row: string[]) => {
-                        const rowLesson = row[3];
-                        if (matchesLesson(rowLesson)) {
+                        if (matchesRow(row, folderGrade)) {
                             const curHtml = row[4] || '';
                             const newHtml = applyCriterionChangeToHtml(curHtml, levelCode, action, data);
                             if (newHtml !== curHtml) {
@@ -484,7 +786,7 @@ export const syncCriterionChangeToMatrixFileSystem = (
                 }
 
                 if (Array.isArray(item.children)) {
-                    item.children.forEach(updateInTree);
+                    item.children.forEach((child: any) => updateInTree(child, folderGrade));
                 }
             };
 
@@ -507,9 +809,9 @@ export const syncCriterionChangeToMatrixFileSystem = (
             if (Array.isArray(exams)) {
                 exams.forEach((exam: any) => {
                     if (exam.matrixData?.specifications?.rows && Array.isArray(exam.matrixData.specifications.rows)) {
+                        const examGrade = exam.grade ? String(exam.grade) : undefined;
                         exam.matrixData.specifications.rows.forEach((row: string[]) => {
-                            const rowLesson = row[3];
-                            if (matchesLesson(rowLesson)) {
+                            if (matchesRow(row, examGrade)) {
                                 const curHtml = row[4] || '';
                                 const newHtml = applyCriterionChangeToHtml(curHtml, levelCode, action, data);
                                 if (newHtml !== curHtml) {
@@ -530,12 +832,12 @@ export const syncCriterionChangeToMatrixFileSystem = (
     }
 
     // 3. Bắn event cho các view đang mở cập nhật tức thì
-    window.dispatchEvent(new CustomEvent('matrix_filesystem_updated', { detail: { grade, lesson, levelCode, action } }));
-    window.dispatchEvent(new CustomEvent('criteria_updated', { detail: { grade, lesson, levelCode, action } }));
+    window.dispatchEvent(new CustomEvent('matrix_filesystem_updated', { detail: { grade: g, lesson: lessonOrSubTopic, levelCode, action } }));
+    window.dispatchEvent(new CustomEvent('criteria_updated', { detail: { grade: g, lesson: lessonOrSubTopic, levelCode, action } }));
 };
 
 /**
- * Bổ sung YCCĐ mới (từ Quản Lý Câu Hỏi) và đồng bộ qua Bảng đặc tả
+ * Bổ sung YCCĐ mới (từ Quản Lý Câu Hỏi hoặc Bảng Đặc Tả) và đồng bộ 2 chiều
  */
 export const addCustomCriterion = (
     grade: string,
@@ -546,7 +848,6 @@ export const addCustomCriterion = (
     const store = loadCustomCriteriaStore();
     const g = grade.trim();
     if (!store[g]) store[g] = {};
-    if (!store[g][lesson]) store[g][lesson] = {};
 
     const lvl = getLevelCodeFromTitle(levelCode);
     const prefix = getLevelPrefixNumber(lvl);
@@ -555,26 +856,45 @@ export const addCustomCriterion = (
     if (!cleanText) {
         cleanText = `Yêu cầu cần đạt mức ${getLevelTitleFromCode(lvl)}`;
     }
+    const normNew = normalizeCriterionText(cleanText);
 
-    const currentList = store[g][lesson][lvl] || [];
-    const nextIdx = currentList.length + 1;
-    const formatted = `${prefix}.${nextIdx} ${cleanText}`;
-
-    // Thêm vào store nếu chưa có
-    const exists = currentList.some(item => normalizeCriterionText(item) === normalizeCriterionText(cleanText));
-    if (!exists) {
-        store[g][lesson][lvl] = [...currentList, formatted];
-        saveCustomCriteriaStore(store);
+    const targetKeys = resolveTargetLessons(g, lesson, undefined, store);
+    if (!targetKeys.includes(lesson.trim())) {
+        targetKeys.push(lesson.trim());
     }
+
+    targetKeys.forEach(tKey => {
+        if (!store[g][tKey]) store[g][tKey] = {};
+
+        // Nếu mục này từng nằm trong __deleted thì gỡ khỏi __deleted
+        if (Array.isArray(store[g][tKey].__deleted)) {
+            store[g][tKey].__deleted = store[g][tKey].__deleted.filter(d => d !== normNew);
+        }
+
+        const existingMerged = getMergedCriteria(g, tKey, store)?.[lvl] || [];
+        const currentList = store[g][tKey][lvl] || [];
+        const baseList = [...existingMerged];
+
+        const alreadyExists = baseList.some(item => normalizeCriterionText(item) === normNew);
+        if (!alreadyExists) {
+            const nextIdx = baseList.length + 1;
+            const formatted = `${prefix}.${nextIdx} ${cleanText}`;
+            store[g][tKey][lvl] = [...baseList, formatted];
+        } else if (currentList.length === 0) {
+            store[g][tKey][lvl] = [...baseList];
+        }
+    });
+
+    saveCustomCriteriaStore(store);
 
     // Đồng bộ tức thì qua Bảng đặc tả
     syncCriterionChangeToMatrixFileSystem(g, lesson, lvl, 'add', { newText: cleanText });
 
-    return getMergedCriteria(g, lesson, store) || {};
+    return getMergedCriteria(g, targetKeys[0] || lesson, store) || {};
 };
 
 /**
- * CHỈNH SỬA YCCĐ (từ Quản Lý Câu Hỏi) và đồng bộ qua Bảng đặc tả
+ * CHỈNH SỬA YCCĐ (từ Quản Lý Câu Hỏi hoặc Bảng Đặc Tả) và đồng bộ 2 chiều
  */
 export const updateCustomCriterion = (
     grade: string,
@@ -586,7 +906,6 @@ export const updateCustomCriterion = (
     const store = loadCustomCriteriaStore();
     const g = grade.trim();
     if (!store[g]) store[g] = {};
-    if (!store[g][lesson]) store[g][lesson] = {};
 
     const lvl = getLevelCodeFromTitle(levelCode);
     const prefix = getLevelPrefixNumber(lvl);
@@ -597,26 +916,66 @@ export const updateCustomCriterion = (
         throw new Error('Nội dung yêu cầu cần đạt không được để trống.');
     }
 
-    // 1. Đánh dấu oldCriterionText vào __deleted để chặn CURRICULUM cơ bản không hiện lại
-    if (!store[g][lesson].__deleted) {
-        store[g][lesson].__deleted = [];
-    }
-    if (!store[g][lesson].__deleted.includes(normOld)) {
-        store[g][lesson].__deleted.push(normOld);
+    const targetKeys = resolveTargetLessons(g, lesson, oldCriterionText, store);
+    if (extractLessonNumber(lesson) && !targetKeys.includes(lesson.trim())) {
+        targetKeys.push(lesson.trim());
     }
 
-    // 2. Cập nhật trong store custom criteria
-    const currentList = store[g][lesson][lvl] || [];
-    const oldIdx = currentList.findIndex(it => normalizeCriterionText(it) === normOld);
-    const displayNum = oldIdx >= 0 ? (oldIdx + 1) : (currentList.length + 1);
-    const formattedNew = `${prefix}.${displayNum} ${cleanNew}`;
+    targetKeys.forEach(tKey => {
+        if (!store[g][tKey]) store[g][tKey] = {};
 
-    if (oldIdx >= 0) {
-        currentList[oldIdx] = formattedNew;
-        store[g][lesson][lvl] = [...currentList];
-    } else {
-        store[g][lesson][lvl] = [...currentList, formattedNew];
-    }
+        // Lấy danh sách hiện hành trước khi sửa để giữ nguyên vị trí và mã số (1.1, 1.2...)
+        const beforeMergedList = getMergedCriteria(g, tKey, store)?.[lvl] || [];
+
+        // 1. Đánh dấu oldCriterionText vào __deleted để chặn CURRICULUM cơ bản không hiện lại bản cũ
+        if (!store[g][tKey].__deleted) {
+            store[g][tKey].__deleted = [];
+        }
+        if (!store[g][tKey].__deleted.includes(normOld)) {
+            store[g][tKey].__deleted.push(normOld);
+        }
+
+        // Lưu thêm vào __replacements để đồng bộ sang Ma trận khi khởi tạo mới
+        const entryAny = store[g][tKey] as any;
+        if (!entryAny.__replacements) entryAny.__replacements = {};
+        // Nếu normOld là kết quả của một lần sửa trước đó, cập nhật luôn gốc ban đầu
+        let foundChain = false;
+        for (const [origNorm, prevVal] of Object.entries(entryAny.__replacements as Record<string, string>)) {
+            if (normalizeCriterionText(prevVal) === normOld) {
+                entryAny.__replacements[origNorm] = cleanNew;
+                foundChain = true;
+            }
+        }
+        if (!foundChain) {
+            entryAny.__replacements[normOld] = cleanNew;
+        }
+
+        // Gỡ nội dung mới khỏi __deleted nếu trước đó từng bị xóa
+        const normNew = normalizeCriterionText(cleanNew);
+        store[g][tKey].__deleted = store[g][tKey].__deleted.filter(d => d !== normNew || d === normOld);
+
+        // 2. Cập nhật tại chỗ (in-place) trong danh sách của mức độ để giữ nguyên thứ tự
+        const workingList = beforeMergedList.length > 0 ? [...beforeMergedList] : [...(store[g][tKey][lvl] || [])];
+        const matchIdx = workingList.findIndex(it => {
+            const itNorm = normalizeCriterionText(it);
+            return (
+                itNorm === normOld ||
+                (normOld.length > 5 && itNorm.includes(normOld)) ||
+                (itNorm.length > 5 && normOld.includes(itNorm))
+            );
+        });
+
+        if (matchIdx >= 0) {
+            const codeMatch = workingList[matchIdx].match(/^(\d+\.\d+)\s/);
+            const codePrefix = codeMatch ? codeMatch[1] : `${prefix}.${matchIdx + 1}`;
+            workingList[matchIdx] = `${codePrefix} ${cleanNew}`;
+            store[g][tKey][lvl] = workingList;
+        } else {
+            const displayNum = workingList.length + 1;
+            const formattedNew = `${prefix}.${displayNum} ${cleanNew}`;
+            store[g][tKey][lvl] = [...workingList, formattedNew];
+        }
+    });
 
     saveCustomCriteriaStore(store);
 
@@ -626,11 +985,11 @@ export const updateCustomCriterion = (
         newText: cleanNew
     });
 
-    return getMergedCriteria(g, lesson, store) || {};
+    return getMergedCriteria(g, targetKeys[0] || lesson, store) || {};
 };
 
 /**
- * XÓA YCCĐ (từ Quản Lý Câu Hỏi) và đồng bộ xóa khỏi Bảng đặc tả
+ * XÓA YCCĐ (từ Quản Lý Câu Hỏi hoặc Bảng Đặc Tả) và đồng bộ 2 chiều
  */
 export const deleteCustomCriterion = (
     grade: string,
@@ -641,23 +1000,50 @@ export const deleteCustomCriterion = (
     const store = loadCustomCriteriaStore();
     const g = grade.trim();
     if (!store[g]) store[g] = {};
-    if (!store[g][lesson]) store[g][lesson] = {};
 
     const lvl = getLevelCodeFromTitle(levelCode);
     const normText = normalizeCriterionText(criterionText);
 
-    // 1. Ghi nhận vào __deleted để chặn CURRICULUM cơ bản không hiện lại
-    if (!store[g][lesson].__deleted) {
-        store[g][lesson].__deleted = [];
-    }
-    if (!store[g][lesson].__deleted.includes(normText)) {
-        store[g][lesson].__deleted.push(normText);
+    const targetKeys = resolveTargetLessons(g, lesson, criterionText, store);
+    if (extractLessonNumber(lesson) && !targetKeys.includes(lesson.trim())) {
+        targetKeys.push(lesson.trim());
     }
 
-    // 2. Xóa khỏi custom list nếu có
-    if (store[g][lesson][lvl]) {
-        store[g][lesson][lvl] = store[g][lesson][lvl].filter(it => normalizeCriterionText(it) !== normText);
-    }
+    targetKeys.forEach(tKey => {
+        if (!store[g][tKey]) store[g][tKey] = {};
+        const beforeMergedList = getMergedCriteria(g, tKey, store)?.[lvl] || [];
+
+        // 1. Ghi nhận vào __deleted để chặn CURRICULUM cơ bản không hiện lại
+        if (!store[g][tKey].__deleted) {
+            store[g][tKey].__deleted = [];
+        }
+        if (!store[g][tKey].__deleted.includes(normText)) {
+            store[g][tKey].__deleted.push(normText);
+        }
+
+        const entryAny = store[g][tKey] as any;
+        if (entryAny.__replacements) {
+            for (const [origNorm, prevVal] of Object.entries(entryAny.__replacements as Record<string, string>)) {
+                if (normalizeCriterionText(prevVal) === normText || origNorm === normText) {
+                    if (!store[g][tKey].__deleted.includes(origNorm)) {
+                        store[g][tKey].__deleted.push(origNorm);
+                    }
+                    delete entryAny.__replacements[origNorm];
+                }
+            }
+        }
+
+        // 2. Xóa khỏi danh sách hiện hành
+        const baseList = beforeMergedList.length > 0 ? beforeMergedList : (store[g][tKey][lvl] || []);
+        store[g][tKey][lvl] = baseList.filter(it => {
+            const itNorm = normalizeCriterionText(it);
+            return !(
+                itNorm === normText ||
+                (normText.length > 5 && itNorm.includes(normText)) ||
+                (itNorm.length > 5 && normText.includes(itNorm))
+            );
+        });
+    });
 
     saveCustomCriteriaStore(store);
 
@@ -666,12 +1052,12 @@ export const deleteCustomCriterion = (
         oldText: criterionText
     });
 
-    return getMergedCriteria(g, lesson, store) || {};
+    return getMergedCriteria(g, targetKeys[0] || lesson, store) || {};
 };
 
 /**
  * Gets the merged criteria map for a given grade and lesson, combining
- * 1. Base CURRICULUM.criteriaData (loại trừ các mục đã bị xóa)
+ * 1. Base CURRICULUM.criteriaData (loại trừ các mục đã bị xóa và áp dụng __replacements tại chỗ)
  * 2. Custom/Matrix updated criteria
  */
 export const getMergedCriteria = (
@@ -683,13 +1069,40 @@ export const getMergedCriteria = (
 
     const g = grade.trim();
     const store = customStore || loadCustomCriteriaStore();
+    const gradeStore = store[g] || {};
 
-    // Danh sách các mục đã bị giáo viên xóa hoặc sửa
-    const deletedNorms: string[] = store[g]?.[lesson]?.__deleted || [];
+    const normTarget = normalizeLessonString(lesson);
+    const targetNum = extractLessonNumber(lesson);
+
+    // Tìm tất cả các entry trong store[g] khớp với bài học này (kể cả khác dấu ':' và '.')
+    const matchingCustomEntries: CriteriaMap[] = [];
+    if (gradeStore[lesson]) {
+        matchingCustomEntries.push(gradeStore[lesson]);
+    }
+    for (const [key, map] of Object.entries(gradeStore)) {
+        if (key === lesson) continue;
+        if (normalizeLessonString(key) === normTarget || (targetNum && extractLessonNumber(key) === targetNum)) {
+            matchingCustomEntries.push(map);
+        }
+    }
+
+    // Gom danh sách __deleted và __replacements từ tất cả các khóa tương đương của bài học
+    const deletedNorms = new Set<string>();
+    const replacementsMap: Record<string, string> = {};
+    matchingCustomEntries.forEach(entry => {
+        if (Array.isArray(entry.__deleted)) {
+            entry.__deleted.forEach(d => deletedNorms.add(d));
+        }
+        const rep = (entry as any).__replacements;
+        if (rep && typeof rep === 'object') {
+            Object.assign(replacementsMap, rep);
+        }
+    });
+
     const isItemDeleted = (text: string) => {
-        if (deletedNorms.length === 0) return false;
+        if (deletedNorms.size === 0) return false;
         const norm = normalizeCriterionText(text);
-        return deletedNorms.some(d => d === norm);
+        return deletedNorms.has(norm);
     };
 
     // 1. Get Base Criteria from CURRICULUM
@@ -697,9 +1110,6 @@ export const getMergedCriteria = (
     let baseCriteria: CriteriaMap | undefined = baseCriteriaForGrade[lesson];
 
     if (!baseCriteria) {
-        const normTarget = normalizeLessonString(lesson);
-        const targetNum = extractLessonNumber(lesson);
-
         for (const [key, map] of Object.entries(baseCriteriaForGrade)) {
             if (normalizeLessonString(key) === normTarget) {
                 baseCriteria = map;
@@ -715,37 +1125,28 @@ export const getMergedCriteria = (
     const merged: CriteriaMap = {};
     if (baseCriteria) {
         Object.entries(baseCriteria).forEach(([lvl, list]) => {
-            const filtered = list.filter(item => !isItemDeleted(item));
-            if (filtered.length > 0) {
-                merged[lvl] = [...filtered];
+            const prefix = getLevelPrefixNumber(lvl);
+            const processed: string[] = [];
+            list.forEach((item, idx) => {
+                const norm = normalizeCriterionText(item);
+                if (replacementsMap[norm]) {
+                    const codeMatch = item.match(/^(\d+\.\d+)\s/);
+                    const codePrefix = codeMatch ? codeMatch[1] : `${prefix}.${idx + 1}`;
+                    processed.push(`${codePrefix} ${replacementsMap[norm]}`);
+                } else if (!isItemDeleted(item)) {
+                    processed.push(item);
+                }
+            });
+            if (processed.length > 0) {
+                merged[lvl] = processed;
             }
         });
     }
 
-    // 2. Find matching custom criteria in store
-    const gradeStore = store[g] || {};
-    let customForLesson: CriteriaMap | undefined = gradeStore[lesson];
-
-    if (!customForLesson) {
-        const normTarget = normalizeLessonString(lesson);
-        const targetNum = extractLessonNumber(lesson);
-
-        for (const [key, map] of Object.entries(gradeStore)) {
-            if (normalizeLessonString(key) === normTarget) {
-                customForLesson = map;
-                break;
-            }
-            if (targetNum && extractLessonNumber(key) === targetNum) {
-                customForLesson = map;
-                break;
-            }
-        }
-    }
-
-    // 3. Merge custom criteria into result (excluding internal keys like __deleted)
-    if (customForLesson) {
+    // 2. Merge custom criteria into result (excluding internal keys like __deleted, __replacements)
+    matchingCustomEntries.forEach(customForLesson => {
         Object.entries(customForLesson).forEach(([lvl, list]) => {
-            if (lvl === '__deleted' || !Array.isArray(list)) return;
+            if (lvl.startsWith('__') || !Array.isArray(list)) return;
 
             const validList = list.filter(item => !isItemDeleted(item));
             if (!merged[lvl]) {
@@ -761,7 +1162,94 @@ export const getMergedCriteria = (
                 });
             }
         });
-    }
+    });
 
     return Object.keys(merged).length > 0 ? merged : null;
+};
+
+/**
+ * Đồng bộ nội dung HTML của một ô Yêu cầu cần đạt trên Bản đặc tả với kho YCCĐ đã chỉnh sửa (CUSTOM_CRITERIA_STORAGE_KEY).
+ * Áp dụng cho cả dòng Bài học (lessonName) và dòng Chủ đề con (subTopic).
+ */
+export const syncSpecHtmlWithCustomStore = (
+    htmlContent: string,
+    grade: string,
+    subTopic: string,
+    lessonName?: string,
+    customStore?: GradeCriteriaMap
+): string => {
+    const g = (grade.match(/\d+/)?.[0] || grade || '').trim();
+    if (!g) return htmlContent;
+
+    const store = customStore || loadCustomCriteriaStore();
+    const gradeStore = store[g];
+    if (!gradeStore || Object.keys(gradeStore).length === 0) return htmlContent;
+
+    const targetLessons = lessonName
+        ? resolveTargetLessons(g, lessonName, undefined, store)
+        : getLessonsForSubTopic(g, subTopic);
+
+    if (targetLessons.length === 0) return htmlContent;
+
+    let updatedHtml = htmlContent || '';
+
+    targetLessons.forEach(tLesson => {
+        const normTarget = normalizeLessonString(tLesson);
+        const targetNum = extractLessonNumber(tLesson);
+
+        // Tìm mọi entry trong gradeStore khớp với tLesson
+        const matchingEntries: CriteriaMap[] = [];
+        for (const [k, map] of Object.entries(gradeStore)) {
+            if (normalizeLessonString(k) === normTarget || (targetNum && extractLessonNumber(k) === targetNum)) {
+                matchingEntries.push(map);
+            }
+        }
+        if (matchingEntries.length === 0) return;
+
+        // Xác định danh sách YCCĐ gốc của bài học này trong CURRICULUM để phân biệt mục mới thêm
+        const baseMap = CURRICULUM.criteriaData[g]?.[resolveCanonicalLessonName(g, tLesson)] || {};
+        const baseNorms = new Set(
+            Object.values(baseMap)
+                .flat()
+                .map(c => normalizeCriterionText(c))
+        );
+
+        matchingEntries.forEach(entry => {
+            const repMap: Record<string, string> = (entry as any).__replacements || {};
+            const deletedList: string[] = Array.isArray(entry.__deleted) ? entry.__deleted : [];
+
+            // 1. Áp dụng các mục đã chỉnh sửa (__replacements)
+            for (const [oldNorm, newClean] of Object.entries(repMap)) {
+                updatedHtml = applyCriterionChangeToHtml(updatedHtml, 'NB', 'update', {
+                    oldText: oldNorm,
+                    newText: newClean
+                });
+            }
+
+            // 2. Áp dụng các mục đã xóa (__deleted mà không nằm trong __replacements)
+            deletedList.forEach(delNorm => {
+                if (!repMap[delNorm]) {
+                    updatedHtml = applyCriterionChangeToHtml(updatedHtml, 'NB', 'delete', {
+                        oldText: delNorm
+                    });
+                }
+            });
+
+            // 3. Áp dụng các mục mới bổ sung
+            const replacementValuesNorm = new Set(Object.values(repMap).map(v => normalizeCriterionText(v)));
+            Object.entries(entry).forEach(([lvl, list]) => {
+                if (lvl.startsWith('__') || !Array.isArray(list)) return;
+                list.forEach(item => {
+                    const itemNorm = normalizeCriterionText(item);
+                    if (deletedList.includes(itemNorm)) return;
+                    if (baseNorms.has(itemNorm) || replacementValuesNorm.has(itemNorm)) return;
+                    updatedHtml = applyCriterionChangeToHtml(updatedHtml, lvl, 'add', {
+                        newText: item
+                    });
+                });
+            });
+        });
+    });
+
+    return updatedHtml;
 };

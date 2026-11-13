@@ -13,6 +13,7 @@ import {
     parseYccdSections,
     CUSTOM_CRITERIA_STORAGE_KEY 
 } from '../services/criteriaService';
+import { getRequirementsHtml } from '../utils';
 import { MatrixData } from '../types';
 
 describe('Chức năng Sửa/Xóa YCCĐ và Đồng Bộ Giữa Quản Lý Câu Hỏi & Bảng Đặc Tả', () => {
@@ -235,5 +236,90 @@ describe('Chức năng Sửa/Xóa YCCĐ và Đồng Bộ Giữa Quản Lý Câu 
         expect(mockOnUpdateMatrix).toHaveBeenCalled();
         const updatedRow = mockOnUpdateMatrix.mock.calls[0][0].specifications.rows[0];
         expect(updatedRow[4]).toContain('YCCĐ đã sửa từ MatrixView');
+    });
+
+    it('6. Đồng bộ 2 chiều: Sửa YCCĐ ở Câu hỏi -> tự động cập nhật sang Ma trận (cả dòng Chủ đề con chưa gắn tên bài và khi khởi tạo Ma trận mới)', () => {
+        // Giả lập Ma trận đang lưu theo Chủ đề con (row[3] = "" rỗng, row[2] = "1. Thông tin và dữ liệu")
+        const initialSubTopicHtml = getRequirementsHtml('Lớp 6', 'Chủ đề A. Máy tính và cộng đồng', '1. Thông tin và dữ liệu');
+        const mockFs = {
+            name: 'Root',
+            type: 'folder',
+            children: [
+                {
+                    name: 'Lớp 6 - Giữa kì I',
+                    type: 'folder',
+                    matrixData: {
+                        matrix: { rows: [['1', 'Chủ đề A. Máy tính và cộng đồng', '1. Thông tin và dữ liệu', '', '2', '1', '0', '0', '0', '0', '0', '0', '0', '0', '0']] },
+                        specifications: {
+                            rows: [
+                                ['1', 'Chủ đề A. Máy tính và cộng đồng', '1. Thông tin và dữ liệu', '', initialSubTopicHtml, '1-0', '0-0', '0-0', '0-0']
+                            ]
+                        }
+                    }
+                }
+            ]
+        };
+        localStorage.setItem('matrixFileSystem', JSON.stringify(mockFs));
+
+        // Giáo viên sửa YCCĐ 1.1 của Bài 1 trong Quản lý Câu hỏi
+        const updated = updateCustomCriterion(
+            '6',
+            'Bài 1. Thông tin và dữ liệu',
+            'NB',
+            '1.1 Phân biệt được thông tin với vật mang tin.',
+            'Phân biệt rõ thông tin và vật mang tin trong thực tế.'
+        );
+
+        // 1. Giữ nguyên vị trí 1.1 trong Quản lý Câu hỏi
+        expect(updated.NB[0]).toBe('1.1 Phân biệt rõ thông tin và vật mang tin trong thực tế.');
+        expect(updated.NB[1]).toContain('1.2 Nhận biết được sự khác nhau giữa thông tin và dữ liệu.');
+
+        // 2. Dòng Chủ đề con trong matrixFileSystem đã được cập nhật
+        const savedFs = JSON.parse(localStorage.getItem('matrixFileSystem') || '{}');
+        const specHtml = savedFs.children[0].matrixData.specifications.rows[0][4];
+        expect(specHtml).toContain('Phân biệt rõ thông tin và vật mang tin trong thực tế.');
+        expect(specHtml).not.toContain('Phân biệt được thông tin với vật mang tin');
+
+        // 3. Khi tạo Ma trận mới, getRequirementsHtml cũng trả về nội dung đã đồng bộ
+        const freshHtml = getRequirementsHtml('Lớp 6', 'Chủ đề A. Máy tính và cộng đồng', '1. Thông tin và dữ liệu');
+        expect(freshHtml).toContain('Phân biệt rõ thông tin và vật mang tin trong thực tế.');
+    });
+
+    it('7. Đồng bộ 2 chiều ngược lại: Sửa YCCĐ trên Ma trận (dòng Chủ đề con row[3] rỗng) -> tự động cập nhật về đúng Bài học trong Câu hỏi', () => {
+        const subTopicHtml = getRequirementsHtml('Lớp 6', 'Chủ đề A. Máy tính và cộng đồng', '1. Thông tin và dữ liệu');
+        const initialData: MatrixData = {
+            matrix: {
+                rows: [
+                    ['1', 'Chủ đề A. Máy tính và cộng đồng', '1. Thông tin và dữ liệu', '', '2', '1', '0', '0', '0', '0', '0', '0', '0', '0', '0']
+                ]
+            },
+            specifications: {
+                rows: [
+                    ['1', 'Chủ đề A. Máy tính và cộng đồng', '1. Thông tin và dữ liệu', '', subTopicHtml, '1-0', '0-0', '0-0', '0-0']
+                ]
+            }
+        };
+
+        render(
+            <MatrixView
+                data={initialData}
+                onUpdateMatrix={vi.fn()}
+                onDeleteRow={vi.fn()}
+                examName="Lớp 6 - Giữa kì I"
+            />
+        );
+
+        // Sửa dòng YCCĐ thuộc Bài 2 ("– Nêu được các bước cơ bản trong xử lí thông tin.") ngay trên dòng Chủ đề con của Ma trận
+        const editBtns = screen.getAllByTitle('Sửa yêu cầu cần đạt này');
+        // Dòng thứ 3 của mục Nhận biết là "– Nêu được các bước cơ bản trong xử lí thông tin." (thuộc Bài 2)
+        fireEvent.click(editBtns[2]);
+
+        const input = screen.getByDisplayValue(/Nêu được các bước cơ bản trong xử lí thông tin/i);
+        fireEvent.change(input, { target: { value: 'Trình bày được 4 bước cơ bản trong xử lí thông tin máy tính.' } });
+        fireEvent.click(screen.getByText('Lưu'));
+
+        // Kiểm tra bên Quản lý câu hỏi: Bài 2 đã nhận nội dung mới ở đúng mã 1.1
+        const mergedBai2 = getMergedCriteria('6', 'Bài 2. Xử lí thông tin');
+        expect(mergedBai2?.NB[0]).toBe('1.1 Trình bày được 4 bước cơ bản trong xử lí thông tin máy tính.');
     });
 });
