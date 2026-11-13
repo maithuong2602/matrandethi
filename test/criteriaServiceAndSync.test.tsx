@@ -366,5 +366,25 @@ describe('Criteria Service & Matrix Synchronization', () => {
         expect(totalNB).toBe(16);
         expect(totalTH).toBe(12);
         expect(totalVD).toBe(3);
+
+        // 3. Kiểm tra Bài 3 và Bài 4 (không có YCCĐ Nhận biết trong Quản lý câu hỏi)
+        // tuyệt đối KHÔNG bị cấp câu Nhận biết (Biết = 0) và mọi dòng có câu hỏi ở mức nào thì Bản đặc tả đều có YCCĐ mức đó (không bị rỗng)
+        const bai3NB = (nfRows[2].mc.B.count || 0) + (nfRows[2].tf.B.count || 0);
+        const bai4NB = (nfRows[3].mc.B.count || 0) + (nfRows[3].tf.B.count || 0);
+        expect(bai3NB).toBe(0);
+        expect(bai4NB).toBe(0);
+
+        const specRows = mData.specifications.rows;
+        for (let i = 0; i < rows.length; i++) {
+            const nf = nfRows[i];
+            const specHtml = String(specRows[i][4] || '');
+            const rowB = (nf.mc.B.count || 0) + (nf.tf.B.count || 0) + (nf.sa.B.count || 0) + (nf.essay.B.count || 0);
+            const rowH = (nf.mc.H.count || 0) + (nf.tf.H.count || 0) + (nf.sa.H.count || 0) + (nf.essay.H.count || 0);
+            const rowVD = (nf.mc.VD.count || 0) + (nf.tf.VD.count || 0) + (nf.sa.VD.count || 0) + (nf.essay.VD.count || 0);
+
+            if (rowB > 0) expect(specHtml).toMatch(/Nhận biết/i);
+            if (rowH > 0) expect(specHtml).toMatch(/Thông hiểu/i);
+            if (rowVD > 0) expect(specHtml).toMatch(/Vận dụng/i);
+        }
     });
 });

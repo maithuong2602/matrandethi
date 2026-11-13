@@ -175,28 +175,47 @@ export const detectGradeFromLessonOrContext = (lessonOrSubTopic: string, context
     return '7';
 };
 
+const _canonicalLessonCache = new Map<string, string>();
+
 /**
  * Resolves a lesson name to its canonical key in CURRICULUM.lessonData[grade] if one exists
  */
 export const resolveCanonicalLessonName = (grade: string, lessonName: string): string => {
     if (!grade || !lessonName) return lessonName || '';
     const g = grade.trim();
+    const cacheKey = `${g}::${lessonName}`;
+    const cached = _canonicalLessonCache.get(cacheKey);
+    if (cached !== undefined) return cached;
+
     const lessons = CURRICULUM.lessonData[g] || [];
-    if (lessons.includes(lessonName)) return lessonName;
+    if (lessons.includes(lessonName)) {
+        _canonicalLessonCache.set(cacheKey, lessonName);
+        return lessonName;
+    }
 
     const normTarget = normalizeLessonString(lessonName);
     const targetNum = extractLessonNumber(lessonName);
 
     for (const l of lessons) {
-        if (normalizeLessonString(l) === normTarget) return l;
+        if (normalizeLessonString(l) === normTarget) {
+            _canonicalLessonCache.set(cacheKey, l);
+            return l;
+        }
     }
     if (targetNum) {
         for (const l of lessons) {
-            if (extractLessonNumber(l) === targetNum) return l;
+            if (extractLessonNumber(l) === targetNum) {
+                _canonicalLessonCache.set(cacheKey, l);
+                return l;
+            }
         }
     }
-    return lessonName.trim();
+    const res = lessonName.trim();
+    _canonicalLessonCache.set(cacheKey, res);
+    return res;
 };
+
+const _lessonsForSubTopicCache = new Map<string, string[]>();
 
 /**
  * Finds all canonical lesson names in CURRICULUM.lessonData[grade] that belong to a Matrix subTopic
@@ -204,6 +223,10 @@ export const resolveCanonicalLessonName = (grade: string, lessonName: string): s
 export const getLessonsForSubTopic = (grade: string, subTopic: string): string[] => {
     if (!grade || !subTopic) return [];
     const g = grade.trim();
+    const cacheKey = `${g}::${subTopic}`;
+    const cached = _lessonsForSubTopicCache.get(cacheKey);
+    if (cached !== undefined) return cached;
+
     const gradeNum = Number(g);
     const normSub = normalizeLessonString(subTopic);
     const strippedSub = normalizeLessonString(subTopic.replace(/^\d+\.\s*/, ''));
@@ -214,7 +237,11 @@ export const getLessonsForSubTopic = (grade: string, subTopic: string): string[]
     const directLesson = lessonsInGrade.find(
         l => normalizeLessonString(l) === normSub || (extractLessonNumber(subTopic) && extractLessonNumber(l) === extractLessonNumber(subTopic))
     );
-    if (directLesson) return [directLesson];
+    if (directLesson) {
+        const res = [directLesson];
+        _lessonsForSubTopicCache.set(cacheKey, res);
+        return res;
+    }
 
     const matchedLessons: string[] = [];
 
@@ -276,6 +303,7 @@ export const getLessonsForSubTopic = (grade: string, subTopic: string): string[]
         }
     }
 
+    _lessonsForSubTopicCache.set(cacheKey, matchedLessons);
     return matchedLessons;
 };
 
@@ -505,16 +533,31 @@ export const parseYccdHtmlToCriteria = (htmlContent: string): CriteriaMap => {
     return result;
 };
 
+let _lastRawCustomStr: string | null = null;
+let _lastMfsRawStr: string | null = null;
+let _cachedCustomStore: GradeCriteriaMap | null = null;
+
+export const invalidateCriteriaStoreCache = () => {
+    _lastRawCustomStr = null;
+    _lastMfsRawStr = null;
+    _cachedCustomStore = null;
+};
+
 /**
- * Loads custom criteria store from localStorage
+ * Loads custom criteria store from localStorage (with in-memory memoization when localStorage strings are unchanged)
  */
 export const loadCustomCriteriaStore = (): GradeCriteriaMap => {
     try {
         const raw = localStorage.getItem(CUSTOM_CRITERIA_STORAGE_KEY);
+        const mfsRaw = localStorage.getItem('matrixFileSystem');
+
+        if (_cachedCustomStore !== null && raw === _lastRawCustomStr && mfsRaw === _lastMfsRawStr) {
+            return _cachedCustomStore;
+        }
+
         const store: GradeCriteriaMap = raw ? JSON.parse(raw) : {};
 
         try {
-            const mfsRaw = localStorage.getItem('matrixFileSystem');
             if (mfsRaw) {
                 const fs = JSON.parse(mfsRaw);
                 harvestCriteriaFromFileSystem(fs, store);
@@ -523,6 +566,9 @@ export const loadCustomCriteriaStore = (): GradeCriteriaMap => {
             console.error('Error scanning matrixFileSystem for criteria:', e);
         }
 
+        _lastRawCustomStr = raw;
+        _lastMfsRawStr = mfsRaw;
+        _cachedCustomStore = store;
         return store;
     } catch (e) {
         console.error('Error loading custom criteria store:', e);
@@ -640,6 +686,7 @@ const harvestCriteriaFromFileSystem = (item: any, store: GradeCriteriaMap, curre
  */
 export const saveCustomCriteriaStore = (store: GradeCriteriaMap) => {
     try {
+        invalidateCriteriaStoreCache();
         localStorage.setItem(CUSTOM_CRITERIA_STORAGE_KEY, JSON.stringify(store));
     } catch (e) {
         console.error('Error saving custom criteria store:', e);
@@ -1483,21 +1530,32 @@ export const getMergedCriteria = (
  * Kiểm tra một câu hỏi (khi upload JSON / nhập hàng loạt / đồng bộ) có thuộc YCCĐ hợp lệ hiện có của bài học hay không.
  * Nếu YCCĐ đó đã bị xóa trên "Tạo bài tập/quản lý câu hỏi" (hoặc bài học không có YCCĐ đó) -> trả về false (không đưa vào).
  */
-export const isQuestionCriteriaValidForLesson = (
-    q: any,
-    defaultGrade?: string,
-    defaultLesson?: string,
-    customStore?: GradeCriteriaMap
-): boolean => {
-    if (!q) return false;
-    const store = customStore || loadCustomCriteriaStore();
+interface LessonValidationMeta {
+    isKnownLesson: boolean;
+    hasAnyCriteria: boolean;
+    deletedNorms: Set<string>;
+    deletedCodes: Set<string>;
+    allActiveByLevel: Record<string, string[]>;
+    allActiveList: string[];
+    activeCodes: Set<string>;
+}
 
-    const rawLesson = String(q.lesson || q.bai || defaultLesson || '').trim();
-    const rawGrade = String(q.grade || q.lop || defaultGrade || '').trim();
-    const gMatch = rawGrade.match(/\d+/);
-    const g = gMatch ? gMatch[0] : (rawLesson ? detectGradeFromLessonOrContext(rawLesson) : '');
+const _lessonValidationCache = new WeakMap<GradeCriteriaMap, Map<string, LessonValidationMeta>>();
 
-    if (!g || !rawLesson || rawLesson === 'Bài chung') return true;
+const getLessonValidationMeta = (
+    g: string,
+    rawLesson: string,
+    store: GradeCriteriaMap
+): LessonValidationMeta => {
+    let storeMap = _lessonValidationCache.get(store);
+    if (!storeMap) {
+        storeMap = new Map<string, LessonValidationMeta>();
+        _lessonValidationCache.set(store, storeMap);
+    }
+
+    const cacheKey = `${g}::${rawLesson}`;
+    const existing = storeMap.get(cacheKey);
+    if (existing) return existing;
 
     const normLesson = normalizeLessonString(rawLesson);
     const lessonNum = extractLessonNumber(rawLesson);
@@ -1517,11 +1575,26 @@ export const isQuestionCriteriaValidForLesson = (
             k => normalizeLessonString(k) === normLesson || (lessonNum && extractLessonNumber(k) === lessonNum)
         );
 
-    if (!isKnownLesson) return true;
-
-    // Gom danh sách __deleted và __deletedCodes của bài học này
     const deletedNorms = new Set<string>();
     const deletedCodes = new Set<string>();
+    const allActiveByLevel: Record<string, string[]> = {};
+    const allActiveList: string[] = [];
+    const activeCodes = new Set<string>();
+
+    if (!isKnownLesson) {
+        const meta: LessonValidationMeta = {
+            isKnownLesson: false,
+            hasAnyCriteria: true,
+            deletedNorms,
+            deletedCodes,
+            allActiveByLevel,
+            allActiveList,
+            activeCodes
+        };
+        storeMap.set(cacheKey, meta);
+        return meta;
+    }
+
     for (const [k, entry] of Object.entries(gradeStore)) {
         if (
             k === rawLesson ||
@@ -1540,25 +1613,52 @@ export const isQuestionCriteriaValidForLesson = (
     }
 
     const merged = getMergedCriteria(g, canonicalLesson, store);
-    if (!merged || Object.keys(merged).length === 0) {
-        return false;
+    if (merged && Object.keys(merged).length > 0) {
+        Object.entries(merged).forEach(([lvl, arr]) => {
+            if (lvl.startsWith('__') || !Array.isArray(arr)) return;
+            allActiveByLevel[lvl] = arr;
+            arr.forEach(c => {
+                allActiveList.push(c);
+                const code = c.trim().split(/\s+/)[0].replace(/[:.]$/, '');
+                if (code) activeCodes.add(code);
+            });
+        });
     }
 
-    const allActiveByLevel: Record<string, string[]> = {};
-    const allActiveList: string[] = [];
-    const activeCodes = new Set<string>();
+    const meta: LessonValidationMeta = {
+        isKnownLesson: true,
+        hasAnyCriteria: allActiveList.length > 0,
+        deletedNorms,
+        deletedCodes,
+        allActiveByLevel,
+        allActiveList,
+        activeCodes
+    };
+    storeMap.set(cacheKey, meta);
+    return meta;
+};
 
-    Object.entries(merged).forEach(([lvl, arr]) => {
-        if (lvl.startsWith('__') || !Array.isArray(arr)) return;
-        allActiveByLevel[lvl] = arr;
-        arr.forEach(c => {
-            allActiveList.push(c);
-            const code = c.trim().split(/\s+/)[0].replace(/[:.]$/, '');
-            if (code) activeCodes.add(code);
-        });
-    });
+export const isQuestionCriteriaValidForLesson = (
+    q: any,
+    defaultGrade?: string,
+    defaultLesson?: string,
+    customStore?: GradeCriteriaMap
+): boolean => {
+    if (!q) return false;
+    const store = customStore || loadCustomCriteriaStore();
 
-    if (allActiveList.length === 0) return false;
+    const rawLesson = String(q.lesson || q.bai || defaultLesson || '').trim();
+    const rawGrade = String(q.grade || q.lop || defaultGrade || '').trim();
+    const gMatch = rawGrade.match(/\d+/);
+    const g = gMatch ? gMatch[0] : (rawLesson ? detectGradeFromLessonOrContext(rawLesson) : '');
+
+    if (!g || !rawLesson || rawLesson === 'Bài chung') return true;
+
+    const meta = getLessonValidationMeta(g, rawLesson, store);
+    if (!meta.isKnownLesson) return true;
+    if (!meta.hasAnyCriteria) return false;
+
+    const { deletedNorms, deletedCodes, allActiveByLevel, allActiveList, activeCodes } = meta;
 
     const rawCrit = String(q.criteria || q.tieuChi || '').trim();
     const qLvl = getLevelCodeFromTitle(String(q.level || q.mucDo || 'NB'));
@@ -1790,6 +1890,14 @@ export const syncSpecHtmlWithCustomStore = (
         const canonicalLesson = resolveCanonicalLessonName(g, lessonName);
         if (CURRICULUM.criteriaData[g]?.[canonicalLesson]) {
             const merged = getMergedCriteria(g, canonicalLesson, store);
+            if (merged) {
+                for (const [lvl, list] of Object.entries(merged)) {
+                    if (lvl.startsWith('__') || !Array.isArray(list)) continue;
+                    for (const item of list) {
+                        updatedHtml = applyCriterionChangeToHtml(updatedHtml, lvl, 'add', { newText: item });
+                    }
+                }
+            }
             const activeItems = merged
                 ? Object.entries(merged)
                       .filter(([k]) => !k.startsWith('__'))
