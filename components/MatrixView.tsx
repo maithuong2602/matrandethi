@@ -326,28 +326,9 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
     const syncSpecYccdWithQuotas = (
         reqHtml: string,
         quotas: { B: number; H: number; VD: number },
-        lessonLabel: string = ''
+        _lessonLabel: string = ''
     ): string => {
-        let updatedHtml = String(reqHtml || '');
-        const cleanLabel = String(lessonLabel || 'bài học').trim();
-        const hasNBSection = /<strong\b[^>]*>\s*(?:nhận biết|biết|- biết)/i.test(updatedHtml);
-        const hasTHSection = /<strong\b[^>]*>\s*(?:thông hiểu|hiểu|- hiểu)/i.test(updatedHtml);
-        const hasVDSection = /<strong\b[^>]*>\s*(?:vận dụng|- vận dụng)/i.test(updatedHtml);
-
-        let prefixBlocks = '';
-        if (quotas.B > 0 && !hasNBSection) {
-            prefixBlocks += `<strong class="block font-semibold">Nhận biết</strong><div class="pl-2">- Nêu được các khái niệm, nội dung cơ bản thuộc ${cleanLabel}.</div>`;
-        }
-        if (quotas.H > 0 && !hasTHSection) {
-            prefixBlocks += `<strong class="block font-semibold">Thông hiểu</strong><div class="pl-2">- Giải thích và phân biệt được các nội dung trọng tâm thuộc ${cleanLabel}.</div>`;
-        }
-        if (prefixBlocks) {
-            updatedHtml = prefixBlocks + updatedHtml;
-        }
-        if (quotas.VD > 0 && !hasVDSection) {
-            updatedHtml += `<strong class="block font-semibold">Vận dụng</strong><div class="pl-2">- Vận dụng được kiến thức thuộc ${cleanLabel} để giải quyết tình huống thực tiễn.</div>`;
-        }
-
+        const updatedHtml = String(reqHtml || '');
         const totalQ = quotas.B + quotas.H + quotas.VD;
         if (totalQ <= 0) return updatedHtml;
 

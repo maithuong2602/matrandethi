@@ -11,7 +11,9 @@ import {
     loadCustomCriteriaStore, 
     applyCriterionChangeToHtml,
     parseYccdSections,
-    CUSTOM_CRITERIA_STORAGE_KEY 
+    CUSTOM_CRITERIA_STORAGE_KEY,
+    filterQuestionsByActiveCriteria,
+    isQuestionCriteriaValidForLesson
 } from '../services/criteriaService';
 import { getRequirementsHtml } from '../utils';
 import { MatrixData } from '../types';
@@ -321,5 +323,79 @@ describe('Chức năng Sửa/Xóa YCCĐ và Đồng Bộ Giữa Quản Lý Câu 
         // Kiểm tra bên Quản lý câu hỏi: Bài 2 đã nhận nội dung mới ở đúng mã 1.1
         const mergedBai2 = getMergedCriteria('6', 'Bài 2. Xử lí thông tin');
         expect(mergedBai2?.NB[0]).toBe('1.1 Trình bày được 4 bước cơ bản trong xử lí thông tin máy tính.');
+    });
+
+    it('8. Xóa YCCĐ giữ nguyên mã các YCCĐ còn lại và chặn đưa vào các câu hỏi upload không thuộc YCCĐ hiện có của bài học', () => {
+        // Bài 3 Khối 8 ban đầu có 3.1 và 3.2 ở mức Vận dụng (không có Nhận biết)
+        const initialBai3 = getMergedCriteria('8', 'Bài 3: Thực hành: Khai thác thông tin số');
+        expect(initialBai3?.NB || []).toHaveLength(0);
+        expect(initialBai3?.VD).toHaveLength(2);
+
+        // Xóa YCCĐ 3.1 trên Quản lý câu hỏi
+        const afterDelete = deleteCustomCriterion(
+            '8',
+            'Bài 3: Thực hành: Khai thác thông tin số',
+            'VD',
+            '3.1 Sử dụng được công cụ tìm kiếm, xử lí và trao đổi thông tin trong môi trường số. Nêu được ví dụ minh hoạ.'
+        );
+
+        // YCCĐ còn lại phải giữ nguyên mã 3.2 (không bị đánh số lại thành 3.1)
+        expect(afterDelete.VD.length).toBe(1);
+        expect(afterDelete.VD[0]).toContain('3.2 Chủ động tìm kiếm thông tin');
+
+        // Bản đặc tả của Bài 3 chỉ hiển thị YCCĐ còn lại, không lấy nhầm Nhận biết của Bài 2 và không còn YCCĐ 3.1 đã xóa
+        const specHtml = getRequirementsHtml(
+            'Lớp 8',
+            'Chủ đề C. Tổ chức lưu trữ, tìm kiếm và trao đổi thông tin',
+            '1. Đặc điểm của thông tin trong môi trường số. Thông tin với giải quyết vấn đề',
+            'Bài 3: Thực hành: Khai thác thông tin số'
+        );
+        expect(specHtml).not.toContain('Nhận biết');
+        expect(specHtml).not.toContain('Sử dụng được công cụ tìm kiếm, xử lí và trao đổi thông tin trong môi trường số');
+        expect(specHtml).toContain('Chủ động tìm kiếm thông tin để thực hiện nhiệm vụ');
+
+        // Giả lập upload file JSON chứa:
+        // - Câu 1: mức NB (1.1) -> Bài 3 không có NB -> PHẢI BỊ CHẶN
+        // - Câu 2: mức VD (3.1 đã bị xóa) -> PHẢI BỊ CHẶN
+        // - Câu 3: mức VD (3.2 đang còn hiệu lực) -> ĐƯỢC ĐƯA VÀO
+        const uploadedQuestions = [
+            {
+                id: 'q-nb',
+                grade: '8',
+                lesson: 'Bài 3: Thực hành: Khai thác thông tin số',
+                level: 'NB',
+                criteria: '1.1',
+                content: 'Câu hỏi Nhận biết không có YCCĐ trong Bài 3'
+            },
+            {
+                id: 'q-vd-deleted',
+                grade: '8',
+                lesson: 'Bài 3: Thực hành: Khai thác thông tin số',
+                level: 'VD',
+                criteria: '3.1 Sử dụng được công cụ tìm kiếm, xử lí và trao đổi thông tin trong môi trường số.',
+                content: 'Câu hỏi thuộc YCCĐ 3.1 đã xóa'
+            },
+            {
+                id: 'q-vd-valid',
+                grade: '8',
+                lesson: 'Bài 3: Thực hành: Khai thác thông tin số',
+                level: 'VD',
+                criteria: '3.2',
+                content: 'Câu hỏi thuộc YCCĐ 3.2 hợp lệ'
+            }
+        ];
+
+        const { valid, removedCount } = filterQuestionsByActiveCriteria(
+            uploadedQuestions,
+            '8',
+            'Bài 3: Thực hành: Khai thác thông tin số'
+        );
+
+        expect(removedCount).toBe(2);
+        expect(valid.length).toBe(1);
+        expect(valid[0].id).toBe('q-vd-valid');
+        expect(isQuestionCriteriaValidForLesson(uploadedQuestions[0], '8', 'Bài 3: Thực hành: Khai thác thông tin số')).toBe(false);
+        expect(isQuestionCriteriaValidForLesson(uploadedQuestions[1], '8', 'Bài 3: Thực hành: Khai thác thông tin số')).toBe(false);
+        expect(isQuestionCriteriaValidForLesson(uploadedQuestions[2], '8', 'Bài 3: Thực hành: Khai thác thông tin số')).toBe(true);
     });
 });

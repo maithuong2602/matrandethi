@@ -9,7 +9,7 @@ import { PREDEFINED_FOLDERS as predefinedFoldersByGrade, REQUIREMENTS_DATA as re
 import { getRequirementsHtml, generatePrintHTML } from '../utils';
 import { loadQuestionBank } from '../services/storage/questionBankStorage';
 import { CANONICAL_REQUIREMENTS, KNTT_LESSON_MAPPINGS } from '../data/curriculum/index';
-import { syncSpecHtmlWithCustomStore, CUSTOM_CRITERIA_STORAGE_KEY } from '../services/criteriaService';
+import { syncSpecHtmlWithCustomStore, CUSTOM_CRITERIA_STORAGE_KEY, isQuestionCriteriaValidForLesson, filterQuestionsByActiveCriteria } from '../services/criteriaService';
 
 const MatrixBuilder: React.FC = () => {
     // --- State ---
@@ -50,6 +50,19 @@ const MatrixBuilder: React.FC = () => {
             const m = node.name?.match(/(?:Lớp|Khối)\s*(\d+)/i) || node.name?.match(/\b([6-9])\b/);
             if (m && ['6', '7', '8', '9'].includes(m[1])) {
                 g = m[1];
+            }
+            if (node.type === 'file' && node.content) {
+                const fGrade = String(node.content.info?.grade || node.content.thongTinChung?.khoi || g || '7');
+                const fLesson = String(node.content.info?.lesson || node.content.thongTinChung?.bai || node.name.replace(/\.json$/i, '') || '');
+                if (Array.isArray(node.content.questions)) {
+                    node.content.questions = filterQuestionsByActiveCriteria(node.content.questions, fGrade, fLesson).valid;
+                }
+                if (Array.isArray(node.content.tracNghiem)) {
+                    node.content.tracNghiem = filterQuestionsByActiveCriteria(node.content.tracNghiem, fGrade, fLesson).valid;
+                }
+                if (Array.isArray(node.content.tuLuan)) {
+                    node.content.tuLuan = filterQuestionsByActiveCriteria(node.content.tuLuan, fGrade, fLesson).valid;
+                }
             }
             if (node.matrixData?.specifications?.rows && Array.isArray(node.matrixData.specifications.rows)) {
                 const effGrade = g || '7';
@@ -271,21 +284,25 @@ const MatrixBuilder: React.FC = () => {
                             const soTiet = (file.content?.info?.soTiet || file.content?.thongTinChung?.soTiet || 1).toString();
                             const requirements = getRequirementsHtml(grade, mainTopic, subTopic, lessonName);
                             
-                            // Count available questions
+                            // Count available questions (chỉ tính các câu có YCCĐ hợp lệ trong bài học)
                             const counts = { NB: {TN:0,TL:0}, TH: {TN:0,TL:0}, VD: {TN:0,TL:0}, VDC: {TN:0,TL:0} };
+                            const gradeDigits = gradeNumberMatch[0];
                             
                             // Old format counts
                             (file.content?.tracNghiem || []).forEach((q: any) => {
+                                if (!isQuestionCriteriaValidForLesson(q, gradeDigits, lessonName)) return;
                                 const l = (q.mucDo || 'NB').toUpperCase() as keyof AvailableCounts;
                                 if(counts[l]) counts[l].TN++;
                             });
                             (file.content?.tuLuan || []).forEach((q: any) => {
+                                if (!isQuestionCriteriaValidForLesson(q, gradeDigits, lessonName)) return;
                                 const l = (q.mucDo || 'NB').toUpperCase() as keyof AvailableCounts;
                                 if(counts[l]) counts[l].TL++;
                             });
 
                             // New format counts
                             (file.content?.questions || []).forEach((q: any) => {
+                                if (!isQuestionCriteriaValidForLesson(q, gradeDigits, lessonName)) return;
                                 const l = (q.level || 'NB').toUpperCase() as keyof AvailableCounts;
                                 const isMC = q.category === 'mc';
                                 if(counts[l]) {
@@ -453,7 +470,9 @@ const MatrixBuilder: React.FC = () => {
         const gradeMatch = currentDir.name.match(/\d+/);
         const gradeNum = gradeMatch ? gradeMatch[0] : '';
         const liveBankRes = loadQuestionBank();
-        const liveBankQuestions = (liveBankRes.data || []).filter(q => !gradeNum || !q.grade || String(q.grade) === gradeNum);
+        const liveBankQuestions = (liveBankRes.data || []).filter(
+            q => (!gradeNum || !q.grade || String(q.grade) === gradeNum) && isQuestionCriteriaValidForLesson(q, gradeNum, q.lesson)
+        );
 
         const rows = data.matrix.rows.map((row: any[], idx: number) => {
             const st = parseFloat(row[4] as string) || 0;
@@ -474,7 +493,7 @@ const MatrixBuilder: React.FC = () => {
                     const isMatch =
                         (rowLesson && (qLesson === rowLesson || (lessonNum && qLessonNum === lessonNum))) ||
                         (!rowLesson && rowSubTopic && qLesson.toLowerCase().includes(rowSubTopic.replace(/^\d+\.\s*/, '').toLowerCase()));
-                    if (isMatch) {
+                    if (isMatch && isQuestionCriteriaValidForLesson(q, gradeNum, rowLesson || qLesson)) {
                         const lvl = ((q.level || 'NB').toUpperCase()) as 'NB' | 'TH' | 'VD' | 'VDC';
                         if (liveCounts[lvl]) {
                             if (q.category === 'essay') liveCounts[lvl].TL++;
@@ -493,14 +512,15 @@ const MatrixBuilder: React.FC = () => {
                 data.availableCounts[idx] = mergedAvail;
             }
 
-            // Kiểm tra Bản đặc tả của dòng này có sẵn mức Nhận biết / Thông hiểu không
-            const specHtml = String(data.specifications?.rows?.[idx]?.[4] || '') ||
-                getRequirementsHtml(currentDir.name, String(row[1] || ''), rowSubTopic, rowLesson);
-            if (data.specifications?.rows?.[idx] && !data.specifications.rows[idx][4] && specHtml) {
+            // Kiểm tra Bản đặc tả của dòng này có sẵn mức Nhận biết / Thông hiểu / Vận dụng không (đồng bộ từ YCCĐ bài học)
+            const freshSpecHtml = getRequirementsHtml(currentDir.name, String(row[1] || ''), rowSubTopic, rowLesson);
+            const specHtml = freshSpecHtml || syncSpecHtmlWithCustomStore(String(data.specifications?.rows?.[idx]?.[4] || ''), gradeNum, rowSubTopic, rowLesson);
+            if (data.specifications?.rows?.[idx]) {
                 data.specifications.rows[idx][4] = specHtml;
             }
-            const hasNBSpec = /<strong[^>]*>\s*(?:\d+[\.\)]\s*)?(?:nhận biết|biết|- biết)/i.test(specHtml) || mergedAvail.NB.TN > 0;
-            const hasTHSpec = /<strong[^>]*>\s*(?:\d+[\.\)]\s*)?(?:thông hiểu|hiểu|- hiểu)/i.test(specHtml) || mergedAvail.TH.TN > 0;
+            const hasNBSpec = /<strong[^>]*>\s*(?:\d+[\.\)]\s*)?(?:nhận biết|biết|- biết)/i.test(specHtml);
+            const hasTHSpec = /<strong[^>]*>\s*(?:\d+[\.\)]\s*)?(?:thông hiểu|hiểu|- hiểu)/i.test(specHtml);
+            const hasVDSpec = /<strong[^>]*>\s*(?:\d+[\.\)]\s*)?(?:vận dụng|- vận dụng)/i.test(specHtml);
 
             return { 
                 idx, 
@@ -510,8 +530,9 @@ const MatrixBuilder: React.FC = () => {
                 isOldLesson: validExamined > 0 && validNew === 0,
                 isNewLesson: validNew > 0,
                 avail: mergedAvail,
-                hasNBSpec: hasNBSpec || (!hasNBSpec && !hasTHSpec),
-                hasTHSpec: hasTHSpec || (!hasNBSpec && !hasTHSpec),
+                hasNBSpec,
+                hasTHSpec,
+                hasVDSpec,
                 allocNB: 0, allocTH: 0, allocVD: 0, allocVDC: 0,
                 targetScore: 0,
                 currentScore: 0,
@@ -563,26 +584,29 @@ const MatrixBuilder: React.FC = () => {
         for(let i=0; i<targetVD_TL; i++) tasksTL.push('VD');
 
         for (const type of tasksTL) {
-            // Ưu tiên bài học mới (chưa thi) và còn hạn mức điểm (targetScore - currentScore >= 0.75)
+            // Ưu tiên bài học mới (chưa thi), có YCCĐ Vận dụng trong bài học và còn hạn mức điểm
             let candidates = rows.filter((r: any) => {
-                if (r.soTiet <= 0) return false;
+                if (r.soTiet <= 0 || !r.hasVDSpec) return false;
                 if (hasExaminedReduction && r.isOldLesson) return false;
                 if ((r.allocVD + r.allocVDC) > 0) return false;
                 const avail = type === 'VD' ? r.avail.VD.TL : r.avail.VDC.TL;
                 const allocated = type === 'VD' ? r.allocVD : r.allocVDC;
                 return avail > allocated && (r.targetScore - r.currentScore) >= 0.5;
             });
-            // Fallback 1: Bài mới bất kỳ chưa có câu tự luận (kể cả khi thư mục chưa đồng bộ file câu hỏi tự luận)
+            // Fallback 1: Bài mới bất kỳ có YCCĐ Vận dụng chưa có câu tự luận
             if (candidates.length === 0) {
                 candidates = rows.filter((r: any) => {
-                    if (r.soTiet <= 0) return false;
+                    if (r.soTiet <= 0 || !r.hasVDSpec) return false;
                     if (hasExaminedReduction && r.isOldLesson) return false;
                     return (r.allocVD + r.allocVDC) === 0;
                 });
             }
-            // Fallback 2: Bất kỳ bài nào còn trống tự luận
+            // Fallback 2: Bất kỳ bài nào có YCCĐ Vận dụng còn trống tự luận
             if (candidates.length === 0) {
-                candidates = rows.filter((r: any) => r.soTiet > 0 && (r.allocVD + r.allocVDC) === 0);
+                candidates = rows.filter((r: any) => r.soTiet > 0 && r.hasVDSpec && (r.allocVD + r.allocVDC) === 0);
+            }
+            if (candidates.length === 0) {
+                candidates = rows.filter((r: any) => r.soTiet > 0 && r.hasVDSpec);
             }
             if (candidates.length === 0) {
                 candidates = rows.filter((r: any) => r.soTiet > 0);
@@ -622,8 +646,9 @@ const MatrixBuilder: React.FC = () => {
             r.tnTargetQuestions = r.tnTargetScore / SCORE_TN;
         });
 
+        const totalTargetTN = targetNB_TN + targetTH_TN;
         let safetyLoop = 0;
-        while ((currentNB < targetNB_TN || currentTH < targetTH_TN) && safetyLoop < 5000) {
+        while ((currentNB + currentTH) < totalTargetTN && safetyLoop < 5000) {
             safetyLoop++;
 
             // Tính tổng điểm hiện tại của cụm bài học đã kiểm tra (không được vượt quá LIMIT_OLD_SCORE = 3.5đ = 35%)
@@ -638,12 +663,16 @@ const MatrixBuilder: React.FC = () => {
             // Chọn bài đang thiếu hụt nhiều nhất so với targetScore và đảm bảo tổng điểm bài đã KT <= 35%
             let rowCandidates = rows.filter((r: any) => {
                 if (r.soTiet <= 0) return false;
+                if (!r.hasNBSpec && !r.hasTHSpec) return false;
                 if (hasExaminedReduction && r.soTietExamined > 0) {
                     const addedOldScore = r.isOldLesson ? SCORE_TN : SCORE_TN * (r.soTietExamined / r.soTiet);
                     if (currentTotalOldScore + addedOldScore > LIMIT_OLD_SCORE + 1e-6) return false;
                 }
                 return true;
             });
+            if (rowCandidates.length === 0) {
+                rowCandidates = rows.filter((r: any) => r.soTiet > 0 && (r.hasNBSpec || r.hasTHSpec));
+            }
             if (rowCandidates.length === 0) {
                 rowCandidates = rows.filter((r: any) => r.soTiet > 0);
             }
@@ -665,40 +694,45 @@ const MatrixBuilder: React.FC = () => {
             const best = rowCandidates[0];
 
             // Quyết định gán câu hỏi này vào mức Biết (NB) hay Hiểu (TH) cho bài `best`
-            // Ưu tiên khớp với các mức độ có sẵn trong Bản đặc tả của bài đó (ví dụ Bài 3 chỉ có Thông hiểu -> ưu tiên TH)
+            // Chỉ gán vào mức độ thực sự tồn tại trong YCCĐ của bài đó (không tự sinh mức không tồn tại)
             let chosenLevel: 'NB' | 'TH' = 'NB';
-            if (currentNB < targetNB_TN && currentTH < targetTH_TN) {
-                if (best.hasTHSpec && !best.hasNBSpec) {
-                    chosenLevel = 'TH';
-                } else if (best.hasNBSpec && !best.hasTHSpec) {
+            if (best.hasTHSpec && !best.hasNBSpec) {
+                chosenLevel = 'TH';
+            } else if (best.hasNBSpec && !best.hasTHSpec) {
+                chosenLevel = 'NB';
+            } else if (currentNB < targetNB_TN && currentTH < targetTH_TN) {
+                // Tính số câu TH cần giữ lại cho các bài chỉ có mức Thông hiểu (TH-only)
+                const thNeededByThOnlyRows = rows
+                    .filter((r: any) => r.idx !== best.idx && r.hasTHSpec && !r.hasNBSpec)
+                    .reduce((sum: number, r: any) => {
+                        const remQ = Math.max(0, Math.ceil((r.targetScore - r.currentScore - 0.05) / SCORE_TN));
+                        return sum + remQ;
+                    }, 0);
+                const nbNeededByNbOnlyRows = rows
+                    .filter((r: any) => r.idx !== best.idx && r.hasNBSpec && !r.hasTHSpec)
+                    .reduce((sum: number, r: any) => {
+                        const remQ = Math.max(0, Math.ceil((r.targetScore - r.currentScore - 0.05) / SCORE_TN));
+                        return sum + remQ;
+                    }, 0);
+                const freeTH = Math.max(0, (targetTH_TN - currentTH) - thNeededByThOnlyRows);
+                const freeNB = Math.max(0, (targetNB_TN - currentNB) - nbNeededByNbOnlyRows);
+
+                if (freeTH <= 0) {
                     chosenLevel = 'NB';
+                } else if (freeNB <= 0) {
+                    chosenLevel = 'TH';
                 } else {
-                    // Tính số câu TH cần giữ lại cho các bài chỉ có mức Thông hiểu (TH-only)
-                    const thNeededByThOnlyRows = rows
-                        .filter((r: any) => r.idx !== best.idx && r.hasTHSpec && !r.hasNBSpec)
-                        .reduce((sum: number, r: any) => {
-                            const remQ = Math.max(0, Math.round((r.targetScore - r.currentScore) / SCORE_TN));
-                            return sum + remQ;
-                        }, 0);
-                    const freeTH = Math.max(0, (targetTH_TN - currentTH) - thNeededByThOnlyRows);
-                    const remNB = targetNB_TN - currentNB;
+                    const desiredRowNBRatio = freeNB / (freeNB + freeTH);
+                    const nextTN = best.allocNB + best.allocTH + 1;
+                    const ratioIfNB = (best.allocNB + 1) / nextTN;
+                    const ratioIfTH = best.allocNB / nextTN;
+                    const diffIfNB = Math.abs(ratioIfNB - desiredRowNBRatio);
+                    const diffIfTH = Math.abs(ratioIfTH - desiredRowNBRatio);
 
-                    if (freeTH <= 0) {
-                        chosenLevel = 'NB';
+                    if (Math.abs(diffIfNB - diffIfTH) > 0.01) {
+                        chosenLevel = diffIfNB < diffIfTH ? 'NB' : 'TH';
                     } else {
-                        const desiredRowNBRatio = remNB / (remNB + freeTH);
-                        const bestTN = best.allocNB + best.allocTH;
-                        const currentRowNBRatio = bestTN > 0 ? (best.allocNB / bestTN) : 0;
-
-                        if (bestTN === 0) {
-                            chosenLevel = remNB >= freeTH ? 'NB' : 'TH';
-                        } else if (currentRowNBRatio < desiredRowNBRatio - 0.01) {
-                            chosenLevel = 'NB';
-                        } else if (currentRowNBRatio > desiredRowNBRatio + 0.01) {
-                            chosenLevel = 'TH';
-                        } else {
-                            chosenLevel = remNB >= freeTH ? 'NB' : 'TH';
-                        }
+                        chosenLevel = freeNB >= freeTH ? 'NB' : 'TH';
                     }
                 }
             } else if (currentNB < targetNB_TN) {
@@ -727,17 +761,37 @@ const MatrixBuilder: React.FC = () => {
         // - Trả lời ngắn (sa): 8 câu = 2,0đ (20%) -> 4 Biết + 4 Hiểu
         // - Tự luận (essay): 3 câu = 3,0đ (30%) -> 3 Vận dụng
         const useShortAnswer = data.newPointsConfig?.useShortAnswer !== false;
+        const capMC = 12;
+        const capTF = useShortAnswer ? 8 : 16;
+        const capSA = useShortAnswer ? 8 : 0;
+
         let remMC_B = ratioOption === '30-40-30' ? 6 : 8;
         let remTF_B = useShortAnswer
             ? (ratioOption === '30-40-30' ? 3 : 4)
             : (ratioOption === '30-40-30' ? 6 : 8);
         let remSA_B = useShortAnswer ? (ratioOption === '30-40-30' ? 3 : 4) : 0;
 
-        let remMC_H = ratioOption === '30-40-30' ? 6 : 4;
-        let remTF_H = useShortAnswer
-            ? (ratioOption === '30-40-30' ? 5 : 4)
-            : (ratioOption === '30-40-30' ? 10 : 8);
-        let remSA_H = useShortAnswer ? (ratioOption === '30-40-30' ? 5 : 4) : 0;
+        // Điều chỉnh hạn mức Biết (B) của 3 phần TNKQ khớp chính xác với tổng số câu NB thực tế được phân bổ
+        const totalAllocatedNB = rows.reduce((s: number, r: any) => s + (r.allocNB || 0), 0);
+        let guardAdjust = 0;
+        while ((remMC_B + remTF_B + remSA_B) > totalAllocatedNB && guardAdjust < 100) {
+            guardAdjust++;
+            if (remMC_B >= remTF_B && remMC_B >= remSA_B && remMC_B > 0) remMC_B--;
+            else if (remTF_B >= remSA_B && remTF_B > 0) remTF_B--;
+            else if (remSA_B > 0) remSA_B--;
+            else break;
+        }
+        while ((remMC_B + remTF_B + remSA_B) < totalAllocatedNB && guardAdjust < 200) {
+            guardAdjust++;
+            if ((capMC - remMC_B) >= (capTF - remTF_B) && (capMC - remMC_B) >= (capSA - remSA_B) && remMC_B < capMC) remMC_B++;
+            else if ((capTF - remTF_B) >= (capSA - remSA_B) && remTF_B < capTF) remTF_B++;
+            else if (remSA_B < capSA) remSA_B++;
+            else break;
+        }
+
+        let remMC_H = Math.max(0, capMC - remMC_B);
+        let remTF_H = Math.max(0, capTF - remTF_B);
+        let remSA_H = Math.max(0, capSA - remSA_B);
 
         rows.forEach((r: any) => {
             const idx = r.idx;
@@ -792,19 +846,8 @@ const MatrixBuilder: React.FC = () => {
             data.newFormatRows[idx] = rowCfg;
 
             // Tự động đồng bộ cột Yêu cầu cần đạt trên Bản đặc tả:
-            // Đảm bảo mỗi mức độ (Biết, Hiểu, Vận dụng) có số tiêu chí được chọn khớp với số câu trên Ma trận
-            let rawReqHtml = String(data.specifications.rows[idx]?.[4] || '');
-            const lessonLabel = String(mRow[3] || mRow[2] || 'bài học').replace(/^(?:Bài\s*\d+[ab]?[\.\:]?\s*|\d+[\.\)]\s*)/i, '').trim();
-
-            if ((r.allocNB || 0) > 0 && !/<strong[^>]*>\s*(?:\d+[\.\)]\s*)?(?:nhận biết|biết|- biết)/i.test(rawReqHtml)) {
-                rawReqHtml = `<strong class="block font-semibold">Nhận biết</strong><div class="pl-2">– Nêu và nhận biết được các khái niệm, kiến thức cơ bản về ${lessonLabel.toLowerCase()}.</div>` + rawReqHtml;
-            }
-            if ((r.allocTH || 0) > 0 && !/<strong[^>]*>\s*(?:\d+[\.\)]\s*)?(?:thông hiểu|hiểu|- hiểu)/i.test(rawReqHtml)) {
-                rawReqHtml += `<strong class="block font-semibold mt-2">Thông hiểu</strong><div class="pl-2">– Giải thích và nêu được ví dụ minh hoạ về ${lessonLabel.toLowerCase()}.</div>`;
-            }
-            if (totalRowVD > 0 && !/<strong[^>]*>\s*(?:\d+[\.\)]\s*)?(?:vận dụng|- vận dụng)/i.test(rawReqHtml)) {
-                rawReqHtml += `<strong class="block font-semibold mt-2">Vận dụng</strong><div class="pl-2">– Vận dụng được kiến thức về ${lessonLabel.toLowerCase()} để giải quyết nhiệm vụ thực tế.</div>`;
-            }
+            // Đảm bảo chỉ giữ các YCCĐ thực sự có trong bài học (không tự sinh mức đã xóa hoặc không tồn tại)
+            const rawReqHtml = String(data.specifications.rows[idx]?.[4] || '');
 
             if (rawReqHtml) {
                 const keptByLevel: Record<'B' | 'H' | 'VD', number> = { B: 0, H: 0, VD: 0 };
@@ -1043,7 +1086,7 @@ const MatrixBuilder: React.FC = () => {
         if (!currentDir) return;
         if (!currentDir.children) currentDir.children = [];
 
-        Promise.all(files.map(file => new Promise<{name: string, content: any}>((resolve, reject) => {
+        Promise.all(files.map(file => new Promise<{name: string, content: any, removedCount: number}>((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = (evt) => {
                 try {
@@ -1056,12 +1099,33 @@ const MatrixBuilder: React.FC = () => {
                     if (!isOldFormat && !isNewFormat) {
                         throw new Error("Invalid format");
                     }
-                    resolve({ name: file.name, content: json });
+                    const gradeFromPath = currentPath[0]?.match(/\d+/)?.[0] || '';
+                    const fGrade = String(json.info?.grade || json.thongTinChung?.khoi || gradeFromPath || '');
+                    const fLesson = String(json.info?.lesson || json.thongTinChung?.bai || file.name.replace(/\.json$/i, '') || '');
+                    let removedCount = 0;
+                    if (Array.isArray(json.questions)) {
+                        const filtered = filterQuestionsByActiveCriteria(json.questions, fGrade, fLesson);
+                        json.questions = filtered.valid;
+                        removedCount += filtered.removedCount;
+                    }
+                    if (Array.isArray(json.tracNghiem)) {
+                        const filtered = filterQuestionsByActiveCriteria(json.tracNghiem, fGrade, fLesson);
+                        json.tracNghiem = filtered.valid;
+                        removedCount += filtered.removedCount;
+                    }
+                    if (Array.isArray(json.tuLuan)) {
+                        const filtered = filterQuestionsByActiveCriteria(json.tuLuan, fGrade, fLesson);
+                        json.tuLuan = filtered.valid;
+                        removedCount += filtered.removedCount;
+                    }
+                    resolve({ name: file.name, content: json, removedCount });
                 } catch (err) { reject(err); }
             };
             reader.readAsText(file);
         }))).then(results => {
+            let totalRemoved = 0;
             results.forEach(res => {
+                totalRemoved += res.removedCount || 0;
                 const existing = currentDir.children!.find(c => c.name === res.name);
                 if (existing) existing.content = res.content;
                 else currentDir.children!.push({ name: res.name, type: 'file', content: res.content });
@@ -1074,7 +1138,8 @@ const MatrixBuilder: React.FC = () => {
              }
 
             setFileSystem(root);
-            showToast(`Đã tải lên ${results.length} tệp`);
+            const skipMsg = totalRemoved > 0 ? ` (Đã chặn ${totalRemoved} câu không có YCCĐ hợp lệ trong bài học)` : '';
+            showToast(`Đã tải lên ${results.length} tệp${skipMsg}`);
         }).catch(() => showToast('Lỗi khi đọc tệp JSON (Sai định dạng)', 'error'));
         
         e.target.value = '';
@@ -1096,7 +1161,8 @@ const MatrixBuilder: React.FC = () => {
         const topicsForGrade = predefinedFoldersByGrade[gradeKey] || [];
 
         const bankRes = loadQuestionBank();
-        const gradeQuestions = (bankRes.data || []).filter(q => String(q.grade) === gradeNum && q.lesson);
+        const rawGradeQuestions = (bankRes.data || []).filter(q => String(q.grade) === gradeNum && q.lesson);
+        const { valid: gradeQuestions } = filterQuestionsByActiveCriteria(rawGradeQuestions, gradeNum);
 
         if (gradeQuestions.length === 0) {
             showToast(`Chưa có câu hỏi nào thuộc Khối ${gradeNum} trong Ngân hàng câu hỏi nội bộ.`, 'error');

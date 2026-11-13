@@ -22,6 +22,7 @@ import { splitLegacyTrueFalseQuestions, autoTagQuestion } from './QuestionManage
 import { CURRICULUM } from '../data/curriculum';
 import { CANONICAL_REQUIREMENTS, KNTT_LESSON_MAPPINGS } from '../data/curriculum/index';
 import { loadQuestionBank, saveQuestionBank } from '../services/storage/questionBankStorage';
+import { filterQuestionsByActiveCriteria } from '../services/criteriaService';
 import {
     getSavedExams,
     saveExamDossier,
@@ -174,9 +175,13 @@ const ExamGenerator: React.FC = () => {
         const res = loadQuestionBank();
         if (res.data && res.data.length > 0) {
             const tagged = splitLegacyTrueFalseQuestions(res.data.map(autoTagQuestion));
-            const filtered = gradeFilter === 'all'
+            const filteredByGrade = gradeFilter === 'all'
                 ? tagged
                 : tagged.filter(q => String(q.grade) === gradeFilter);
+            const { valid: filtered } = filterQuestionsByActiveCriteria(
+                filteredByGrade,
+                gradeFilter === 'all' ? undefined : gradeFilter
+            );
 
             const normalized: BankQuestion[] = filtered.map(q => ({
                 ...q,
@@ -652,7 +657,8 @@ const ExamGenerator: React.FC = () => {
             });
 
             // Merge with existing internal Question Bank so uploaded questions are also saved!
-            const combined = [...bank, ...newQuestions];
+            const { valid: validNewQuestions } = filterQuestionsByActiveCriteria(newQuestions);
+            const combined = [...bank, ...validNewQuestions];
             const uniqueMap = new Map();
             combined.forEach(q => {
                 const key = (q.content || '').trim().toLowerCase();
@@ -660,7 +666,7 @@ const ExamGenerator: React.FC = () => {
             });
 
             const rawQuestions = Array.from(uniqueMap.values());
-            const migrated = splitLegacyTrueFalseQuestions(rawQuestions as any);
+            const migrated = filterQuestionsByActiveCriteria(splitLegacyTrueFalseQuestions(rawQuestions as any)).valid;
             setBank(migrated as any);
 
             // Also persist into primary Question Bank storage
@@ -785,20 +791,24 @@ const ExamGenerator: React.FC = () => {
         const targetGrade = detectGradeFromContext(bank, headerInfo, importedMatrix);
 
         // Nếu state `bank` đang thiếu câu hỏi của khối mục tiêu (do lọc khối khác), lấy trực tiếp từ kho lưu trữ
-        let activeBank: BankQuestion[] = bank.filter(q => !q.grade || String(q.grade) === targetGrade);
+        let activeBank: BankQuestion[] = filterQuestionsByActiveCriteria(
+            bank.filter(q => !q.grade || String(q.grade) === targetGrade),
+            targetGrade
+        ).valid;
         if (activeBank.length === 0) {
             const res = loadQuestionBank();
             if (res.data && res.data.length > 0) {
                 const tagged = splitLegacyTrueFalseQuestions(res.data.map(autoTagQuestion));
                 const byGrade = tagged.filter(q => !q.grade || String(q.grade) === targetGrade);
-                activeBank = (byGrade.length > 0 ? byGrade : tagged).map(q => ({
+                const validByCriteria = filterQuestionsByActiveCriteria(byGrade.length > 0 ? byGrade : tagged, targetGrade).valid;
+                activeBank = validByCriteria.map(q => ({
                     ...q,
                     level: normalizeLevel(q.level),
                     lesson: q.lesson || 'Bài chung',
                     uniqueId: Math.random()
                 }));
             } else {
-                activeBank = bank;
+                activeBank = filterQuestionsByActiveCriteria(bank, targetGrade).valid;
             }
         }
 

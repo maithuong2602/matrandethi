@@ -46,7 +46,8 @@ import {
   updateCustomCriterion,
   deleteCustomCriterion,
   loadCustomCriteriaStore, 
-  CUSTOM_CRITERIA_STORAGE_KEY 
+  CUSTOM_CRITERIA_STORAGE_KEY,
+  filterQuestionsByActiveCriteria
 } from '../services/criteriaService';
 
 
@@ -401,7 +402,9 @@ const QuestionManager: React.FC = () => {
 
     try {
       deleteCustomCriterion(grade, lesson, level, rawText);
-      setCustomCriteriaStore(loadCustomCriteriaStore());
+      const updatedStore = loadCustomCriteriaStore();
+      setCustomCriteriaStore(updatedStore);
+      setQuestions(prev => filterQuestionsByActiveCriteria(prev, grade, lesson, updatedStore).valid);
 
       // Clean up hsktChecked
       setHsktChecked(prev => {
@@ -1075,20 +1078,25 @@ const QuestionManager: React.FC = () => {
         };
     });
 
+    const { valid: validByCriteria, removedCount: invalidCritCount } = filterQuestionsByActiveCriteria(newQuestions, grade, lesson);
+
     let skippedCount = 0;
-    const uniqueQuestions = newQuestions.filter(nq => {
+    const uniqueQuestions = validByCriteria.filter(nq => {
         const isDup = checkDuplicateBeforeAdd(filteredQuestions, nq.content);
         if (isDup) skippedCount++;
         return !isDup;
     });
 
-    if (uniqueQuestions.length === 0 && skippedCount > 0) {
+    if (uniqueQuestions.length === 0 && invalidCritCount > 0 && skippedCount === 0) {
+         setAlertMessage(`Đã bỏ qua ${invalidCritCount} câu hỏi vì không thuộc Yêu cầu cần đạt (YCCĐ) hiện có của bài "${lesson}".`);
+    } else if (uniqueQuestions.length === 0 && skippedCount > 0) {
          setAlertMessage(`Cảnh báo: Tất cả ${skippedCount} câu hỏi đều trùng hoặc gần giống với dữ liệu hiện có.`);
     } else {
          setQuestions(prev => [...prev, ...uniqueQuestions]);
          const successMsg = `Đã nhập: ${uniqueQuestions.length} câu hỏi thuộc bài "${lesson}".`;
          const skipMsg = skippedCount > 0 ? ` Đã tự động bỏ qua ${skippedCount} câu trùng lặp (giống >90%).` : '';
-         setAlertMessage(successMsg + skipMsg);
+         const critSkipMsg = invalidCritCount > 0 ? ` (Bỏ qua ${invalidCritCount} câu không có YCCĐ tương ứng trong bài học).` : '';
+         setAlertMessage(successMsg + skipMsg + critSkipMsg);
     }
 
     setIsBulkModalOpen(false);
@@ -1497,7 +1505,14 @@ ${formatExample}`;
                   ? data.questions
                   : (Array.isArray(data?.data?.questions) ? data.data.questions : null);
               if (rawQuestions) {
-                  const incomingQuestions = rawQuestions as ExerciseQuestion[];
+                  const targetGrade = data.info?.grade || grade || '';
+                  const targetLesson = data.info?.lesson || lesson || '';
+                  const rawIncomingQuestions = rawQuestions as ExerciseQuestion[];
+                  const { valid: incomingQuestions, removedCount: skippedInvalidYccd } = filterQuestionsByActiveCriteria(
+                      rawIncomingQuestions,
+                      targetGrade,
+                      targetLesson
+                  );
                   
                   const newUnique: ExerciseQuestion[] = [];
                   const newDuplicate: ExerciseQuestion[] = [];
@@ -1528,8 +1543,6 @@ ${formatExample}`;
                   }
 
                   if (finalToAdd.length > 0) {
-                      const targetGrade = data.info?.grade || grade || '';
-                      const targetLesson = data.info?.lesson || lesson || '';
                       const processedQuestions = finalToAdd.map(q => ({
                           ...q,
                           id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
@@ -1542,9 +1555,11 @@ ${formatExample}`;
                       }));
                       
                       setQuestions(prev => [...prev, ...processedQuestions]);
-                      setAlertMessage(`Đã thêm: ${processedQuestions.length} câu hỏi. (Bỏ qua: ${skippedCount})`);
+                      const yccdSkipNote = skippedInvalidYccd > 0 ? `, loại ${skippedInvalidYccd} câu không có YCCĐ hợp lệ` : '';
+                      setAlertMessage(`Đã thêm: ${processedQuestions.length} câu hỏi. (Bỏ qua: ${skippedCount}${yccdSkipNote})`);
                   } else {
-                      setAlertMessage(`Không có câu hỏi mới nào được thêm. (Trùng lặp: ${skippedCount})`);
+                      const yccdSkipNote = skippedInvalidYccd > 0 ? ` Đã chặn ${skippedInvalidYccd} câu hỏi vì YCCĐ không tồn tại hoặc đã bị xóa trong bài học.` : '';
+                      setAlertMessage(`Không có câu hỏi mới nào được thêm. (Trùng lặp: ${skippedCount}).${yccdSkipNote}`);
                   }
               }
           } catch (err) {

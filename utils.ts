@@ -1,12 +1,22 @@
 import { REQUIREMENTS_DATA, getDefaultCompetencyForTopic, createEmptyNewFormatRow } from './data/matrixConstants';
 import { MatrixData, ExerciseQuestion, NewMatrixFormatRowConfig } from './types';
 import { CURRICULUM } from './data/curriculum';
-import { syncSpecHtmlWithCustomStore } from './services/criteriaService';
+import { syncSpecHtmlWithCustomStore, buildSpecHtmlFromMergedCriteria } from './services/criteriaService';
 
 export const getRequirementsHtml = (grade: string, mainTopic: string, subTopic: string, lessonName?: string): string => {
     const gradeNumberMatch = grade.match(/\d+/);
     if (!gradeNumberMatch) return '';
     const gradeNum = gradeNumberMatch[0];
+
+    // Nếu xác định được Bài học cụ thể, xây dựng YCCĐ trực tiếp từ getMergedCriteria(gradeNum, lessonName)
+    // để đồng bộ tuyệt đối 100% với "Tạo bài tập / Quản lý câu hỏi" (bao gồm cả khi xóa YCCĐ).
+    if (lessonName) {
+        const lessonSpecHtml = buildSpecHtmlFromMergedCriteria(gradeNum, lessonName);
+        if (lessonSpecHtml !== null) {
+            return lessonSpecHtml;
+        }
+    }
+
     const gradeKey = `Lớp ${gradeNum}`;
     const gradeData = REQUIREMENTS_DATA[gradeKey];
 

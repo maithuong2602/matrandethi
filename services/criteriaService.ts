@@ -2,6 +2,7 @@ import { CURRICULUM } from '../data/curriculum';
 import { CANONICAL_REQUIREMENTS, KNTT_LESSON_MAPPINGS } from '../data/curriculum/index';
 import { REQUIREMENTS_DATA } from '../data/matrixConstants';
 import { MatrixData } from '../types';
+import { loadQuestionBank, saveQuestionBank } from './storage/questionBankStorage';
 
 export const CUSTOM_CRITERIA_STORAGE_KEY = 'matrandethi_custom_criteria_data';
 
@@ -51,15 +52,25 @@ export const areCriteriaSemanticallySame = (a: string, b: string): boolean => {
             .replace(/\bsử dụng được\b/g, 'sử dụng')
             .replace(/\bthực hiện được\b/g, 'thực hiện')
             .replace(/\bgiải thích được\b/g, 'giải thích')
+            .replace(/\bnêu được ví dụ minh hoạ\b/g, 'nêu ví dụ minh hoạ')
+            .replace(/\bcó ví dụ minh hoạ\b/g, 'nêu ví dụ minh hoạ')
             .replace(/\bnêu được\b/g, 'nêu')
             .replace(/\btrình bày được\b/g, 'trình bày')
+            .replace(/\bnhận biết được\b/g, 'nhận biết')
+            .replace(/\bbiết được\b/g, 'biết')
+            .replace(/\bxác định được\b/g, 'xác định')
+            .replace(/\bmô tả được\b/g, 'mô tả')
+            .replace(/\bthể hiện được\b/g, 'thể hiện')
+            .replace(/\blựa chọn được\b/g, 'lựa chọn')
+            .replace(/\bsao chép được\b/g, 'sao chép')
+            .replace(/\btạo được\b/g, 'tạo')
             .replace(/\s+/g, ' ')
             .trim();
 
     const ca = canonicalize(na);
     const cb = canonicalize(nb);
     if (ca === cb) return true;
-    if (ca.length > 20 && cb.length > 20 && (ca.includes(cb) || cb.includes(ca))) return true;
+    if (ca.length > 15 && cb.length > 15 && (ca.includes(cb) || cb.includes(ca))) return true;
     return false;
 };
 
@@ -539,6 +550,7 @@ const harvestCriteriaFromFileSystem = (item: any, store: GradeCriteriaMap, curre
 
         item.matrixData.specifications.rows.forEach((row: string[], idx: number) => {
             const lessonName = row[3] || item.matrixData.matrix?.rows?.[idx]?.[3];
+            const subTopic = row[2] || item.matrixData.matrix?.rows?.[idx]?.[2] || '';
             const reqHtml = row[4];
             if (lessonName && reqHtml) {
                 const parsed = parseYccdHtmlToCriteria(reqHtml);
@@ -549,19 +561,61 @@ const harvestCriteriaFromFileSystem = (item: any, store: GradeCriteriaMap, curre
                             store[effectiveGrade][tKey] = {};
                         }
                         const deletedList: string[] = store[effectiveGrade][tKey].__deleted || [];
+                        const canonicalLesson = resolveCanonicalLessonName(effectiveGrade, tKey);
+                        const baseMap = CURRICULUM.criteriaData[effectiveGrade]?.[canonicalLesson] || {};
+                        const baseFlat = Object.values(baseMap).flat();
+
+                        // Also collect default REQUIREMENTS_DATA lines for this subTopic so we don't accidentally treat default subTopic lines from another lesson as custom additions
+                        const gradeReqs = REQUIREMENTS_DATA[`Lớp ${effectiveGrade}`] || {};
+                        const defaultReqLines: string[] = [];
+                        for (const subTopics of Object.values(gradeReqs)) {
+                            for (const [sKey, sVal] of Object.entries(subTopics as Record<string, string>)) {
+                                if (!subTopic || normalizeLessonString(sKey) === normalizeLessonString(subTopic)) {
+                                    defaultReqLines.push(...String(sVal || '').split('\n'));
+                                }
+                            }
+                        }
+
                         Object.entries(parsed).forEach(([lvl, list]) => {
                             const prefix = getLevelPrefixNumber(lvl);
-                            const filteredList = list.filter(it => !deletedList.some(d => areCriteriaSemanticallySame(d, it)));
+                            const filteredList = list.filter(it => {
+                                if (deletedList.some(d => areCriteriaSemanticallySame(d, it))) return false;
+                                const normIt = normalizeCriterionText(it);
+                                if (
+                                    normIt.startsWith('nêu được các khái niệm nội dung cơ bản thuộc') ||
+                                    normIt.startsWith('giải thích và phân biệt được các nội dung trọng tâm thuộc') ||
+                                    normIt.startsWith('vận dụng được kiến thức thuộc')
+                                ) {
+                                    return false;
+                                }
+                                // If lesson is in CURRICULUM, ignore lines that come from REQUIREMENTS_DATA but are not in this lesson's baseMap
+                                if (baseFlat.length > 0) {
+                                    const inBase = baseFlat.some(b => areCriteriaSemanticallySame(b, it));
+                                    const inDefaultReq = defaultReqLines.some(r => areCriteriaSemanticallySame(r, it));
+                                    if (!inBase && inDefaultReq) return false;
+                                }
+                                return true;
+                            });
                             if (!store[effectiveGrade][tKey][lvl] || store[effectiveGrade][tKey][lvl].length === 0) {
-                                if (filteredList.length > 0) {
-                                    store[effectiveGrade][tKey][lvl] = filteredList.map((it, idx) => {
+                                // Only populate if lesson has no base criteria in CURRICULUM or has genuinely new custom items
+                                const baseForLvl = baseMap[lvl] || [];
+                                const newCustomItems = filteredList.filter(
+                                    it => !baseForLvl.some(b => areCriteriaSemanticallySame(b, it))
+                                );
+                                if (newCustomItems.length > 0) {
+                                    const combined = [...baseForLvl.filter(b => !deletedList.some(d => areCriteriaSemanticallySame(d, b)))];
+                                    newCustomItems.forEach(it => {
                                         const clean = it.replace(/^\d+\.\d+\s*/, '').replace(/^[\s–\-*•]+/, '').trim();
-                                        return `${prefix}.${idx + 1} ${clean}`;
+                                        const nextIdx = combined.length + 1;
+                                        combined.push(`${prefix}.${nextIdx} ${clean}`);
                                     });
+                                    store[effectiveGrade][tKey][lvl] = combined;
                                 }
                             } else {
                                 filteredList.forEach(it => {
-                                    const isDup = store[effectiveGrade][tKey][lvl].some(ex => areCriteriaSemanticallySame(ex, it));
+                                    const isDup =
+                                        store[effectiveGrade][tKey][lvl].some(ex => areCriteriaSemanticallySame(ex, it)) ||
+                                        (baseMap[lvl] || []).some(ex => areCriteriaSemanticallySame(ex, it));
                                     if (!isDup) {
                                         const clean = it.replace(/^\d+\.\d+\s*/, '').replace(/^[\s–\-*•]+/, '').trim();
                                         const nextIdx = store[effectiveGrade][tKey][lvl].length + 1;
@@ -620,19 +674,60 @@ export const syncCriteriaFromMatrixData = (matrixData: MatrixData, context?: str
             targetKeys.forEach(tKey => {
                 if (!store[grade][tKey]) store[grade][tKey] = {};
                 const deletedList: string[] = store[grade][tKey].__deleted || [];
+                const canonicalLesson = resolveCanonicalLessonName(grade, tKey);
+                const baseMap = CURRICULUM.criteriaData[grade]?.[canonicalLesson] || {};
+                const baseFlat = Object.values(baseMap).flat();
+
+                const gradeReqs = REQUIREMENTS_DATA[`Lớp ${grade}`] || {};
+                const defaultReqLines: string[] = [];
+                for (const subTopics of Object.values(gradeReqs)) {
+                    for (const [sKey, sVal] of Object.entries(subTopics as Record<string, string>)) {
+                        if (!subTopic || normalizeLessonString(sKey) === normalizeLessonString(subTopic)) {
+                            defaultReqLines.push(...String(sVal || '').split('\n'));
+                        }
+                    }
+                }
+
                 Object.entries(parsed).forEach(([lvl, list]) => {
                     const prefix = getLevelPrefixNumber(lvl);
-                    const filteredList = list.filter(it => !deletedList.some(d => areCriteriaSemanticallySame(d, it)));
+                    const filteredList = list.filter(it => {
+                        if (deletedList.some(d => areCriteriaSemanticallySame(d, it))) return false;
+                        const normIt = normalizeCriterionText(it);
+                        if (
+                            normIt.startsWith('nêu được các khái niệm nội dung cơ bản thuộc') ||
+                            normIt.startsWith('giải thích và phân biệt được các nội dung trọng tâm thuộc') ||
+                            normIt.startsWith('vận dụng được kiến thức thuộc')
+                        ) {
+                            return false;
+                        }
+                        if (baseFlat.length > 0) {
+                            const inBase = baseFlat.some(b => areCriteriaSemanticallySame(b, it));
+                            const inDefaultReq = defaultReqLines.some(r => areCriteriaSemanticallySame(r, it));
+                            if (!inBase && inDefaultReq) return false;
+                        }
+                        return true;
+                    });
                     if (filteredList.length > 0) {
                         const existingList = store[grade][tKey][lvl] || [];
+                        const baseForLvl = baseMap[lvl] || [];
                         if (existingList.length === 0) {
-                            store[grade][tKey][lvl] = filteredList.map((it, idx) => {
-                                const clean = it.replace(/^\d+\.\d+\s*/, '').replace(/^[\s–\-*•]+/, '').trim();
-                                return `${prefix}.${idx + 1} ${clean}`;
-                            });
+                            const newCustomItems = filteredList.filter(
+                                it => !baseForLvl.some(b => areCriteriaSemanticallySame(b, it))
+                            );
+                            if (newCustomItems.length > 0) {
+                                const combined = [...baseForLvl.filter(b => !deletedList.some(d => areCriteriaSemanticallySame(d, b)))];
+                                newCustomItems.forEach(it => {
+                                    const clean = it.replace(/^\d+\.\d+\s*/, '').replace(/^[\s–\-*•]+/, '').trim();
+                                    const nextIdx = combined.length + 1;
+                                    combined.push(`${prefix}.${nextIdx} ${clean}`);
+                                });
+                                store[grade][tKey][lvl] = combined;
+                            }
                         } else {
                             filteredList.forEach(it => {
-                                const isDup = store[grade][tKey][lvl].some(ex => areCriteriaSemanticallySame(ex, it));
+                                const isDup =
+                                    store[grade][tKey][lvl].some(ex => areCriteriaSemanticallySame(ex, it)) ||
+                                    baseForLvl.some(ex => areCriteriaSemanticallySame(ex, it));
                                 if (!isDup) {
                                     const clean = it.replace(/^\d+\.\d+\s*/, '').replace(/^[\s–\-*•]+/, '').trim();
                                     const nextIdx = store[grade][tKey][lvl].length + 1;
@@ -658,7 +753,7 @@ export const applyCriterionChangeToHtml = (
     action: 'add' | 'update' | 'delete',
     data: { oldText?: string; newText?: string }
 ): string => {
-    const sections = parseYccdSections(currentHtml);
+    let sections = parseYccdSections(currentHtml);
     const targetTitle = getLevelTitleFromCode(levelCode).trim().toLowerCase();
     const targetNormOld = data.oldText ? normalizeCriterionText(data.oldText) : '';
     const cleanNew = data.newText 
@@ -667,34 +762,40 @@ export const applyCriterionChangeToHtml = (
 
     let secIdx = sections.findIndex(s => s.levelTitle.trim().toLowerCase() === targetTitle);
 
+    const isItemMatchOld = (itemText: string): boolean => {
+        if (!targetNormOld) return false;
+        const itemNorm = normalizeCriterionText(itemText);
+        if (
+            itemNorm === targetNormOld ||
+            (targetNormOld.length > 5 && itemNorm.includes(targetNormOld)) ||
+            (itemNorm.length > 5 && targetNormOld.includes(itemNorm))
+        ) {
+            return true;
+        }
+        return areCriteriaSemanticallySame(itemText, data.oldText || '');
+    };
+
     if (action === 'delete') {
         let deleted = false;
         if (secIdx !== -1) {
             const beforeCount = sections[secIdx].items.length;
-            sections[secIdx].items = sections[secIdx].items.filter(it => {
-                const itemNorm = normalizeCriterionText(it.text);
-                const isMatch = itemNorm === targetNormOld || (targetNormOld.length > 5 && itemNorm.includes(targetNormOld)) || (itemNorm.length > 5 && targetNormOld.includes(itemNorm));
-                return !isMatch;
-            });
+            sections[secIdx].items = sections[secIdx].items.filter(it => !isItemMatchOld(it.text));
             if (sections[secIdx].items.length < beforeCount) {
                 deleted = true;
             }
         }
         if (!deleted) {
             for (const s of sections) {
-                s.items = s.items.filter(it => {
-                    const itemNorm = normalizeCriterionText(it.text);
-                    const isMatch = itemNorm === targetNormOld || (targetNormOld.length > 5 && itemNorm.includes(targetNormOld)) || (itemNorm.length > 5 && targetNormOld.includes(itemNorm));
-                    return !isMatch;
-                });
+                s.items = s.items.filter(it => !isItemMatchOld(it.text));
             }
         }
+        // Remove any level section that now has 0 items
+        sections = sections.filter(s => s.items.length > 0);
     } else if (action === 'update') {
         let updated = false;
         if (secIdx !== -1) {
             sections[secIdx].items.forEach(it => {
-                const itemNorm = normalizeCriterionText(it.text);
-                if (itemNorm === targetNormOld || (targetNormOld.length > 5 && itemNorm.includes(targetNormOld)) || (itemNorm.length > 5 && targetNormOld.includes(itemNorm))) {
+                if (isItemMatchOld(it.text)) {
                     it.text = `– ${cleanNew}`;
                     updated = true;
                 }
@@ -704,8 +805,7 @@ export const applyCriterionChangeToHtml = (
         if (!updated) {
             for (const s of sections) {
                 s.items.forEach(it => {
-                    const itemNorm = normalizeCriterionText(it.text);
-                    if (itemNorm === targetNormOld || (targetNormOld.length > 5 && itemNorm.includes(targetNormOld)) || (itemNorm.length > 5 && targetNormOld.includes(itemNorm))) {
+                    if (isItemMatchOld(it.text)) {
                         it.text = `– ${cleanNew}`;
                         updated = true;
                     }
@@ -734,7 +834,7 @@ export const applyCriterionChangeToHtml = (
                 items: [{ id: `${levelCode}-${Date.now()}`, text: formattedNew, checked: true }]
             });
         } else {
-            const alreadyExists = sections[secIdx].items.some(it => normalizeCriterionText(it.text) === normalizeCriterionText(cleanNew));
+            const alreadyExists = sections[secIdx].items.some(it => areCriteriaSemanticallySame(it.text, cleanNew));
             if (!alreadyExists) {
                 sections[secIdx].items.push({
                     id: `${levelCode}-${Date.now()}`,
@@ -762,7 +862,8 @@ export const syncCriterionChangeToMatrixFileSystem = (
     if (typeof window === 'undefined') return;
 
     const g = (grade || '').trim();
-    const targetLessons = resolveTargetLessons(g, lessonOrSubTopic, data.oldText);
+    const store = loadCustomCriteriaStore();
+    const targetLessons = resolveTargetLessons(g, lessonOrSubTopic, data.oldText, store);
     const targetNormLessons = new Set([
         normalizeLessonString(lessonOrSubTopic),
         ...targetLessons.map(l => normalizeLessonString(l))
@@ -782,15 +883,21 @@ export const syncCriterionChangeToMatrixFileSystem = (
         targetSubTopicsNorm.add(normalizeLessonString(lessonOrSubTopic.replace(/^\d+\.\s*/, '')));
     }
 
+    const matchesLessonName = (lessonStr: string): boolean => {
+        if (!lessonStr) return false;
+        if (targetNormLessons.has(normalizeLessonString(lessonStr))) return true;
+        const rNum = extractLessonNumber(lessonStr);
+        if (rNum && targetLessonNums.has(rNum)) return true;
+        return false;
+    };
+
     const matchesRow = (row: string[], folderGrade?: string): boolean => {
         if (folderGrade && g && folderGrade !== g) return false;
         const rowSubTopic = row[2] || '';
         const rowLesson = row[3] || '';
 
-        if (rowLesson) {
-            if (targetNormLessons.has(normalizeLessonString(rowLesson))) return true;
-            const rNum = extractLessonNumber(rowLesson);
-            if (rNum && targetLessonNums.has(rNum)) return true;
+        if (rowLesson && matchesLessonName(rowLesson)) {
+            return true;
         }
 
         if (rowSubTopic) {
@@ -804,7 +911,7 @@ export const syncCriterionChangeToMatrixFileSystem = (
         return false;
     };
 
-    // 1. Đồng bộ vào matrixFileSystem (Bảng ma trận & đặc tả trong Ma Trận Đề Thi)
+    // 1. Đồng bộ vào matrixFileSystem (Bảng ma trận & đặc tả + lọc lại các file câu hỏi đã upload trong Ma Trận Đề Thi)
     try {
         const raw = localStorage.getItem('matrixFileSystem');
         if (raw) {
@@ -822,8 +929,37 @@ export const syncCriterionChangeToMatrixFileSystem = (
                     }
                 }
 
+                // Nếu là file câu hỏi đã upload trong thư mục chủ đề con và đang xóa YCCĐ -> lọc bỏ câu hỏi thuộc YCCĐ đã xóa
+                if (action === 'delete' && item.type === 'file' && item.content) {
+                    const effGrade = folderGrade || g;
+                    if (!folderGrade || !g || folderGrade === g) {
+                        const fileLesson = item.content?.info?.lesson || item.content?.thongTinChung?.bai || item.name?.replace('.json', '') || '';
+                        if (matchesLessonName(fileLesson)) {
+                            if (Array.isArray(item.content.questions)) {
+                                const beforeLen = item.content.questions.length;
+                                item.content.questions = filterQuestionsByActiveCriteria(item.content.questions, effGrade, fileLesson, store).valid;
+                                if (item.content.questions.length !== beforeLen) modified = true;
+                            }
+                            if (Array.isArray(item.content.tracNghiem)) {
+                                const beforeLen = item.content.tracNghiem.length;
+                                item.content.tracNghiem = filterQuestionsByActiveCriteria(item.content.tracNghiem, effGrade, fileLesson, store).valid;
+                                if (item.content.tracNghiem.length !== beforeLen) modified = true;
+                            }
+                            if (Array.isArray(item.content.tuLuan)) {
+                                const beforeLen = item.content.tuLuan.length;
+                                item.content.tuLuan = filterQuestionsByActiveCriteria(item.content.tuLuan, effGrade, fileLesson, store).valid;
+                                if (item.content.tuLuan.length !== beforeLen) modified = true;
+                            }
+                        }
+                    }
+                }
+
+                if (Array.isArray(item.children)) {
+                    item.children.forEach((child: any) => updateInTree(child, folderGrade));
+                }
+
                 if (item.matrixData?.specifications?.rows && Array.isArray(item.matrixData.specifications.rows)) {
-                    item.matrixData.specifications.rows.forEach((row: string[]) => {
+                    item.matrixData.specifications.rows.forEach((row: string[], rIdx: number) => {
                         if (matchesRow(row, folderGrade)) {
                             const curHtml = row[4] || '';
                             const newHtml = applyCriterionChangeToHtml(curHtml, levelCode, action, data);
@@ -831,12 +967,28 @@ export const syncCriterionChangeToMatrixFileSystem = (
                                 row[4] = newHtml;
                                 modified = true;
                             }
+
+                            // Nếu xóa hết YCCĐ của mức độ trên dòng này thì cập nhật lại availableCounts
+                            if (action === 'delete' && item.matrixData.availableCounts?.[rIdx]) {
+                                const rowLesson = row[3] || item.matrixData.matrix?.rows?.[rIdx]?.[3] || '';
+                                const effGrade = folderGrade || g;
+                                if (rowLesson && effGrade) {
+                                    const merged = getMergedCriteria(effGrade, rowLesson, store);
+                                    (['NB', 'TH', 'VD', 'VDC'] as const).forEach(lKey => {
+                                        if (!merged?.[lKey] || merged[lKey].length === 0) {
+                                            if (
+                                                item.matrixData.availableCounts[rIdx][lKey]?.TN > 0 ||
+                                                item.matrixData.availableCounts[rIdx][lKey]?.TL > 0
+                                            ) {
+                                                item.matrixData.availableCounts[rIdx][lKey] = { TN: 0, TL: 0 };
+                                                modified = true;
+                                            }
+                                        }
+                                    });
+                                }
+                            }
                         }
                     });
-                }
-
-                if (Array.isArray(item.children)) {
-                    item.children.forEach((child: any) => updateInTree(child, folderGrade));
                 }
             };
 
@@ -918,17 +1070,29 @@ export const addCustomCriterion = (
 
         // Nếu mục này từng nằm trong __deleted thì gỡ khỏi __deleted
         if (Array.isArray(store[g][tKey].__deleted)) {
-            store[g][tKey].__deleted = store[g][tKey].__deleted.filter(d => d !== normNew);
+            store[g][tKey].__deleted = store[g][tKey].__deleted.filter(d => !areCriteriaSemanticallySame(d, cleanText) && d !== normNew);
         }
 
         const existingMerged = getMergedCriteria(g, tKey, store)?.[lvl] || [];
         const currentList = store[g][tKey][lvl] || [];
         const baseList = [...existingMerged];
 
-        const alreadyExists = baseList.some(item => normalizeCriterionText(item) === normNew);
+        const alreadyExists = baseList.some(item => areCriteriaSemanticallySame(item, cleanText));
         if (!alreadyExists) {
-            const nextIdx = baseList.length + 1;
-            const formatted = `${prefix}.${nextIdx} ${cleanText}`;
+            // Find next sub-index that doesn't collide with existing codes
+            const usedSubNums = baseList
+                .map(it => {
+                    const m = it.match(/^\d+\.(\d+)\s/);
+                    return m ? parseInt(m[1], 10) : 0;
+                })
+                .filter(n => n > 0);
+            const nextIdx = usedSubNums.length > 0 ? Math.max(...usedSubNums) + 1 : baseList.length + 1;
+            const newCode = `${prefix}.${nextIdx}`;
+            const entryAny = store[g][tKey] as any;
+            if (Array.isArray(entryAny.__deletedCodes)) {
+                entryAny.__deletedCodes = entryAny.__deletedCodes.filter((c: string) => c !== newCode && c !== `${lvl}:${newCode}`);
+            }
+            const formatted = `${newCode} ${cleanText}`;
             store[g][tKey][lvl] = [...baseList, formatted];
         } else if (currentList.length === 0) {
             store[g][tKey][lvl] = [...baseList];
@@ -988,10 +1152,9 @@ export const updateCustomCriterion = (
         // Lưu thêm vào __replacements để đồng bộ sang Ma trận khi khởi tạo mới
         const entryAny = store[g][tKey] as any;
         if (!entryAny.__replacements) entryAny.__replacements = {};
-        // Nếu normOld là kết quả của một lần sửa trước đó, cập nhật luôn gốc ban đầu
         let foundChain = false;
         for (const [origNorm, prevVal] of Object.entries(entryAny.__replacements as Record<string, string>)) {
-            if (normalizeCriterionText(prevVal) === normOld) {
+            if (normalizeCriterionText(prevVal) === normOld || areCriteriaSemanticallySame(prevVal, oldCriterionText)) {
                 entryAny.__replacements[origNorm] = cleanNew;
                 foundChain = true;
             }
@@ -1010,6 +1173,7 @@ export const updateCustomCriterion = (
             const itNorm = normalizeCriterionText(it);
             return (
                 itNorm === normOld ||
+                areCriteriaSemanticallySame(it, oldCriterionText) ||
                 (normOld.length > 5 && itNorm.includes(normOld)) ||
                 (itNorm.length > 5 && normOld.includes(itNorm))
             );
@@ -1053,6 +1217,8 @@ export const deleteCustomCriterion = (
 
     const lvl = getLevelCodeFromTitle(levelCode);
     const normText = normalizeCriterionText(criterionText);
+    const explicitCodeMatch = criterionText.trim().match(/^(\d+\.\d+)\b/);
+    const explicitCode = explicitCodeMatch ? explicitCodeMatch[1] : '';
 
     const targetKeys = resolveTargetLessons(g, lesson, criterionText, store);
     if (extractLessonNumber(lesson) && !targetKeys.includes(lesson.trim())) {
@@ -1063,7 +1229,15 @@ export const deleteCustomCriterion = (
         if (!store[g][tKey]) store[g][tKey] = {};
         const beforeMergedList = getMergedCriteria(g, tKey, store)?.[lvl] || [];
 
-        // 1. Ghi nhận vào __deleted để chặn CURRICULUM cơ bản không hiện lại
+        // Tìm mã code của mục bị xóa nếu người dùng truyền text không kèm mã (ví dụ xóa từ Bảng đặc tả)
+        let detectedCode = explicitCode;
+        if (!detectedCode) {
+            const matchedItem = beforeMergedList.find(it => areCriteriaSemanticallySame(it, criterionText));
+            const m = matchedItem?.match(/^(\d+\.\d+)\b/);
+            if (m) detectedCode = m[1];
+        }
+
+        // 1. Ghi nhận vào __deleted và __deletedCodes để chặn CURRICULUM cơ bản hoặc file upload cũ không hiện lại
         if (!store[g][tKey].__deleted) {
             store[g][tKey].__deleted = [];
         }
@@ -1072,9 +1246,25 @@ export const deleteCustomCriterion = (
         }
 
         const entryAny = store[g][tKey] as any;
+        if (detectedCode) {
+            if (!Array.isArray(entryAny.__deletedCodes)) {
+                entryAny.__deletedCodes = [];
+            }
+            if (!entryAny.__deletedCodes.includes(detectedCode)) {
+                entryAny.__deletedCodes.push(detectedCode);
+            }
+            if (!entryAny.__deletedCodes.includes(`${lvl}:${detectedCode}`)) {
+                entryAny.__deletedCodes.push(`${lvl}:${detectedCode}`);
+            }
+        }
+
         if (entryAny.__replacements) {
             for (const [origNorm, prevVal] of Object.entries(entryAny.__replacements as Record<string, string>)) {
-                if (normalizeCriterionText(prevVal) === normText || origNorm === normText) {
+                if (
+                    normalizeCriterionText(prevVal) === normText ||
+                    origNorm === normText ||
+                    areCriteriaSemanticallySame(prevVal, criterionText)
+                ) {
                     if (!store[g][tKey].__deleted.includes(origNorm)) {
                         store[g][tKey].__deleted.push(origNorm);
                     }
@@ -1083,12 +1273,17 @@ export const deleteCustomCriterion = (
             }
         }
 
-        // 2. Xóa khỏi danh sách hiện hành
+        // 2. Xóa khỏi danh sách hiện hành (giữ nguyên mã số của các mục còn lại, không đánh số đè lên mã đã xóa)
         const baseList = beforeMergedList.length > 0 ? beforeMergedList : (store[g][tKey][lvl] || []);
         store[g][tKey][lvl] = baseList.filter(it => {
             const itNorm = normalizeCriterionText(it);
+            const itCodeMatch = it.match(/^(\d+\.\d+)\b/);
+            if (detectedCode && itCodeMatch && itCodeMatch[1] === detectedCode) {
+                return false;
+            }
             return !(
                 itNorm === normText ||
+                areCriteriaSemanticallySame(it, criterionText) ||
                 (normText.length > 5 && itNorm.includes(normText)) ||
                 (itNorm.length > 5 && normText.includes(itNorm))
             );
@@ -1097,7 +1292,20 @@ export const deleteCustomCriterion = (
 
     saveCustomCriteriaStore(store);
 
-    // 3. Đồng bộ xóa khỏi Bảng đặc tả (matrixFileSystem & saved exams)
+    // 3. Đồng bộ xóa câu hỏi thuộc YCCĐ đã xóa khỏi Ngân hàng câu hỏi lưu trữ (questionBankStorage)
+    try {
+        const bankRes = loadQuestionBank();
+        if (bankRes.success && Array.isArray(bankRes.data) && bankRes.data.length > 0) {
+            const { valid, removedCount } = filterQuestionsByActiveCriteria(bankRes.data, undefined, undefined, store);
+            if (removedCount > 0) {
+                saveQuestionBank(valid, { force: true });
+            }
+        }
+    } catch (e) {
+        console.error('[criteriaService] Error filtering questionBank after criterion deletion:', e);
+    }
+
+    // 4. Đồng bộ xóa khỏi Bảng đặc tả & các file JSON trong matrixFileSystem / saved exams
     syncCriterionChangeToMatrixFileSystem(g, lesson, lvl, 'delete', {
         oldText: criterionText
     });
@@ -1117,7 +1325,7 @@ export const getMergedCriteria = (
 ): CriteriaMap | null => {
     if (!grade || !lesson) return null;
 
-    const g = grade.trim();
+    const g = (grade.match(/\d+/)?.[0] || grade || '').trim();
     const store = customStore || loadCustomCriteriaStore();
     const gradeStore = store[g] || {};
 
@@ -1136,12 +1344,17 @@ export const getMergedCriteria = (
         }
     }
 
-    // Gom danh sách __deleted và __replacements từ tất cả các khóa tương đương của bài học
+    // Gom danh sách __deleted, __deletedCodes và __replacements từ tất cả các khóa tương đương của bài học
     const deletedNorms = new Set<string>();
+    const deletedCodes = new Set<string>();
     const replacementsMap: Record<string, string> = {};
     matchingCustomEntries.forEach(entry => {
         if (Array.isArray(entry.__deleted)) {
             entry.__deleted.forEach(d => deletedNorms.add(d));
+        }
+        const delCodes = (entry as any).__deletedCodes;
+        if (Array.isArray(delCodes)) {
+            delCodes.forEach((c: string) => deletedCodes.add(c));
         }
         const rep = (entry as any).__replacements;
         if (rep && typeof rep === 'object') {
@@ -1149,10 +1362,21 @@ export const getMergedCriteria = (
         }
     });
 
-    const isItemDeleted = (text: string) => {
-        if (deletedNorms.size === 0) return false;
+    const isItemDeleted = (text: string, lvl?: string) => {
         const norm = normalizeCriterionText(text);
-        return deletedNorms.has(norm);
+        if (Object.values(replacementsMap).some(rv => normalizeCriterionText(rv) === norm)) {
+            return false;
+        }
+        const codeMatch = text.trim().match(/^(\d+\.\d+)\b/);
+        if (codeMatch && deletedCodes.size > 0) {
+            const code = codeMatch[1];
+            if (deletedCodes.has(code) || (lvl && deletedCodes.has(`${lvl}:${code}`))) {
+                return true;
+            }
+        }
+        if (deletedNorms.size === 0) return false;
+        if (deletedNorms.has(norm)) return true;
+        return Array.from(deletedNorms).some(d => areCriteriaSemanticallySame(d, text));
     };
 
     // 1. Get Base Criteria from CURRICULUM
@@ -1179,11 +1403,14 @@ export const getMergedCriteria = (
             const processed: string[] = [];
             list.forEach((item, idx) => {
                 const norm = normalizeCriterionText(item);
-                if (replacementsMap[norm]) {
+                const matchedRepKey = Object.keys(replacementsMap).find(
+                    rk => rk === norm || areCriteriaSemanticallySame(rk, item)
+                );
+                if (matchedRepKey && replacementsMap[matchedRepKey]) {
                     const codeMatch = item.match(/^(\d+\.\d+)\s/);
                     const codePrefix = codeMatch ? codeMatch[1] : `${prefix}.${idx + 1}`;
-                    processed.push(`${codePrefix} ${replacementsMap[norm]}`);
-                } else if (!isItemDeleted(item)) {
+                    processed.push(`${codePrefix} ${replacementsMap[matchedRepKey]}`);
+                } else if (!isItemDeleted(item, lvl)) {
                     processed.push(item);
                 }
             });
@@ -1198,7 +1425,7 @@ export const getMergedCriteria = (
         Object.entries(customForLesson).forEach(([lvl, list]) => {
             if (lvl.startsWith('__') || !Array.isArray(list)) return;
 
-            const validList = list.filter(item => !isItemDeleted(item));
+            const validList = list.filter(item => !isItemDeleted(item, lvl));
             if (!merged[lvl]) {
                 if (validList.length > 0) merged[lvl] = [...validList];
             } else {
@@ -1212,31 +1439,251 @@ export const getMergedCriteria = (
         });
     });
 
-    // 3. Đảm bảo mã đánh số (1.1, 1.2...; 2.1, 2.2...; 3.1, 3.2...) trong cùng một mức độ luôn duy nhất và tuần tự, không bao giờ bị trùng "3.1" hai lần
+    // 3. Đảm bảo mã đánh số (1.1, 1.2...; 2.1, 2.2...; 3.1, 3.2...) trong cùng một mức độ luôn duy nhất,
+    // giữ nguyên mã của các mục hợp lệ (ví dụ khi xóa 1.1 thì 1.2 vẫn giữ nguyên là 1.2, không bị đổi thành 1.1)
     Object.entries(merged).forEach(([lvl, list]) => {
         if (!Array.isArray(list) || list.length === 0) return;
         const prefix = getLevelPrefixNumber(lvl);
         const usedCodes = new Set<string>();
-        let hasCollisionOrMissing = false;
+        let maxSubNum = 0;
 
         list.forEach(item => {
-            const m = item.match(/^(\d+\.\d+)\s/);
-            if (!m || usedCodes.has(m[1])) {
-                hasCollisionOrMissing = true;
-            } else {
-                usedCodes.add(m[1]);
+            const m = item.match(/^(\d+)\.(\d+)\s/);
+            if (m) {
+                const sub = parseInt(m[2], 10);
+                if (sub > maxSubNum) maxSubNum = sub;
             }
         });
 
-        if (hasCollisionOrMissing) {
-            merged[lvl] = list.map((item, idx) => {
-                const clean = item.replace(/^\d+\.\d+\s*/, '').replace(/^[\s–\-*•]+/, '').trim();
-                return `${prefix}.${idx + 1} ${clean}`;
+        merged[lvl] = list.map(item => {
+            const m = item.match(/^(\d+\.\d+)\s/);
+            if (m && !usedCodes.has(m[1])) {
+                usedCodes.add(m[1]);
+                return item;
+            }
+            const clean = item.replace(/^\d+\.\d+\s*/, '').replace(/^[\s–\-*•]+/, '').trim();
+            let candidateIdx = 1;
+            while (
+                usedCodes.has(`${prefix}.${candidateIdx}`) ||
+                deletedCodes.has(`${prefix}.${candidateIdx}`) ||
+                deletedCodes.has(`${lvl}:${prefix}.${candidateIdx}`)
+            ) {
+                candidateIdx++;
+            }
+            const newCode = `${prefix}.${candidateIdx}`;
+            usedCodes.add(newCode);
+            return `${newCode} ${clean}`;
+        });
+    });
+
+    return Object.keys(merged).length > 0 ? merged : null;
+};
+
+/**
+ * Kiểm tra một câu hỏi (khi upload JSON / nhập hàng loạt / đồng bộ) có thuộc YCCĐ hợp lệ hiện có của bài học hay không.
+ * Nếu YCCĐ đó đã bị xóa trên "Tạo bài tập/quản lý câu hỏi" (hoặc bài học không có YCCĐ đó) -> trả về false (không đưa vào).
+ */
+export const isQuestionCriteriaValidForLesson = (
+    q: any,
+    defaultGrade?: string,
+    defaultLesson?: string,
+    customStore?: GradeCriteriaMap
+): boolean => {
+    if (!q) return false;
+    const store = customStore || loadCustomCriteriaStore();
+
+    const rawLesson = String(q.lesson || q.bai || defaultLesson || '').trim();
+    const rawGrade = String(q.grade || q.lop || defaultGrade || '').trim();
+    const gMatch = rawGrade.match(/\d+/);
+    const g = gMatch ? gMatch[0] : (rawLesson ? detectGradeFromLessonOrContext(rawLesson) : '');
+
+    if (!g || !rawLesson || rawLesson === 'Bài chung') return true;
+
+    const normLesson = normalizeLessonString(rawLesson);
+    const lessonNum = extractLessonNumber(rawLesson);
+    const canonicalLesson = resolveCanonicalLessonName(g, rawLesson);
+
+    const gradeCriteriaData = CURRICULUM.criteriaData[g] || {};
+    const gradeStore = store[g] || {};
+
+    const isKnownLesson =
+        Boolean(gradeCriteriaData[canonicalLesson]) ||
+        Boolean(gradeStore[canonicalLesson]) ||
+        Boolean(gradeStore[rawLesson]) ||
+        Object.keys(gradeCriteriaData).some(
+            k => normalizeLessonString(k) === normLesson || (lessonNum && extractLessonNumber(k) === lessonNum)
+        ) ||
+        Object.keys(gradeStore).some(
+            k => normalizeLessonString(k) === normLesson || (lessonNum && extractLessonNumber(k) === lessonNum)
+        );
+
+    if (!isKnownLesson) return true;
+
+    // Gom danh sách __deleted và __deletedCodes của bài học này
+    const deletedNorms = new Set<string>();
+    const deletedCodes = new Set<string>();
+    for (const [k, entry] of Object.entries(gradeStore)) {
+        if (
+            k === rawLesson ||
+            k === canonicalLesson ||
+            normalizeLessonString(k) === normLesson ||
+            (lessonNum && extractLessonNumber(k) === lessonNum)
+        ) {
+            if (Array.isArray(entry.__deleted)) {
+                entry.__deleted.forEach(d => deletedNorms.add(d));
+            }
+            const delCodes = (entry as any).__deletedCodes;
+            if (Array.isArray(delCodes)) {
+                delCodes.forEach((c: string) => deletedCodes.add(c));
+            }
+        }
+    }
+
+    const merged = getMergedCriteria(g, canonicalLesson, store);
+    if (!merged || Object.keys(merged).length === 0) {
+        return false;
+    }
+
+    const allActiveByLevel: Record<string, string[]> = {};
+    const allActiveList: string[] = [];
+    const activeCodes = new Set<string>();
+
+    Object.entries(merged).forEach(([lvl, arr]) => {
+        if (lvl.startsWith('__') || !Array.isArray(arr)) return;
+        allActiveByLevel[lvl] = arr;
+        arr.forEach(c => {
+            allActiveList.push(c);
+            const code = c.trim().split(/\s+/)[0].replace(/[:.]$/, '');
+            if (code) activeCodes.add(code);
+        });
+    });
+
+    if (allActiveList.length === 0) return false;
+
+    const rawCrit = String(q.criteria || q.tieuChi || '').trim();
+    const qLvl = getLevelCodeFromTitle(String(q.level || q.mucDo || 'NB'));
+
+    if (rawCrit) {
+        const codeMatch = rawCrit.match(/^(\d+\.\d+)\b/);
+        const qCode = codeMatch ? codeMatch[1] : rawCrit.split(/\s+/)[0].replace(/[:.]$/, '').trim();
+        const qText = rawCrit.replace(/^\d+\.\d+\s*/, '').replace(/^[\s–\-*•]+/, '').trim();
+
+        // 1. Nếu câu hỏi gắn kèm nội dung chữ của YCCĐ -> kiểm tra xem đã bị xóa chưa hoặc có khớp YCCĐ hiện có không
+        if (qText.length > 5) {
+            if (Array.from(deletedNorms).some(d => areCriteriaSemanticallySame(d, qText))) {
+                return false;
+            }
+            const matchesActiveText = allActiveList.some(c => areCriteriaSemanticallySame(c, qText));
+            if (!matchesActiveText) {
+                return false;
+            }
+        }
+
+        // 2. Nếu câu hỏi gắn mã YCCĐ (ví dụ 1.1, 2.1, 3.1) -> mã đó bắt buộc phải tồn tại trong danh sách YCCĐ hiện hành của bài học
+        if (qCode && /^\d+\.\d+$/.test(qCode)) {
+            if (deletedCodes.has(qCode) || deletedCodes.has(`${qLvl}:${qCode}`)) {
+                if (!activeCodes.has(qCode)) return false;
+            }
+            if (!activeCodes.has(qCode)) {
+                return false;
+            }
+        }
+    } else {
+        // Nếu câu hỏi không ghi mã tiêu chí cụ thể, kiểm tra mức độ nhận thức (qLvl) của câu hỏi có YCCĐ nào trong bài học không
+        const hasLevelInLesson =
+            (allActiveByLevel[qLvl] && allActiveByLevel[qLvl].length > 0) ||
+            (qLvl === 'VD' && allActiveByLevel['VDC'] && allActiveByLevel['VDC'].length > 0) ||
+            (qLvl === 'VDC' && allActiveByLevel['VD'] && allActiveByLevel['VD'].length > 0);
+        if (!hasLevelInLesson) {
+            return false;
+        }
+    }
+
+    return true;
+};
+
+/**
+ * Lọc danh sách câu hỏi, loại bỏ mọi câu hỏi có YCCĐ đã bị xóa hoặc không tồn tại trong bài học
+ */
+export const filterQuestionsByActiveCriteria = <T = any>(
+    questions: T[],
+    defaultGrade?: string,
+    defaultLesson?: string,
+    customStore?: GradeCriteriaMap
+): { valid: T[]; removedCount: number } => {
+    if (!Array.isArray(questions) || questions.length === 0) {
+        return { valid: [], removedCount: 0 };
+    }
+    const store = customStore || loadCustomCriteriaStore();
+    const valid: T[] = [];
+    let removedCount = 0;
+
+    questions.forEach(q => {
+        if (isQuestionCriteriaValidForLesson(q, defaultGrade, defaultLesson, store)) {
+            valid.push(q);
+        } else {
+            removedCount++;
+        }
+    });
+
+    return { valid, removedCount };
+};
+
+/**
+ * Dựng chuỗi HTML Đặc tả trực tiếp từ danh sách YCCĐ hiện hành (getMergedCriteria) của một bài học cụ thể
+ */
+export const buildSpecHtmlFromMergedCriteria = (
+    grade: string,
+    lessonName: string,
+    customStore?: GradeCriteriaMap
+): string | null => {
+    if (!grade || !lessonName) return null;
+    const g = (grade.match(/\d+/)?.[0] || grade || '').trim();
+    if (!g) return null;
+
+    const store = customStore || loadCustomCriteriaStore();
+    const normLesson = normalizeLessonString(lessonName);
+    const lessonNum = extractLessonNumber(lessonName);
+    const canonicalLesson = resolveCanonicalLessonName(g, lessonName);
+
+    const gradeCriteriaData = CURRICULUM.criteriaData[g] || {};
+    const gradeStore = store[g] || {};
+
+    const isKnownLesson =
+        Boolean(gradeCriteriaData[canonicalLesson]) ||
+        Boolean(gradeStore[canonicalLesson]) ||
+        Boolean(gradeStore[lessonName]) ||
+        Object.keys(gradeCriteriaData).some(
+            k => normalizeLessonString(k) === normLesson || (lessonNum && extractLessonNumber(k) === lessonNum)
+        ) ||
+        Object.keys(gradeStore).some(
+            k => normalizeLessonString(k) === normLesson || (lessonNum && extractLessonNumber(k) === lessonNum)
+        );
+
+    if (!isKnownLesson) return null;
+
+    const merged = getMergedCriteria(g, canonicalLesson, store);
+    if (!merged) return '';
+
+    const sections: YccdSection[] = [];
+    (['NB', 'TH', 'VD', 'VDC'] as const).forEach(lvl => {
+        const list = merged[lvl];
+        if (Array.isArray(list) && list.length > 0) {
+            sections.push({
+                levelTitle: getLevelTitleFromCode(lvl),
+                items: list.map((raw, idx) => {
+                    const clean = raw.replace(/^\d+\.\d+\s*/, '').replace(/^[\s–\-*•]+/, '').trim();
+                    return {
+                        id: `${lvl}-${idx}`,
+                        text: `– ${clean}`,
+                        checked: true
+                    };
+                })
             });
         }
     });
 
-    return Object.keys(merged).length > 0 ? merged : null;
+    return serializeYccdSections(sections);
 };
 
 /**
@@ -1254,8 +1701,7 @@ export const syncSpecHtmlWithCustomStore = (
     if (!g) return htmlContent;
 
     const store = customStore || loadCustomCriteriaStore();
-    const gradeStore = store[g];
-    if (!gradeStore || Object.keys(gradeStore).length === 0) return htmlContent;
+    const gradeStore = store[g] || {};
 
     const targetLessons = lessonName
         ? resolveTargetLessons(g, lessonName, undefined, store)
@@ -1264,6 +1710,12 @@ export const syncSpecHtmlWithCustomStore = (
     if (targetLessons.length === 0) return htmlContent;
 
     let updatedHtml = htmlContent || '';
+
+    // Loại bỏ các câu YCCĐ giả lập nếu từng bị chèn trước đây
+    updatedHtml = updatedHtml.replace(
+        /<div[^>]*>\s*[-–]?\s*(?:Nêu được các khái niệm, nội dung cơ bản thuộc|Giải thích và phân biệt được các nội dung trọng tâm thuộc|Vận dụng được kiến thức thuộc)[\s\S]*?<\/div>/gi,
+        ''
+    );
 
     targetLessons.forEach(tLesson => {
         const normTarget = normalizeLessonString(tLesson);
@@ -1313,8 +1765,14 @@ export const syncSpecHtmlWithCustomStore = (
                 if (lvl.startsWith('__') || !Array.isArray(list)) return;
                 list.forEach(item => {
                     const itemNorm = normalizeCriterionText(item);
-                    if (deletedList.includes(itemNorm)) return;
-                    if (baseNorms.has(itemNorm) || replacementValuesNorm.has(itemNorm)) return;
+                    if (deletedList.some(d => d === itemNorm || areCriteriaSemanticallySame(d, item))) return;
+                    if (
+                        baseNorms.has(itemNorm) ||
+                        Object.values(baseMap).flat().some(b => areCriteriaSemanticallySame(b, item)) ||
+                        replacementValuesNorm.has(itemNorm)
+                    ) {
+                        return;
+                    }
                     updatedHtml = applyCriterionChangeToHtml(updatedHtml, lvl, 'add', {
                         newText: item
                     });
@@ -1322,6 +1780,27 @@ export const syncSpecHtmlWithCustomStore = (
             });
         });
     });
+
+    // Nếu dòng đặc tả gắn với một Bài học cụ thể trong CURRICULUM, chỉ giữ lại các YCCĐ thực sự tồn tại trong getMergedCriteria của bài học đó
+    if (lessonName) {
+        const canonicalLesson = resolveCanonicalLessonName(g, lessonName);
+        if (CURRICULUM.criteriaData[g]?.[canonicalLesson]) {
+            const merged = getMergedCriteria(g, canonicalLesson, store);
+            const activeItems = merged
+                ? Object.entries(merged)
+                      .filter(([k]) => !k.startsWith('__'))
+                      .flatMap(([, arr]) => (Array.isArray(arr) ? arr : []))
+                : [];
+            const sections = parseYccdSections(updatedHtml);
+            const filteredSections = sections
+                .map(sec => ({
+                    ...sec,
+                    items: sec.items.filter(it => activeItems.some(act => areCriteriaSemanticallySame(act, it.text)))
+                }))
+                .filter(sec => sec.items.length > 0);
+            updatedHtml = serializeYccdSections(filteredSections);
+        }
+    }
 
     return updatedHtml;
 };
