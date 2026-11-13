@@ -39,7 +39,7 @@ import {
 } from '../services/storage/questionBankStorage';
 import { getCurrentUser, canApproveExam, subscribeUserChange, SUPER_ADMIN_EMAIL } from '../services/authService';
 import { CurriculumMappingReview } from '../components/CurriculumMappingReview';
-import { isQuestionForHskt } from '../utils';
+import { isQuestionForHskt, parseParts } from '../utils';
 import { 
   getMergedCriteria, 
   addCustomCriterion, 
@@ -1159,7 +1159,7 @@ const QuestionManager: React.FC = () => {
           'true-false': 'Trắc nghiệm Đúng / Sai theo Tình huống (Mỗi câu gồm 1 Tình huống cụ thể và 4 phát biểu a, b, c, d)',
           'short-answer': 'Trắc nghiệm Trả lời ngắn',
           'fill-blank': 'Trắc nghiệm Điền khuyết / Trả lời ngắn',
-          'essay': 'Tự luận (kèm Hướng dẫn chấm chi tiết)'
+          'essay': 'Tự luận (Đủ 4 ý a, b, c, d kèm Hướng dẫn chấm dạng bảng chi tiết)'
       };
 
       const targetLevels = genLevel === 'ALL' ? ['NB', 'TH', 'VD', 'VDC'] : [genLevel];
@@ -1197,7 +1197,16 @@ d) [Phát biểu thứ tư bám sát tình huống và nguồn tài liệu] [Sai
       } else if (genType === 'short-answer' || genType === 'fill-blank') {
           formatExample = `Câu 1: ${tagSample} [Nội dung câu hỏi trả lời ngắn / điền khuyết bám sát nguồn tài liệu?]\nĐáp án: [Nội dung đáp án ngắn gọn]`;
       } else if (genType === 'essay') {
-          formatExample = `Câu 1: [TL]${tagSample} [Nội dung câu hỏi tự luận bám sát nguồn tài liệu?]\nHướng dẫn chấm: [Nội dung đáp án và biểu điểm tóm tắt]`;
+          formatExample = `Câu 1: [TL]${tagSample} [Lời dẫn / Tình huống bài toán tự luận bám sát nguồn tài liệu:]
+a) [Câu hỏi / Yêu cầu thành phần ý a?]
+b) [Câu hỏi / Yêu cầu thành phần ý b?]
+c) [Câu hỏi / Yêu cầu thành phần ý c?]
+d) [Câu hỏi / Yêu cầu thành phần ý d?]
+Hướng dẫn chấm:
+a) [Nội dung đáp án chuẩn xác của ý a] - 0,25 điểm.
+b) [Nội dung đáp án chuẩn xác của ý b] - 0,25 điểm.
+c) [Nội dung đáp án chuẩn xác của ý c] - 0,25 điểm.
+d) [Nội dung đáp án chuẩn xác của ý d] - 0,25 điểm.`;
       } else {
           formatExample = `Câu 1: ${tagSample} [Nội dung câu hỏi trắc nghiệm bám sát nguồn tài liệu?]\nA. [Phương án nhiễu 1.]\n*B. [Phương án đúng (có dấu * ngay trước chữ cái đầu dòng).]\nC. [Phương án nhiễu 2.]\nD. [Phương án nhiễu 3.]`;
       }
@@ -1220,7 +1229,7 @@ QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC ĐỂ PHẦN MỀM "NHẬP HÀNG
    - Nếu là Trắc nghiệm 4 lựa chọn: Đặt dấu sao (*) ngay trước chữ cái của phương án đúng (ví dụ: *A. hoặc *B. hoặc *C. hoặc *D.).
    - Nếu là Trắc nghiệm Đúng/Sai: Trình bày đúng cấu trúc gồm "Tình huống X: [Mức độ - Mã tiêu chí] <Mô tả tình huống cụ thể từ tài liệu nguồn>", dòng tiếp theo "Câu X. Xác định tính đúng hoặc sai của các phát biểu sau:", tiếp theo là 4 ý a), b), c), d) và ghi [Đúng] hoặc [Sai] ở cuối mỗi phát biểu a, b, c, d.
    - Nếu là Trả lời ngắn / Điền khuyết: Xuống dòng ghi "Đáp án: <câu trả lời>".
-   - Nếu là Tự luận: Đầu câu có nhãn [TL], xuống dòng ghi "Hướng dẫn chấm: <nội dung đáp án>".
+   - Nếu là Tự luận (BẮT BUỘC ĐỦ 4 Ý & HƯỚNG DẪN CHẤM DẠNG BẢNG): Đầu câu có nhãn [TL][Mức độ - Mã tiêu chí] kèm lời dẫn bài toán, xuống dòng chia thành ĐỦ 4 ý nhỏ a), b), c), d). Sau đó xuống dòng ghi "Hướng dẫn chấm:" rồi trình bày ĐỦ 4 dòng a), b), c), d) tương ứng, cuối mỗi dòng ghi rõ thang điểm "- 0,25 điểm." (tổng 1,0 điểm) để phần mềm tự động dựng Bảng Hướng dẫn chấm 2 cột (Cột 1: Ý hỏi a, b, c, d | Cột 2: Nội dung đáp án & Điểm).
 
 KHUNG CÚ PHÁP TRÌNH BÀY MẪU (CHỈ MINH HỌA CẤU TRÚC, HÃY THAY THẾ PHẦN TRONG NGOẶC VUÔNG BẰNG NỘI DUNG TỪ TÀI LIỆU NGUỒN):
 
@@ -2280,7 +2289,7 @@ ${formatExample}`;
 
                             <div className="mt-2">
                                  <div className="flex justify-between items-end mb-1">
-                                     <p className="text-xs font-semibold text-gray-500 flex items-center gap-1"><BookOpenCheck size={14}/> Hướng dẫn chấm & Đáp án:</p>
+                                     <p className="text-xs font-semibold text-gray-500 flex items-center gap-1"><BookOpenCheck size={14}/> Hướng dẫn chấm & Đáp án (Mỗi ý 1 dòng a), b), c), d) để tự động dựng Bảng chấm 2 cột):</p>
                                      <button 
                                         onClick={() => handleGenerateRubric(q)}
                                         disabled={loadingRubricId === q.id || !q.content}
@@ -2293,10 +2302,58 @@ ${formatExample}`;
                                  <textarea 
                                     className="w-full p-2 bg-green-50/50 border border-green-100 rounded text-sm text-gray-700 focus:outline-none focus:border-green-300"
                                     rows={4}
-                                    placeholder="Nhập hướng dẫn chấm (hoặc dùng AI tạo)..."
+                                    placeholder={`Nhập hướng dẫn chấm theo 4 ý a, b, c, d (hoặc bấm "AI Tạo hướng dẫn"):\na) Nội dung đáp án ý a - 0,25 điểm.\nb) Nội dung đáp án ý b - 0,25 điểm.\nc) Nội dung đáp án ý c - 0,25 điểm.\nd) Nội dung đáp án ý d - 0,25 điểm.`}
                                     value={q.answer || ''}
                                     onChange={(e) => handleUpdateQuestion(q.id, 'answer', e.target.value)}
                                  />
+                                 {(() => {
+                                     const rawAns = (q.answer || '')
+                                         .replace(/^HƯỚNG DẪN CHẤM:?\s*/i, '')
+                                         .replace(/;\s*(?=(?:[a-z]|[0-9]{1,2})\s*[\)\.\-–:])/gi, '\n')
+                                         .replace(/(\s+)(?=[a-z]\s*[-–]\s*\d+(?:[\.,]\d+)?[đd])/gi, '\n');
+                                     const aParts = parseParts(rawAns);
+                                     if (aParts.length <= 1) return null;
+                                     const qParts = parseParts(q.content || '');
+                                     const getKey = (lbl: string) => {
+                                         const m = lbl.match(/([a-z]|[0-9]{1,2})/i);
+                                         return m ? m[1].toLowerCase() : lbl.replace(/[^a-z0-9]/gi, '').toLowerCase();
+                                     };
+                                     return (
+                                         <div className="mt-2.5 bg-white border border-emerald-200 rounded-lg overflow-hidden shadow-2xs">
+                                             <div className="bg-emerald-50/80 px-3 py-1.5 border-b border-emerald-200 flex items-center justify-between text-[11px] font-bold text-emerald-900">
+                                                 <span>Xem trước Bảng Hướng dẫn chấm (Xuất ra Word):</span>
+                                                 <span className="text-emerald-700 font-semibold">{aParts.length} ý ({((q.points ?? 1.0)).toFixed(1).replace('.', ',')} điểm)</span>
+                                             </div>
+                                             <table className="w-full text-xs border-collapse">
+                                                 <thead>
+                                                     <tr className="bg-slate-50 text-slate-700 border-b border-slate-200">
+                                                         <th className="p-2 border-r border-slate-200 text-left w-[38%]">Ý hỏi (Câu tự luận {idx + 1})</th>
+                                                         <th className="p-2 text-left w-[62%]">Nội dung Hướng dẫn chấm & Điểm</th>
+                                                     </tr>
+                                                 </thead>
+                                                 <tbody>
+                                                     {aParts.map((ap, pIdx) => {
+                                                         const k = getKey(ap.label);
+                                                         const qp = qParts.find(item => getKey(item.label) === k);
+                                                         let lbl = ap.label.replace(/\s*[-–].*$/, '').trim();
+                                                         if (lbl && !lbl.endsWith(')') && !lbl.endsWith('.')) lbl += ')';
+                                                         return (
+                                                             <tr key={pIdx} className="border-b border-slate-100 last:border-b-0">
+                                                                 <td className="p-2 border-r border-slate-200 align-top text-slate-700">
+                                                                     <strong className="text-slate-900">{lbl || `Ý ${pIdx + 1})`}</strong>{' '}
+                                                                     {qp?.content || ''}
+                                                                 </td>
+                                                                 <td className="p-2 align-top text-emerald-950 font-medium whitespace-pre-wrap">
+                                                                     {ap.content}
+                                                                 </td>
+                                                             </tr>
+                                                         );
+                                                     })}
+                                                 </tbody>
+                                             </table>
+                                         </div>
+                                     );
+                                 })()}
                             </div>
                         </div>
                     )))}
@@ -2939,7 +2996,7 @@ QUY TẮC ĐỊNH DẠNG BẮT BUỘC (KHÔNG DÙNG BẢNG, KHÔNG DÙNG ĐỊNH
 2. Dạng 1 - Trắc nghiệm 4 lựa chọn: Đặt dấu sao (*) ngay trước chữ cái của phương án đúng (ví dụ: *B. Nội dung đáp án đúng).
 3. Dạng 2 - Trắc nghiệm Đúng/Sai theo Tình huống: Trình bày đúng mẫu gồm dòng "Tình huống X: [Mức độ - Mã tiêu chí] <Mô tả tình huống cụ thể từ nguồn tài liệu>", dòng tiếp theo "Câu X. Xác định tính đúng hoặc sai của các phát biểu sau:", tiếp theo là 4 dòng a), b), c), d) có gắn nhãn [Đúng] hoặc [Sai] ở cuối mỗi phát biểu.
 4. Dạng 3 - Trả lời ngắn / Điền khuyết: Xuống dòng ghi rõ "Đáp án: <nội dung đáp án ngắn gọn>".
-5. Dạng 4 - Tự luận: Đầu câu gắn nhãn [TL][VD - 3.1], xuống dòng ghi "Hướng dẫn chấm: <nội dung đáp án>".
+5. Dạng 4 - Tự luận (Đủ 4 ý a, b, c, d & Hướng dẫn chấm dạng bảng): Đầu câu gắn nhãn [TL][VD - 3.1] kèm lời dẫn bài toán, xuống dòng chia thành ĐỦ 4 ý nhỏ a), b), c), d). Sau đó xuống dòng ghi "Hướng dẫn chấm:" rồi trình bày ĐỦ 4 dòng a), b), c), d) tương ứng kèm thang điểm "- 0,25 điểm." mỗi ý (tổng 1,0 điểm) để hệ thống tự động dựng Bảng Hướng dẫn chấm 2 cột.
 
 KHUNG CÚ PHÁP TRÌNH BÀY MẪU (CHỈ MINH HỌA CẤU TRÚC, HÃY THAY THẾ PHẦN TRONG NGOẶC VUÔNG BẰNG NỘI DUNG TỪ TÀI LIỆU NGUỒN):
 
@@ -2959,8 +3016,16 @@ d) [Phát biểu thứ tư bám sát tình huống và nguồn tài liệu] [Sai
 Câu 3: [NB - 1.1] [Nội dung câu hỏi trả lời ngắn / điền khuyết bám sát tài liệu nguồn?]
 Đáp án: [Nội dung đáp án ngắn gọn]
 
-Câu 4: [TL][VD - 3.1] [Nội dung câu hỏi tự luận bám sát tài liệu nguồn?]
-Hướng dẫn chấm: [Nội dung đáp án và biểu điểm tóm tắt]`;
+Câu 4: [TL][VD - 3.1] [Lời dẫn / Tình huống câu hỏi tự luận bám sát tài liệu nguồn:]
+a) [Câu hỏi / Yêu cầu thành phần ý a?]
+b) [Câu hỏi / Yêu cầu thành phần ý b?]
+c) [Câu hỏi / Yêu cầu thành phần ý c?]
+d) [Câu hỏi / Yêu cầu thành phần ý d?]
+Hướng dẫn chấm:
+a) [Nội dung đáp án chuẩn xác của ý a] - 0,25 điểm.
+b) [Nội dung đáp án chuẩn xác của ý b] - 0,25 điểm.
+c) [Nội dung đáp án chuẩn xác của ý c] - 0,25 điểm.
+d) [Nội dung đáp án chuẩn xác của ý d] - 0,25 điểm.`;
                                             navigator.clipboard.writeText(promptText);
                                             setAlertMessage("Đã sao chép Prompt chuẩn vào bộ nhớ tạm! Bạn có thể dán (Ctrl+V) kèm file tài liệu vào ChatGPT / Gemini, sau đó dán kết quả vào ô dưới để tự động nhận hàng loạt.");
                                         }}
@@ -2973,7 +3038,7 @@ Hướng dẫn chấm: [Nội dung đáp án và biểu điểm tóm tắt]`;
                                     <div>• <b>Mức độ & Tiêu chí:</b> Ghi <code className="bg-white px-1 border rounded font-bold text-emerald-800">[NB - 1.1]</code>, <code className="bg-white px-1 border rounded font-bold text-emerald-800">[TH - 2.1]</code>, <code className="bg-white px-1 border rounded font-bold text-emerald-800">[VD - 3.1]</code> đầu câu.</div>
                                     <div>• <b>Trắc nghiệm 4 lựa chọn:</b> Đặt dấu <code className="bg-amber-100 text-amber-900 px-1 rounded font-bold">*</code> trước phương án đúng (<code className="bg-white px-1 border rounded">*B. Bàn phím.</code>).</div>
                                     <div>• <b>Đúng / Sai (Tình huống + 4 ý):</b> <code className="bg-white px-1 border rounded">Tình huống 1: [TH - 2.1] ...</code> + <code className="bg-white px-1 border rounded">Câu 1. ...</code> + <code className="bg-white px-1 border rounded">a) ... [Đúng]</code>, <code className="bg-white px-1 border rounded">b) ... [Sai]</code>.</div>
-                                    <div>• <b>Trả lời ngắn / Tự luận:</b> Ghi <code className="bg-white px-1 border rounded">Đáp án: ...</code> hoặc gắn <code className="bg-white px-1 border rounded">[TL]</code> kèm <code className="bg-white px-1 border rounded">Hướng dẫn chấm: ...</code>.</div>
+                                    <div>• <b>Trả lời ngắn / Tự luận (4 ý):</b> Ghi <code className="bg-white px-1 border rounded">Đáp án: ...</code> hoặc gắn <code className="bg-white px-1 border rounded">[TL]</code> (gồm 4 ý a, b, c, d) kèm <code className="bg-white px-1 border rounded">Hướng dẫn chấm:</code> (4 dòng a, b, c, d để tạo bảng chấm).</div>
                                 </div>
                             </div>
 

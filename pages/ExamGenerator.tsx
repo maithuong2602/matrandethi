@@ -14,7 +14,8 @@ import {
     generateExamVariants,
     generateMultiCodeAnswerKeyMatrixHtml,
     generateFullDossierHtml,
-    extractHtmlParts
+    extractHtmlParts,
+    parseParts
 } from '../utils';
 import { reviewExamWithAI, autoFillMissingQuestions } from '../services/geminiService';
 import { splitLegacyTrueFalseQuestions, autoTagQuestion } from './QuestionManager';
@@ -2208,12 +2209,61 @@ const ExamGenerator: React.FC = () => {
                                                     </div>
                                                 )}
 
-                                                {q.category === 'essay' && q.answer && (
-                                                    <div className="mt-3 text-xs bg-orange-50/70 p-3 rounded-lg border border-orange-200 text-orange-950 whitespace-pre-wrap">
-                                                        <strong className="block mb-1 text-orange-900">Hướng dẫn chấm / Barem:</strong>
-                                                        {q.answer}
-                                                    </div>
-                                                )}
+                                                {q.category === 'essay' && q.answer && (() => {
+                                                    const rawAns = (q.answer || '')
+                                                        .replace(/^HƯỚNG DẪN CHẤM:?\s*/i, '')
+                                                        .replace(/;\s*(?=(?:[a-z]|[0-9]{1,2})\s*[\)\.\-–:])/gi, '\n')
+                                                        .replace(/(\s+)(?=[a-z]\s*[-–]\s*\d+(?:[\.,]\d+)?[đd])/gi, '\n');
+                                                    const aParts = parseParts(rawAns);
+                                                    const qParts = parseParts(q.content || '');
+                                                    const getKey = (lbl: string) => {
+                                                        const m = lbl.match(/([a-z]|[0-9]{1,2})/i);
+                                                        return m ? m[1].toLowerCase() : lbl.replace(/[^a-z0-9]/gi, '').toLowerCase();
+                                                    };
+                                                    if (aParts.length > 1) {
+                                                        return (
+                                                            <div className="mt-3 bg-orange-50/40 rounded-lg border border-orange-200 overflow-hidden text-xs">
+                                                                <div className="bg-orange-100/70 px-3 py-1.5 font-bold text-orange-950 border-b border-orange-200 flex items-center justify-between">
+                                                                    <span>Bảng Hướng dẫn chấm / Barem ({aParts.length} ý):</span>
+                                                                    <span>Tổng: {(q.points ?? 1.0).toFixed(1).replace('.', ',')} điểm</span>
+                                                                </div>
+                                                                <table className="w-full border-collapse">
+                                                                    <thead>
+                                                                        <tr className="bg-orange-50/80 text-orange-900 border-b border-orange-200">
+                                                                            <th className="p-2 border-r border-orange-200 text-left w-[36%]">Ý hỏi</th>
+                                                                            <th className="p-2 text-left w-[64%]">Nội dung đáp án & Thang điểm</th>
+                                                                        </tr>
+                                                                    </thead>
+                                                                    <tbody>
+                                                                        {aParts.map((ap, pIdx) => {
+                                                                            const k = getKey(ap.label);
+                                                                            const qp = qParts.find(item => getKey(item.label) === k);
+                                                                            let lbl = ap.label.replace(/\s*[-–].*$/, '').trim();
+                                                                            if (lbl && !lbl.endsWith(')') && !lbl.endsWith('.')) lbl += ')';
+                                                                            return (
+                                                                                <tr key={pIdx} className="border-b border-orange-100 last:border-b-0 bg-white/80">
+                                                                                    <td className="p-2 border-r border-orange-200 align-top text-slate-700">
+                                                                                        <strong className="text-slate-900">{lbl || `Ý ${pIdx + 1})`}</strong>{' '}
+                                                                                        {qp?.content || ''}
+                                                                                    </td>
+                                                                                    <td className="p-2 align-top text-orange-950 font-medium whitespace-pre-wrap">
+                                                                                        {ap.content}
+                                                                                    </td>
+                                                                                </tr>
+                                                                            );
+                                                                        })}
+                                                                    </tbody>
+                                                                </table>
+                                                            </div>
+                                                        );
+                                                    }
+                                                    return (
+                                                        <div className="mt-3 text-xs bg-orange-50/70 p-3 rounded-lg border border-orange-200 text-orange-950 whitespace-pre-wrap">
+                                                            <strong className="block mb-1 text-orange-900">Hướng dẫn chấm / Barem:</strong>
+                                                            {q.answer}
+                                                        </div>
+                                                    );
+                                                })()}
                                             </div>
 
                                             <div className="flex flex-col items-end gap-2 min-w-[130px]">

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { parseParts, generateExamWordHtml, generateExamVariants } from '../utils';
 import { splitLegacyTrueFalseQuestions } from '../pages/QuestionManager';
 import { buildDefaultFileName, detectGradeFromContext } from '../pages/ExamGenerator';
+import { parseStructuredTextQuestions } from '../services/geminiService';
 import { ExerciseQuestion } from '../types';
 
 describe('AI Essay Rubric Table Format Tests', () => {
@@ -44,10 +45,49 @@ describe('AI Essay Rubric Table Format Tests', () => {
     expect(html).toContain('Phần mềm máy tính');
     expect(html).toContain('0,5 điểm');
   });
+
+  it('parseStructuredTextQuestions should parse 4-part essay question (a, b, c, d) and 4-part rubric table without misclassifying as True/False', () => {
+    const rawText = `Câu 1: [TL][VD - 3.1] Cho bài toán quản lý điểm học sinh bằng phần mềm bảng tính:
+a) Viết công thức tính điểm trung bình tại ô F2.
+b) Sử dụng hàm IF để xếp loại tại ô G2.
+c) Nêu ý nghĩa của địa chỉ tuyệt đối khi sao chép công thức.
+d) Chọn dạng biểu đồ phù hợp để biểu diễn tỉ lệ xếp loại.
+Hướng dẫn chấm:
+a) Viết đúng công thức =AVERAGE(C2:E2) - 0,25 điểm.
+b) Viết đúng công thức =IF(F2>=8, "Giỏi", "Khá") - 0,25 điểm.
+c) Nêu rõ cố định tọa độ hàng/cột bằng dấu $ khi sao chép - 0,25 điểm.
+d) Chọn biểu đồ hình tròn (Pie Chart) để thể hiện cơ cấu tỉ lệ - 0,25 điểm.`;
+
+    const parsed = parseStructuredTextQuestions(rawText);
+    expect(parsed.length).toBe(1);
+    const q = parsed[0];
+    expect(q.category).toBe('essay');
+    expect(q.questionType).toBe('essay');
+    expect(q.level).toBe('VD');
+    expect(q.criteria).toBe('3.1');
+    expect(q.options).toEqual([]);
+
+    const qParts = parseParts(q.content).filter(p => p.label);
+    const aParts = parseParts(q.answer);
+    expect(qParts.length).toBe(4);
+    expect(aParts.length).toBe(4);
+    expect(aParts[0].label).toBe('a)');
+    expect(aParts[3].label).toBe('d)');
+
+    const html = generateExamWordHtml([q as any], {
+      donVi: 'PHÒNG GD&ĐT',
+      tenTruong: 'THCS LÊ HỒNG PHONG',
+      tenKyThi: 'KIỂM TRA CUỐI KÌ I',
+      monHoc: 'MÔN: TIN HỌC – LỚP 7'
+    });
+    expect(html).toContain('<b>a)</b> Viết công thức tính điểm trung bình tại ô F2.');
+    expect(html).toContain('<b>d)</b> Chọn dạng biểu đồ phù hợp để biểu diễn tỉ lệ xếp loại.');
+    expect(html).toContain('0,25 điểm.');
+  });
 });
 
 describe('New True/False Single Independent Question Format Tests', () => {
-  it('splitLegacyTrueFalseQuestions should split 4-part legacy question into 4 independent questions', () => {
+  it('splitLegacyTrueFalseQuestions should normalize 4-part scenario True/False question with a, b, c, d options', () => {
     const legacyQ: ExerciseQuestion = {
       id: 'tf_legacy_1',
       category: 'mc',
@@ -66,16 +106,12 @@ describe('New True/False Single Independent Question Format Tests', () => {
     };
 
     const split = splitLegacyTrueFalseQuestions([legacyQ]);
-    expect(split.length).toBe(4);
+    expect(split.length).toBe(1);
 
     expect(split[0].questionType).toBe('true-false');
-    expect(split[0].content).toContain('Không chạm vào dây điện hở');
-    expect(split[0].answer).toBe('Đúng');
+    expect(split[0].options?.length).toBe(4);
+    expect(split[0].answer).toBe('a-Đ, b-S, c-Đ, d-S');
     expect(split[0].points).toBe(0.25);
-
-    expect(split[1].content).toContain('Vừa ăn uống vừa sử dụng bàn phím');
-    expect(split[1].answer).toBe('Sai');
-    expect(split[1].points).toBe(0.25);
   });
 
   it('generateExamWordHtml should NOT print A, B, C, D options for true-false questions in exam paper', () => {

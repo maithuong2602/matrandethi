@@ -326,7 +326,7 @@ export const parseStructuredTextQuestions = (rawText: string): any[] => {
 
         let stem = lines[0];
         let explicitAnswer = '';
-        let isExplicitEssay = false;
+        let isExplicitEssay = /(?:^|\n)\s*(?:Hướng\s*dẫn\s*chấm|HDC)\s*[:=]/i.test(block);
         let isScenarioTF = false;
         let level: 'NB' | 'TH' | 'VD' | 'VDC' = 'NB';
         let criteria = '';
@@ -390,12 +390,12 @@ export const parseStructuredTextQuestions = (rawText: string): any[] => {
                 isScenarioTF = true;
                 continue;
             }
-            const ansMatch = line.match(/^(?:Đáp\s*án|ĐA|Trả\s*lời|Hướng\s*dẫn\s*chấm|HDC)\s*[:=]\s*(.*)$/i);
-            if (ansMatch) {
+            const ansMatch = line.match(/^(?:Đáp\s*án|ĐA|Trả\s*lời|Hướng\s*dẫn\s*chấm|HDC)\s*[:=]?\s*(.*)$/i);
+            if (ansMatch && (/^(?:Đáp\s*án|ĐA|Trả\s*lời|Hướng\s*dẫn\s*chấm|HDC)\s*[:=]/i.test(line) || /^(?:Hướng\s*dẫn\s*chấm|HDC)\s*$/i.test(line))) {
                 if (/^(?:Hướng\s*dẫn\s*chấm|HDC)/i.test(line)) {
                     isExplicitEssay = true;
                 }
-                explicitAnswer = ansMatch[1].trim();
+                explicitAnswer = (ansMatch[1] || '').trim();
                 inAnswerSection = true;
                 continue;
             }
@@ -560,8 +560,8 @@ export const parseQuestionsWithAI = async (
     lesson?: string,
     pdfBase64?: string
 ): Promise<any[]> => {
-    // Nếu là văn bản thuần có đánh dấu *A., *B. hoặc Đáp án: ..., ưu tiên bóc tách tức thì (< 5ms) nếu không đính kèm PDF
-    if (!pdfBase64 && text && (/(?:^|\n)\s*\*?[A-Da-d][.)]\s+/m.test(text) || /(?:Đáp\s*án|ĐA)\s*[:=]/i.test(text) || /\[\s*(?:Đúng|Sai|Đ|S)\s*\]/i.test(text))) {
+    // Nếu là văn bản thuần có đánh dấu *A., *B. hoặc Đáp án: ... hoặc Hướng dẫn chấm:, ưu tiên bóc tách tức thì (< 5ms) nếu không đính kèm PDF
+    if (!pdfBase64 && text && (/(?:^|\n)\s*\*?[A-Da-d][.)]\s+/m.test(text) || /(?:Đáp\s*án|ĐA|Hướng\s*dẫn\s*chấm|HDC)\s*[:=]/i.test(text) || /\[\s*(?:TL|Tự\s*luận|Đúng|Sai|Đ|S)\s*\]/i.test(text))) {
         const directParsed = parseStructuredTextQuestions(text);
         if (directParsed.length > 0) {
             return directParsed;
@@ -747,14 +747,24 @@ export const generateBulkQuestions = async (
                     break;
 
                 case 'essay':
-                    typeInstruction = "câu hỏi Tự luận có barem thang điểm chi tiết";
-                    jsonSchemaNote = "Tự luận: 'options' rỗng. 'category' là 'essay', 'questionType'='essay'.";
+                    typeInstruction = "câu hỏi Tự luận (gồm 1 lời dẫn/bối cảnh bài toán và ĐỦ 4 ý nhỏ a, b, c, d) kèm Hướng dẫn chấm dạng bảng 4 ý chi tiết";
+                    jsonSchemaNote = `Tự luận: 'options' rỗng []. 'category' là 'essay', 'questionType'='essay'. 'content' gồm lời dẫn bài toán trên dòng đầu, tiếp theo là ĐỦ 4 dòng bắt đầu bằng 'a) ', 'b) ', 'c) ', 'd) '. 'answer' là Hướng dẫn chấm gồm ĐỦ 4 dòng bắt đầu bằng 'a) ', 'b) ', 'c) ', 'd) ' kèm thang điểm từng ý (0,25 điểm/ý, tổng 1,0 điểm) để phần mềm tự động dựng Bảng Hướng dẫn chấm 2 cột.`;
                     extraConstraints = `
-                    ĐẶC BIỆT QUAN TRỌNG CHO CÂU HỎI TỰ LUẬN:
-                    1. Thời lượng: Nội dung câu hỏi vừa sức cho học sinh làm trong 5-7 phút.
-                    2. Cấu trúc: Câu hỏi BẮT BUỘC chia thành 4 ý nhỏ (a, b, c, d) hoặc 4 bước thực hiện rõ ràng.
-                    3. Trường 'content': Ghi nội dung câu hỏi và các ý a, b, c, d xuống dòng rõ ràng.
-                    4. Trường 'answer': HƯỚNG DẪN CHẤM chi tiết tương ứng cho từng ý kèm điểm cụ thể (ví dụ: a - 0.25đ: nội dung...; b - 0.25đ: nội dung...).
+                    ĐẶC BIỆT QUAN TRỌNG CHO CÂU HỎI TỰ LUẬN (ĐỦ 4 Ý a, b, c, d & HƯỚNG DẪN CHẤM DẠNG BẢNG):
+                    1. Thời lượng: Nội dung câu hỏi vừa sức cho học sinh làm trong 5-7 phút, khai thác trực tiếp từ tài liệu nguồn và Yêu cầu cần đạt.
+                    2. Cấu trúc trường 'content' (BẮT BUỘC ĐỦ 4 Ý a, b, c, d):
+                       - Dòng đầu tiên: Nêu tình huống / bối cảnh / đề bài tự luận rõ ràng.
+                       - 4 dòng tiếp theo: Chia câu hỏi thành ĐÚNG 4 ý nhỏ đánh dấu lần lượt là:
+                         a) <Yêu cầu / câu hỏi ý a>
+                         b) <Yêu cầu / câu hỏi ý b>
+                         c) <Yêu cầu / câu hỏi ý c>
+                         d) <Yêu cầu / câu hỏi ý d>
+                    3. Cấu trúc trường 'answer' (ĐỂ TỰ ĐỘNG HIỂN THỊ BẢNG HƯỚNG DẪN CHẤM 2 CỘT):
+                       - BẮT BUỘC chia thành ĐÚNG 4 dòng tương ứng với 4 ý a), b), c), d) của câu hỏi, mỗi dòng kết thúc bằng thang điểm (0,25 điểm mỗi ý, tổng 1,0 điểm):
+                         a) <Nội dung đáp án chuẩn xác của ý a> - 0,25 điểm.
+                         b) <Nội dung đáp án chuẩn xác của ý b> - 0,25 điểm.
+                         c) <Nội dung đáp án chuẩn xác của ý c> - 0,25 điểm.
+                         d) <Nội dung đáp án chuẩn xác của ý d> - 0,25 điểm.
                     `;
                     break;
 
@@ -840,16 +850,25 @@ export const generateEssayRubric = async (questionContent: string, maxPoints: nu
     return callGeminiWithFailover(
         async (ai, model) => {
             const ptsStr = maxPoints.toFixed(1).replace('.', ',');
-            const prompt = `Bạn là giáo viên Tin học. Hãy tạo "Hướng dẫn chấm" (Đáp án và thang điểm) chi tiết chuẩn hóa theo dạng bảng cho câu hỏi tự luận sau:
+            const partPt = (maxPoints / 4).toFixed(2).replace(/\.?0+$/, (m) => m.includes('.') ? ',0' : '').replace('.', ',');
+            const unitPtStr = (maxPoints * 0.25).toFixed(2).replace('.', ',');
+            const prompt = `Bạn là chuyên gia khảo thí môn Tin học. Hãy tạo "Hướng dẫn chấm" (Đáp án và thang điểm) chi tiết chuẩn hóa cho câu hỏi tự luận sau để hệ thống tự động dựng BẢNG HƯỚNG DẪN CHẤM 2 CỘT (Cột 1: Ý hỏi a, b, c, d | Cột 2: Nội dung đáp án & Điểm):
             
-            Câu hỏi: "${questionContent}"
+            Câu hỏi:
+            """
+            ${questionContent}
+            """
             Tổng điểm câu hỏi: ${ptsStr} điểm.
             
-            Yêu cầu định dạng bắt buộc:
-            1. Phân tích cấu trúc câu hỏi: chia đáp án thành 2 đến 4 tiêu chí/bước giải cụ thể đánh dấu lần lượt là a), b), c), d).
-            2. Mỗi ý PHẢI nằm trên 1 dòng riêng biệt: a) [Nội dung] - [điểm] điểm.
-            3. Tổng điểm các ý thành phần BẮT BUỘC cộng lại đúng bằng ${ptsStr} điểm.
-            4. Chỉ xuất danh sách các dòng a), b), c)...
+            Yêu cầu định dạng BẮT BUỘC (KHÔNG dùng bảng Markdown, chỉ xuất đúng 4 dòng a, b, c, d):
+            1. Chia đáp án thành ĐÚNG 4 ý thành phần tương ứng lần lượt với 4 ý a), b), c), d) của câu hỏi.
+            2. Mỗi ý BẮT BUỘC nằm trên 1 dòng riêng biệt theo đúng cú pháp:
+               a) [Nội dung đáp án chi tiết của ý a] - ${unitPtStr} điểm.
+               b) [Nội dung đáp án chi tiết của ý b] - ${unitPtStr} điểm.
+               c) [Nội dung đáp án chi tiết của ý c] - ${unitPtStr} điểm.
+               d) [Nội dung đáp án chi tiết của ý d] - ${unitPtStr} điểm.
+            3. Tổng điểm 4 ý a), b), c), d) BẮT BUỘC cộng lại đúng bằng ${ptsStr} điểm.
+            4. Chỉ xuất 4 dòng a), b), c), d), không thêm lời dẫn hay ký tự Markdown (**).
             `;
 
             const response = await ai.models.generateContent({
