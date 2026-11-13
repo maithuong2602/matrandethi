@@ -71,6 +71,7 @@ export const areCriteriaSemanticallySame = (a: string, b: string): boolean => {
     const cb = canonicalize(nb);
     if (ca === cb) return true;
     if (ca.length > 15 && cb.length > 15 && (ca.includes(cb) || cb.includes(ca))) return true;
+    if (ca.length >= 40 && cb.length >= 40 && ca.slice(0, 40) === cb.slice(0, 40)) return true;
     return false;
 };
 
@@ -543,6 +544,53 @@ export const invalidateCriteriaStoreCache = () => {
     _cachedCustomStore = null;
 };
 
+const isFakePlaceholderCriterion = (text: string): boolean => {
+    const norm = normalizeCriterionText(text);
+    return (
+        norm.startsWith('nêu được các khái niệm nội dung cơ bản thuộc') ||
+        norm.startsWith('giải thích và phân biệt được các nội dung trọng tâm thuộc') ||
+        norm.startsWith('vận dụng được kiến thức thuộc')
+    );
+};
+
+const sanitizeLoadedCriteriaStore = (store: GradeCriteriaMap): void => {
+    for (const [g, gradeMap] of Object.entries(store)) {
+        if (!gradeMap || typeof gradeMap !== 'object') continue;
+        const baseForGrade = CURRICULUM.criteriaData[g] || {};
+
+        for (const [lessonKey, entry] of Object.entries(gradeMap)) {
+            if (!entry || typeof entry !== 'object') continue;
+
+            // 1. Loại bỏ các chuỗi YCCĐ giả lập từng bị lưu trong __deleted hoặc danh sách mức độ
+            if (Array.isArray(entry.__deleted)) {
+                entry.__deleted = entry.__deleted.filter(d => !isFakePlaceholderCriterion(d));
+            }
+            for (const [lvl, list] of Object.entries(entry)) {
+                if (lvl.startsWith('__') || !Array.isArray(list)) continue;
+                entry[lvl] = list.filter(it => !isFakePlaceholderCriterion(it));
+            }
+
+            // 2. Làm sạch __deletedCodes: Nếu bài học thuộc CURRICULUM.criteriaData, chỉ giữ mã code trong __deletedCodes
+            // khi nội dung YCCĐ ứng với mã đó trong CURRICULUM thực sự nằm trong __deleted
+            const canonicalLesson = resolveCanonicalLessonName(g, lessonKey);
+            const baseMap = baseForGrade[canonicalLesson];
+            const entryAny = entry as any;
+            if (baseMap && Array.isArray(entryAny.__deletedCodes)) {
+                const deletedList: string[] = Array.isArray(entry.__deleted) ? entry.__deleted : [];
+                entryAny.__deletedCodes = entryAny.__deletedCodes.filter((rawCode: string) => {
+                    const pureCode = String(rawCode).includes(':') ? String(rawCode).split(':')[1] : String(rawCode);
+                    const baseItemWithCode = Object.values(baseMap)
+                        .flat()
+                        .find(b => b.trim().startsWith(`${pureCode} `));
+                    if (!baseItemWithCode) return true;
+                    const normBase = normalizeCriterionText(baseItemWithCode);
+                    return deletedList.some(d => d === normBase || areCriteriaSemanticallySame(d, baseItemWithCode));
+                });
+            }
+        }
+    }
+};
+
 /**
  * Loads custom criteria store from localStorage (with in-memory memoization when localStorage strings are unchanged)
  */
@@ -556,6 +604,7 @@ export const loadCustomCriteriaStore = (): GradeCriteriaMap => {
         }
 
         const store: GradeCriteriaMap = raw ? JSON.parse(raw) : {};
+        sanitizeLoadedCriteriaStore(store);
 
         try {
             if (mfsRaw) {
@@ -565,6 +614,8 @@ export const loadCustomCriteriaStore = (): GradeCriteriaMap => {
         } catch (e) {
             console.error('Error scanning matrixFileSystem for criteria:', e);
         }
+
+        sanitizeLoadedCriteriaStore(store);
 
         _lastRawCustomStr = raw;
         _lastMfsRawStr = mfsRaw;
@@ -1414,11 +1465,14 @@ export const getMergedCriteria = (
         if (Object.values(replacementsMap).some(rv => normalizeCriterionText(rv) === norm)) {
             return false;
         }
-        const codeMatch = text.trim().match(/^(\d+\.\d+)\b/);
-        if (codeMatch && deletedCodes.size > 0) {
-            const code = codeMatch[1];
-            if (deletedCodes.has(code) || (lvl && deletedCodes.has(`${lvl}:${code}`))) {
-                return true;
+        // Nếu mục YCCĐ chỉ có mã số ngắn (không kèm nội dung mô tả) thì kiểm tra theo deletedCodes
+        if (norm.length <= 5) {
+            const codeMatch = text.trim().match(/^(\d+\.\d+)\b/);
+            if (codeMatch && deletedCodes.size > 0) {
+                const code = codeMatch[1];
+                if (deletedCodes.has(code) || (lvl && deletedCodes.has(`${lvl}:${code}`))) {
+                    return true;
+                }
             }
         }
         if (deletedNorms.size === 0) return false;

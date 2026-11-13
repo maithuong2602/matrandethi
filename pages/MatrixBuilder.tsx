@@ -9,7 +9,7 @@ import { PREDEFINED_FOLDERS as predefinedFoldersByGrade, REQUIREMENTS_DATA as re
 import { getRequirementsHtml, generatePrintHTML } from '../utils';
 import { loadQuestionBank } from '../services/storage/questionBankStorage';
 import { CANONICAL_REQUIREMENTS, KNTT_LESSON_MAPPINGS } from '../data/curriculum/index';
-import { syncSpecHtmlWithCustomStore, CUSTOM_CRITERIA_STORAGE_KEY, isQuestionCriteriaValidForLesson, filterQuestionsByActiveCriteria, loadCustomCriteriaStore, GradeCriteriaMap } from '../services/criteriaService';
+import { syncSpecHtmlWithCustomStore, CUSTOM_CRITERIA_STORAGE_KEY, isQuestionCriteriaValidForLesson, filterQuestionsByActiveCriteria, loadCustomCriteriaStore, GradeCriteriaMap, detectGradeFromLessonOrContext } from '../services/criteriaService';
 
 const MatrixBuilder: React.FC = () => {
     // --- State ---
@@ -65,12 +65,20 @@ const MatrixBuilder: React.FC = () => {
                 }
             }
             if (node.matrixData?.specifications?.rows && Array.isArray(node.matrixData.specifications.rows)) {
-                const effGrade = g || '7';
                 node.matrixData.specifications.rows.forEach((row: string[], rIdx: number) => {
+                    const mainTopic = row[1] || node.matrixData?.matrix?.rows?.[rIdx]?.[1] || '';
                     const subTopic = row[2] || node.matrixData?.matrix?.rows?.[rIdx]?.[2] || '';
                     const lessonName = row[3] || node.matrixData?.matrix?.rows?.[rIdx]?.[3] || '';
-                    if (row[4]) {
-                        row[4] = syncSpecHtmlWithCustomStore(row[4], effGrade, subTopic, lessonName, customStore);
+                    const effGrade = g || detectGradeFromLessonOrContext(lessonName || subTopic || mainTopic, node.name);
+                    if (row[4] || lessonName) {
+                        const syncedHtml = syncSpecHtmlWithCustomStore(
+                            row[4] || getRequirementsHtml(effGrade, mainTopic, subTopic, lessonName, customStore),
+                            effGrade,
+                            subTopic,
+                            lessonName,
+                            customStore
+                        );
+                        row[4] = syncedHtml;
                     }
                 });
             }
@@ -464,8 +472,11 @@ const MatrixBuilder: React.FC = () => {
         }
 
         // --- 2. PREPARE ROW DATA & REFRESH AVAILABLE COUNTS FROM LIVE QUESTION BANK ---
-        const gradeMatch = currentDir.name.match(/\d+/);
-        const gradeNum = gradeMatch ? gradeMatch[0] : '';
+        const firstRowRef = data.matrix?.rows?.[0];
+        const gradeNum = detectGradeFromLessonOrContext(
+            String(firstRowRef?.[3] || firstRowRef?.[2] || firstRowRef?.[1] || ''),
+            currentDir.name
+        );
         const customStore = loadCustomCriteriaStore();
         const liveBankRes = loadQuestionBank();
         const liveBankQuestions = (liveBankRes.data || []).filter(
@@ -511,7 +522,7 @@ const MatrixBuilder: React.FC = () => {
             }
 
             // Kiểm tra Bản đặc tả của dòng này có sẵn mức Nhận biết / Thông hiểu / Vận dụng không (đồng bộ từ YCCĐ bài học)
-            const freshSpecHtml = getRequirementsHtml(currentDir.name, String(row[1] || ''), rowSubTopic, rowLesson);
+            const freshSpecHtml = getRequirementsHtml(gradeNum || currentDir.name, String(row[1] || ''), rowSubTopic, rowLesson, customStore);
             const specHtml = freshSpecHtml || syncSpecHtmlWithCustomStore(String(data.specifications?.rows?.[idx]?.[4] || ''), gradeNum, rowSubTopic, rowLesson, customStore);
             if (data.specifications?.rows?.[idx]) {
                 data.specifications.rows[idx][4] = specHtml;
@@ -656,39 +667,18 @@ const MatrixBuilder: React.FC = () => {
                 return sum;
             }, 0);
 
-            // Tính tổng số câu TN đã cấp cho các bài chỉ có Thông hiểu (TH-only) và chỉ có Nhận biết (NB-only)
-            const currentThOnlyTN = rows
-                .filter((r: any) => r.hasTHSpec && !r.hasNBSpec)
-                .reduce((s: number, r: any) => s + (r.allocTN || 0), 0);
-            const currentNbOnlyTN = rows
-                .filter((r: any) => r.hasNBSpec && !r.hasTHSpec)
-                .reduce((s: number, r: any) => s + (r.allocTN || 0), 0);
-
             // Chọn bài đang thiếu hụt nhiều nhất so với targetScore và đảm bảo:
             // 1. Bài học phải có YCCĐ mức Biết hoặc Hiểu (hasNBSpec || hasTHSpec)
-            // 2. Bài chỉ có TH (không có NB) không vượt quá tổng quota targetTH_TN
-            // 3. Bài chỉ có NB (không có TH) không vượt quá tổng quota targetNB_TN
-            // 4. Tổng điểm bài đã KT <= 35%
+            // 2. Tổng điểm bài đã KT <= 35%
             let rowCandidates = rows.filter((r: any) => {
                 if (r.soTiet <= 0) return false;
                 if (!r.hasNBSpec && !r.hasTHSpec) return false;
-                if (r.hasTHSpec && !r.hasNBSpec && currentThOnlyTN >= targetTH_TN) return false;
-                if (r.hasNBSpec && !r.hasTHSpec && currentNbOnlyTN >= targetNB_TN) return false;
                 if (hasExaminedReduction && r.soTietExamined > 0) {
                     const addedOldScore = r.isOldLesson ? SCORE_TN : SCORE_TN * (r.soTietExamined / r.soTiet);
                     if (currentTotalOldScore + addedOldScore > LIMIT_OLD_SCORE + 1e-6) return false;
                 }
                 return true;
             });
-            if (rowCandidates.length === 0) {
-                rowCandidates = rows.filter((r: any) => {
-                    if (r.soTiet <= 0) return false;
-                    if (!r.hasNBSpec && !r.hasTHSpec) return false;
-                    if (r.hasTHSpec && !r.hasNBSpec && currentThOnlyTN >= targetTH_TN) return false;
-                    if (r.hasNBSpec && !r.hasTHSpec && currentNbOnlyTN >= targetNB_TN) return false;
-                    return true;
-                });
-            }
             if (rowCandidates.length === 0) {
                 rowCandidates = rows.filter((r: any) => r.soTiet > 0 && (r.hasNBSpec || r.hasTHSpec));
             }
@@ -720,7 +710,9 @@ const MatrixBuilder: React.FC = () => {
         // sao cho:
         // 1. Bài không có YCCĐ mức Biết (!hasNBSpec) TUYỆT ĐỐI KHÔNG nhận câu Biết (allocNB = 0)
         // 2. Bài không có YCCĐ mức Hiểu (!hasTHSpec) TUYỆT ĐỐI KHÔNG nhận câu Hiểu (allocTH = 0)
-        // 3. Tổng toàn đề đạt chính xác tuyệt đối tỷ lệ targetNB_TN : targetTH_TN (4-3-3 => 16 NB : 12 TH)
+        // 3. Bài có cả YCCĐ mức Biết và Thông hiểu (hasNBSpec && hasTHSpec) và có từ 2 câu TN trở lên
+        //    LUÔN được chọn cả mức Biết (allocNB >= 1) VÀ mức Thông hiểu (allocTH >= 1)
+        // 4. Tổng toàn đề đạt chính xác tuyệt đối tỷ lệ targetNB_TN : targetTH_TN (4-3-3 => 16 NB : 12 TH)
         let remNB = targetNB_TN;
         let remTH = targetTH_TN;
 
@@ -751,7 +743,19 @@ const MatrixBuilder: React.FC = () => {
             }
         });
 
-        // Bước 2B.3: Phân bổ phần câu TN còn lại (remRowTN > 0) cho các bài có đủ cả NB và TH
+        // Bước 2B.3: Với mọi bài học có CẢ Nhận biết VÀ Thông hiểu (hasNBSpec && hasTHSpec) và có >= 2 câu TN,
+        // đảm bảo bài đó luôn nhận ít nhất 1 câu Nhận biết VÀ 1 câu Thông hiểu để cả 2 mức độ đều được chọn trên Bản đặc tả
+        rows.forEach((r: any) => {
+            if (r.remRowTN >= 2 && r.hasNBSpec && r.hasTHSpec && remNB > 0 && remTH > 0) {
+                r.allocNB++;
+                r.allocTH++;
+                r.remRowTN -= 2;
+                remNB--;
+                remTH--;
+            }
+        });
+
+        // Bước 2B.4: Phân bổ phần câu TN còn lại (remRowTN > 0) cho các bài có đủ cả NB và TH
         // sao cho tổng toàn đề khớp tuyệt đối targetNB_TN : targetTH_TN (4-3-3)
         rows.forEach((r: any) => {
             while (r.remRowTN > 0 && (remNB > 0 || remTH > 0)) {

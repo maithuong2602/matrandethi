@@ -1,17 +1,28 @@
 import { REQUIREMENTS_DATA, getDefaultCompetencyForTopic, createEmptyNewFormatRow } from './data/matrixConstants';
 import { MatrixData, ExerciseQuestion, NewMatrixFormatRowConfig } from './types';
 import { CURRICULUM } from './data/curriculum';
-import { syncSpecHtmlWithCustomStore, buildSpecHtmlFromMergedCriteria } from './services/criteriaService';
+import { syncSpecHtmlWithCustomStore, buildSpecHtmlFromMergedCriteria, detectGradeFromLessonOrContext, GradeCriteriaMap } from './services/criteriaService';
 
-export const getRequirementsHtml = (grade: string, mainTopic: string, subTopic: string, lessonName?: string): string => {
-    const gradeNumberMatch = grade.match(/\d+/);
-    if (!gradeNumberMatch) return '';
-    const gradeNum = gradeNumberMatch[0];
+export const getRequirementsHtml = (
+    grade: string,
+    mainTopic: string,
+    subTopic: string,
+    lessonName?: string,
+    customStore?: GradeCriteriaMap
+): string => {
+    const explicitGradeMatch = (grade || '').match(/(?:lớp|khối|tin)\s*([6-9])\b/i) || (grade || '').match(/\b([6-9])\b/);
+    const fallbackNumMatch = (grade || '').match(/\d+/);
+    const gradeNum = explicitGradeMatch
+        ? explicitGradeMatch[1]
+        : (lessonName || subTopic)
+        ? detectGradeFromLessonOrContext(lessonName || subTopic, grade)
+        : (fallbackNumMatch ? fallbackNumMatch[0] : '');
+    if (!gradeNum) return '';
 
     // Nếu xác định được Bài học cụ thể, xây dựng YCCĐ trực tiếp từ getMergedCriteria(gradeNum, lessonName)
     // để đồng bộ tuyệt đối 100% với "Tạo bài tập / Quản lý câu hỏi" (bao gồm cả khi xóa YCCĐ).
     if (lessonName) {
-        const lessonSpecHtml = buildSpecHtmlFromMergedCriteria(gradeNum, lessonName);
+        const lessonSpecHtml = buildSpecHtmlFromMergedCriteria(gradeNum, lessonName, customStore);
         if (lessonSpecHtml !== null) {
             return lessonSpecHtml;
         }
@@ -21,7 +32,7 @@ export const getRequirementsHtml = (grade: string, mainTopic: string, subTopic: 
     const gradeData = REQUIREMENTS_DATA[gradeKey];
 
     if (!gradeData || !gradeData[mainTopic] || !gradeData[mainTopic][subTopic]) {
-        return syncSpecHtmlWithCustomStore('', gradeNum, subTopic, lessonName);
+        return syncSpecHtmlWithCustomStore('', gradeNum, subTopic, lessonName, customStore);
     }
     const requirementsText: string = gradeData[mainTopic][subTopic];
     
@@ -44,7 +55,7 @@ export const getRequirementsHtml = (grade: string, mainTopic: string, subTopic: 
         }
     }).join('');
 
-    return syncSpecHtmlWithCustomStore(baseHtml, gradeNum, subTopic, lessonName);
+    return syncSpecHtmlWithCustomStore(baseHtml, gradeNum, subTopic, lessonName, customStore);
 };
 
 export const formatDiem = (diem: number): string => {

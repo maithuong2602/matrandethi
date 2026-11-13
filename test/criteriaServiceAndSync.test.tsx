@@ -382,6 +382,13 @@ describe('Criteria Service & Matrix Synchronization', () => {
             const rowH = (nf.mc.H.count || 0) + (nf.tf.H.count || 0) + (nf.sa.H.count || 0) + (nf.essay.H.count || 0);
             const rowVD = (nf.mc.VD.count || 0) + (nf.tf.VD.count || 0) + (nf.sa.VD.count || 0) + (nf.essay.VD.count || 0);
 
+            // Mọi bài học từ Bài 1 đến Bài 7 đều có YCCĐ Thông hiểu bên trong nên bắt buộc phải được chọn ít nhất 1 câu Thông hiểu (rowH >= 1)
+            expect(rowH).toBeGreaterThanOrEqual(1);
+            // Các bài có YCCĐ Nhận biết (Bài 1, 2, 5, 6, 7) đều phải có ít nhất 1 câu Nhận biết
+            if (i !== 2 && i !== 3) {
+                expect(rowB).toBeGreaterThanOrEqual(1);
+            }
+
             if (rowB > 0) expect(specHtml).toMatch(/Nhận biết/i);
             if (rowH > 0) expect(specHtml).toMatch(/Thông hiểu/i);
             if (rowVD > 0) expect(specHtml).toMatch(/Vận dụng/i);
