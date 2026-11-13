@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { MatrixData, NewMatrixFormatRowConfig } from '../types';
-import { formatDiem, buildMatrixNotesSummary } from '../utils';
+import { formatDiem, buildMatrixNotesSummary, getRequirementsHtml } from '../utils';
 import { Trash2, GripVertical, Plus, CheckSquare, Square, X, Pencil, Check, BookOpen, Layers } from 'lucide-react';
 import { 
     syncCriteriaFromMatrixData,
@@ -1290,9 +1290,23 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
     };
 
     const buildNewSpecSubRows = (rowIndex: number): NewSpecSubRowItem[] => {
-        const req = String(data.specifications?.rows?.[rowIndex]?.[4] || '');
-        const hasManualUnchecked = req.includes('data-unchecked="true"');
-        const yccdSections = parseYccdHtml(req);
+        const specRow = data.specifications?.rows?.[rowIndex];
+        const mRow = data.matrix?.rows?.[rowIndex];
+        let req = String(specRow?.[4] || '');
+        let yccdSections = parseYccdHtml(req);
+
+        // Tự động phục hồi YCCĐ từ kho tiêu chuẩn nếu ô đặc tả từng bị rỗng do lỗi dữ liệu cũ
+        if (yccdSections.length === 0) {
+            const mainTopic = String(specRow?.[1] || mRow?.[1] || '');
+            const subTopic = String(specRow?.[2] || mRow?.[2] || '');
+            const lessonName = String(specRow?.[3] || mRow?.[3] || '');
+            const fallbackReq = getRequirementsHtml(examName || '', mainTopic, subTopic, lessonName);
+            if (fallbackReq) {
+                req = fallbackReq;
+                yccdSections = parseYccdHtml(fallbackReq);
+            }
+        }
+
         const rowCfg = getRowNewFormatConfig(rowIndex);
 
         const levelQuotas: Record<'B' | 'H' | 'VD', number> = {
@@ -1301,6 +1315,17 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
             VD: (rowCfg.mc.VD?.count || 0) + (rowCfg.tf.VD?.count || 0) + (rowCfg.sa.VD?.count || 0) + (rowCfg.essay.VD?.count || 0)
         };
         const rowTotalQuota = levelQuotas.B + levelQuotas.H + levelQuotas.VD;
+
+        const avail = data.availableCounts?.[rowIndex];
+        const availB = (avail?.NB?.TN || 0) + (avail?.NB?.TL || 0);
+        const availH = (avail?.TH?.TN || 0) + (avail?.TH?.TL || 0);
+        const availVD = (avail?.VD?.TN || 0) + (avail?.VD?.TL || 0) + (avail?.VDC?.TN || 0) + (avail?.VDC?.TL || 0);
+        const hasPoolCounts = availB + availH + availVD > 0;
+        const poolHasLevel: Record<'B' | 'H' | 'VD', boolean> = {
+            B: availB > 0,
+            H: availH > 0,
+            VD: availVD > 0
+        };
 
         const levelDefs: { levelKey: 'B' | 'H' | 'VD'; displayTitle: string; rawTitle: string }[] = [
             { levelKey: 'B', displayTitle: '- Biết:', rawTitle: 'Nhận biết' },
@@ -1329,8 +1354,21 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
             });
         });
 
-        if (showAllSpecCriteria || rowTotalQuota === 0) {
+        if (showAllSpecCriteria) {
             return levelDefs.map(d => grouped[d.levelKey]);
+        }
+
+        if (rowTotalQuota === 0) {
+            // Khi chưa phân bổ số câu: chỉ hiển thị các mức độ thực sự có YCCĐ (và có trong kho câu hỏi của đề nếu đã đồng bộ kho)
+            const nonEmptyByPool = levelDefs
+                .filter(d => grouped[d.levelKey].items.length > 0 && (!hasPoolCounts || poolHasLevel[d.levelKey]))
+                .map(d => grouped[d.levelKey]);
+            if (nonEmptyByPool.length > 0) return nonEmptyByPool;
+
+            const nonEmptyAny = levelDefs
+                .filter(d => grouped[d.levelKey].items.length > 0)
+                .map(d => grouped[d.levelKey]);
+            return nonEmptyAny.length > 0 ? nonEmptyAny : [grouped.B];
         }
 
         // Chế độ mặc định: Chỉ hiện mức độ & tiêu chí được chọn ra đề (quota > 0 và checked)

@@ -28,7 +28,7 @@ export const normalizeCriterionText = (text: string): string => {
     return (text || '')
         .replace(/^\d+\.\d+\s*/, '')
         .replace(/^[\s–\-*•]+/, '')
-        .replace(/[:.\-–_(),;]/g, ' ')
+        .replace(/[:.\-–_(),;/]/g, ' ')
         .replace(/\s+/g, ' ')
         .trim()
         .toLowerCase();
@@ -46,6 +46,11 @@ export const areCriteriaSemanticallySame = (a: string, b: string): boolean => {
 
     const canonicalize = (s: string) =>
         s
+            .replace(/\bđược lưu trữ với dung lượng khổng lồ bởi nhiều tổ chức và cá nhân\b/g, 'dung lượng lớn')
+            .replace(/\bcó tính bản quyền\b/g, 'có bản quyền')
+            .replace(/\bcó độ tin cậy rất khác nhau\b/g, 'độ tin cậy khác nhau')
+            .replace(/\bcó các công cụ tìm kiếm\b/g, 'có công cụ tìm kiếm')
+            .replace(/\bvà xử lí hiệu quả\b/g, 'xử lí hiệu quả')
             .replace(/\bthông qua\b/g, 'qua')
             .replace(/\bnhiệm vụ học tập\b/g, 'nhiệm vụ')
             .replace(/\btìm kiếm được\b/g, 'tìm kiếm')
@@ -71,7 +76,6 @@ export const areCriteriaSemanticallySame = (a: string, b: string): boolean => {
     const cb = canonicalize(nb);
     if (ca === cb) return true;
     if (ca.length > 15 && cb.length > 15 && (ca.includes(cb) || cb.includes(ca))) return true;
-    if (ca.length >= 40 && cb.length >= 40 && ca.slice(0, 40) === cb.slice(0, 40)) return true;
     return false;
 };
 
@@ -562,12 +566,27 @@ const sanitizeLoadedCriteriaStore = (store: GradeCriteriaMap): void => {
             if (!entry || typeof entry !== 'object') continue;
 
             // 1. Loại bỏ các chuỗi YCCĐ giả lập từng bị lưu trong __deleted hoặc danh sách mức độ
+            //    đồng thời khôi phục nếu mục 1.1 của Bài 2 Khối 8 từng bị xóa do lỗi trùng lặp 2 bản từ REQUIREMENTS_DATA cũ
+            const lessonNum = extractLessonNumber(lessonKey);
             if (Array.isArray(entry.__deleted)) {
-                entry.__deleted = entry.__deleted.filter(d => !isFakePlaceholderCriterion(d));
+                entry.__deleted = entry.__deleted.filter(d => {
+                    if (isFakePlaceholderCriterion(d)) return false;
+                    if (g === '8' && lessonNum === '2' && normalizeCriterionText(d).startsWith('nêu được các đặc điểm của thông tin số')) {
+                        return false;
+                    }
+                    return true;
+                });
             }
             for (const [lvl, list] of Object.entries(entry)) {
                 if (lvl.startsWith('__') || !Array.isArray(list)) continue;
-                entry[lvl] = list.filter(it => !isFakePlaceholderCriterion(it));
+                const deduped: string[] = [];
+                list.forEach(it => {
+                    if (isFakePlaceholderCriterion(it)) return;
+                    if (!deduped.some(ex => areCriteriaSemanticallySame(ex, it))) {
+                        deduped.push(it);
+                    }
+                });
+                entry[lvl] = deduped;
             }
 
             // 2. Làm sạch __deletedCodes: Nếu bài học thuộc CURRICULUM.criteriaData, chỉ giữ mã code trong __deletedCodes
@@ -586,6 +605,23 @@ const sanitizeLoadedCriteriaStore = (store: GradeCriteriaMap): void => {
                     const normBase = normalizeCriterionText(baseItemWithCode);
                     return deletedList.some(d => d === normBase || areCriteriaSemanticallySame(d, baseItemWithCode));
                 });
+            }
+
+            // 3. Nếu toàn bộ YCCĐ gốc của một bài trong CURRICULUM đều bị đánh dấu xóa khiến bài học không còn bất kỳ YCCĐ nào,
+            //    khôi phục lại YCCĐ gốc để không bao giờ xuất hiện bài học rỗng hoàn toàn (...)
+            if (baseMap && Array.isArray(entry.__deleted) && entry.__deleted.length > 0) {
+                const allBaseItems = Object.values(baseMap).flat();
+                const allCustomActive = Object.entries(entry)
+                    .filter(([k]) => !k.startsWith('__'))
+                    .flatMap(([, v]) => (Array.isArray(v) ? v : []))
+                    .filter(it => !entry.__deleted!.some(d => d === normalizeCriterionText(it) || areCriteriaSemanticallySame(d, it)));
+                const anyBaseSurvives = allBaseItems.some(
+                    b => !entry.__deleted!.some(d => d === normalizeCriterionText(b) || areCriteriaSemanticallySame(d, b))
+                );
+                if (!anyBaseSurvives && allCustomActive.length === 0) {
+                    entry.__deleted = [];
+                    entryAny.__deletedCodes = [];
+                }
             }
         }
     }
@@ -1577,6 +1613,10 @@ export const getMergedCriteria = (
         });
     });
 
+    if (Object.keys(merged).length === 0 && baseCriteria) {
+        return { ...baseCriteria };
+    }
+
     return Object.keys(merged).length > 0 ? merged : null;
 };
 
@@ -1842,6 +1882,191 @@ export const buildSpecHtmlFromMergedCriteria = (
     });
 
     return serializeYccdSections(sections);
+};
+
+export interface QuestionPoolSpecResult {
+    specHtml: string;
+    hasNB: boolean;
+    hasTH: boolean;
+    hasVD: boolean;
+    hasPoolQuestions: boolean;
+}
+
+/**
+ * Dựng nội dung HTML Yêu cầu cần đạt trên Bản đặc tả và xác định các mức độ nhận thức (Biết / Hiểu / Vận dụng)
+ * trực tiếp từ KHO CÂU HỎI TRONG ĐỀ của dòng bài học/chủ đề đó.
+ * Chỉ những mức độ nhận thức và YCCĐ thực sự có câu hỏi trong kho câu hỏi của đề mới được đưa vào Bản đặc tả.
+ */
+export const buildSpecHtmlFromQuestionPool = (
+    grade: string,
+    lessonName: string,
+    subTopic: string,
+    poolQuestions: any[],
+    customStore?: GradeCriteriaMap
+): QuestionPoolSpecResult | null => {
+    if (!Array.isArray(poolQuestions) || poolQuestions.length === 0) {
+        return null;
+    }
+
+    const explicitGradeMatch = (grade || '').match(/(?:lớp|khối|tin)\s*([6-9])\b/i) || (grade || '').match(/\b([6-9])\b/);
+    const g = explicitGradeMatch
+        ? explicitGradeMatch[1]
+        : detectGradeFromLessonOrContext(lessonName || subTopic, grade) || '7';
+
+    const store = customStore || loadCustomCriteriaStore();
+    let merged: CriteriaMap | null = null;
+    if (lessonName) {
+        const canonicalLesson = resolveCanonicalLessonName(g, lessonName);
+        merged = getMergedCriteria(g, canonicalLesson, store);
+    }
+    if (!merged && subTopic) {
+        const lessons = getLessonsForSubTopic(g, subTopic);
+        const combined: CriteriaMap = {};
+        lessons.forEach(l => {
+            const m = getMergedCriteria(g, l, store);
+            if (m) {
+                Object.entries(m).forEach(([lvl, arr]) => {
+                    if (lvl.startsWith('__') || !Array.isArray(arr)) return;
+                    if (!combined[lvl]) combined[lvl] = [];
+                    arr.forEach(item => {
+                        if (!combined[lvl].some(ex => areCriteriaSemanticallySame(ex, item))) {
+                            combined[lvl].push(item);
+                        }
+                    });
+                });
+            }
+        });
+        if (Object.keys(combined).length > 0) merged = combined;
+    }
+
+    const nbQuestions: any[] = [];
+    const thQuestions: any[] = [];
+    const vdQuestions: any[] = [];
+
+    poolQuestions.forEach(q => {
+        if (!q) return;
+        const lvl = getLevelCodeFromTitle(String(q.level || q.mucDo || 'NB'));
+        if (lvl === 'NB') nbQuestions.push(q);
+        else if (lvl === 'TH') thQuestions.push(q);
+        else vdQuestions.push(q);
+    });
+
+    const hasNB = nbQuestions.length > 0;
+    const hasTH = thQuestions.length > 0;
+    const hasVD = vdQuestions.length > 0;
+
+    const allLessonCriteria: string[] = merged
+        ? Object.entries(merged)
+              .filter(([k]) => !k.startsWith('__'))
+              .flatMap(([, v]) => (Array.isArray(v) ? v : []))
+        : [];
+
+    const levelBuckets: { code: 'NB' | 'TH' | 'VD'; title: string; qs: any[]; pool: string[] }[] = [
+        { code: 'NB', title: 'Nhận biết', qs: nbQuestions, pool: merged?.['NB'] || [] },
+        { code: 'TH', title: 'Thông hiểu', qs: thQuestions, pool: merged?.['TH'] || [] },
+        {
+            code: 'VD',
+            title: 'Vận dụng',
+            qs: vdQuestions,
+            pool: [...(merged?.['VD'] || []), ...(merged?.['VDC'] || [])]
+        }
+    ];
+
+    const sections: YccdSection[] = [];
+
+    levelBuckets.forEach(({ code, title, qs, pool }) => {
+        if (qs.length === 0) return;
+
+        const matchedItems: string[] = [];
+        const addUniqueItem = (rawText: string) => {
+            const clean = rawText.replace(/^\d+\.\d+\s*/, '').replace(/^[\s–\-*•]+/, '').trim();
+            if (!clean) return;
+            if (!matchedItems.some(ex => areCriteriaSemanticallySame(ex, clean))) {
+                matchedItems.push(clean);
+            }
+        };
+
+        qs.forEach(q => {
+            const rawCrit = String(q.criteria || q.tieuChi || '').trim();
+            if (!rawCrit) return;
+
+            const codeMatch = rawCrit.match(/^(\d+\.\d+)\b/);
+            const qCode = codeMatch ? codeMatch[1] : rawCrit.split(/\s+/)[0].replace(/[:.]$/, '').trim();
+            const qText = rawCrit.replace(/^\d+\.\d+\s*/, '').replace(/^[\s–\-*•]+/, '').trim();
+
+            // 1. Ưu tiên khớp trong danh sách YCCĐ thuộc đúng mức độ nhận thức này của bài học
+            const matchedInLevel = pool.find(item => {
+                const itemCode = item.trim().match(/^(\d+\.\d+)\b/)?.[1];
+                if (qCode && /^\d+\.\d+$/.test(qCode) && itemCode === qCode) return true;
+                if (qText.length > 5 && areCriteriaSemanticallySame(item, qText)) return true;
+                return false;
+            });
+
+            if (matchedInLevel) {
+                addUniqueItem(matchedInLevel);
+                return;
+            }
+
+            // 2. Nếu không thấy trong cùng mức độ, kiểm tra toàn bộ YCCĐ của bài học
+            const matchedInAll = allLessonCriteria.find(item => {
+                const itemCode = item.trim().match(/^(\d+\.\d+)\b/)?.[1];
+                if (qCode && /^\d+\.\d+$/.test(qCode) && itemCode === qCode) return true;
+                if (qText.length > 5 && areCriteriaSemanticallySame(item, qText)) return true;
+                return false;
+            });
+
+            if (matchedInAll) {
+                addUniqueItem(matchedInAll);
+                return;
+            }
+
+            // 3. Nếu câu hỏi mang sẵn nội dung chữ của YCCĐ
+            if (qText.length > 5) {
+                addUniqueItem(qText);
+            }
+        });
+
+        // Nếu các câu hỏi ở mức độ này không gắn mã YCCĐ cụ thể (mặc định theo bài học),
+        // lấy danh sách YCCĐ hiện hành ở mức độ đó của bài học
+        if (matchedItems.length === 0) {
+            if (pool.length > 0) {
+                pool.forEach(item => addUniqueItem(item));
+            } else if (allLessonCriteria.length > 0) {
+                addUniqueItem(allLessonCriteria[0]);
+            }
+        }
+
+        // Sắp xếp lại các mục theo đúng thứ tự chuẩn trong pool của bài học nếu có
+        if (pool.length > 1 && matchedItems.length > 1) {
+            matchedItems.sort((a, b) => {
+                const idxA = pool.findIndex(p => areCriteriaSemanticallySame(p, a));
+                const idxB = pool.findIndex(p => areCriteriaSemanticallySame(p, b));
+                if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+                if (idxA !== -1) return -1;
+                if (idxB !== -1) return 1;
+                return 0;
+            });
+        }
+
+        if (matchedItems.length > 0) {
+            sections.push({
+                levelTitle: title,
+                items: matchedItems.map((clean, idx) => ({
+                    id: `${code}-${idx}`,
+                    text: `– ${clean}`,
+                    checked: true
+                }))
+            });
+        }
+    });
+
+    return {
+        specHtml: serializeYccdSections(sections),
+        hasNB,
+        hasTH,
+        hasVD,
+        hasPoolQuestions: true
+    };
 };
 
 /**

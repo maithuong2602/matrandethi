@@ -9,7 +9,96 @@ import { PREDEFINED_FOLDERS as predefinedFoldersByGrade, REQUIREMENTS_DATA as re
 import { getRequirementsHtml, generatePrintHTML } from '../utils';
 import { loadQuestionBank } from '../services/storage/questionBankStorage';
 import { CANONICAL_REQUIREMENTS, KNTT_LESSON_MAPPINGS } from '../data/curriculum/index';
-import { syncSpecHtmlWithCustomStore, CUSTOM_CRITERIA_STORAGE_KEY, isQuestionCriteriaValidForLesson, filterQuestionsByActiveCriteria, loadCustomCriteriaStore, GradeCriteriaMap, detectGradeFromLessonOrContext } from '../services/criteriaService';
+import { syncSpecHtmlWithCustomStore, CUSTOM_CRITERIA_STORAGE_KEY, isQuestionCriteriaValidForLesson, filterQuestionsByActiveCriteria, loadCustomCriteriaStore, GradeCriteriaMap, detectGradeFromLessonOrContext, buildSpecHtmlFromQuestionPool, parseYccdSections, serializeYccdSections, getLevelCodeFromTitle } from '../services/criteriaService';
+
+const collectRowPoolQuestionsFromDir = (
+    dir: FileSystemItem | null | undefined,
+    subTopic: string,
+    lessonName: string,
+    gradeNum: string,
+    customStore: GradeCriteriaMap,
+    liveBankQuestions: any[] = []
+): any[] => {
+    const folderQuestions: any[] = [];
+    const normSub = (subTopic || '').trim();
+    const normLesson = (lessonName || '').trim();
+    const lessonNum = normLesson.match(/Bài\s*\d+[ab]?/i)?.[0]?.toLowerCase();
+
+    if (dir && Array.isArray(dir.children)) {
+        const subTopicFolder = dir.children.find(c => c.type === 'folder' && c.name === normSub);
+        const files = subTopicFolder?.children?.filter(c => c.type === 'file' && c.content) || [];
+        files.forEach(file => {
+            const fileLesson = String(
+                file.content?.info?.lesson ||
+                file.content?.thongTinChung?.bai ||
+                file.name.replace(/\.json$/i, '') ||
+                ''
+            ).trim();
+            const fileLessonNum = fileLesson.match(/Bài\s*\d+[ab]?/i)?.[0]?.toLowerCase();
+
+            const matchesLesson =
+                !normLesson ||
+                fileLesson === normLesson ||
+                (lessonNum && fileLessonNum === lessonNum);
+
+            if (!matchesLesson) return;
+
+            const effLesson = fileLesson || normLesson;
+            (file.content?.tracNghiem || []).forEach((q: any) => {
+                if (!isQuestionCriteriaValidForLesson(q, gradeNum, effLesson, customStore)) return;
+                folderQuestions.push({
+                    ...q,
+                    level: (q.mucDo || q.level || 'NB').toUpperCase(),
+                    category: 'mc',
+                    criteria: q.tieuChi || q.criteria || ''
+                });
+            });
+            (file.content?.tuLuan || []).forEach((q: any) => {
+                if (!isQuestionCriteriaValidForLesson(q, gradeNum, effLesson, customStore)) return;
+                folderQuestions.push({
+                    ...q,
+                    level: (q.mucDo || q.level || 'NB').toUpperCase(),
+                    category: 'essay',
+                    criteria: q.tieuChi || q.criteria || ''
+                });
+            });
+            (file.content?.questions || []).forEach((q: any) => {
+                if (!isQuestionCriteriaValidForLesson(q, gradeNum, effLesson, customStore)) return;
+                folderQuestions.push({
+                    ...q,
+                    level: (q.level || q.mucDo || 'NB').toUpperCase(),
+                    category: q.category || 'mc',
+                    criteria: q.criteria || q.tieuChi || ''
+                });
+            });
+        });
+    }
+
+    if (folderQuestions.length > 0) {
+        return folderQuestions;
+    }
+
+    const bankMatched: any[] = [];
+    if ((normLesson || normSub) && Array.isArray(liveBankQuestions) && liveBankQuestions.length > 0) {
+        liveBankQuestions.forEach(q => {
+            const qLesson = String(q.lesson || '').trim();
+            const qLessonNum = qLesson.match(/Bài\s*\d+[ab]?/i)?.[0]?.toLowerCase();
+            const isMatch =
+                (normLesson && (qLesson === normLesson || (lessonNum && qLessonNum === lessonNum))) ||
+                (!normLesson && normSub && qLesson.toLowerCase().includes(normSub.replace(/^\d+\.\s*/, '').toLowerCase()));
+            if (isMatch) {
+                bankMatched.push({
+                    ...q,
+                    level: (q.level || q.mucDo || 'NB').toUpperCase(),
+                    category: q.category || 'mc',
+                    criteria: q.criteria || q.tieuChi || ''
+                });
+            }
+        });
+    }
+
+    return bankMatched;
+};
 
 const MatrixBuilder: React.FC = () => {
     // --- State ---
@@ -44,7 +133,12 @@ const MatrixBuilder: React.FC = () => {
 
     // --- Persistence ---
     useEffect(() => {
-        const syncTreeWithCustomCriteria = (node: FileSystemItem, customStore: GradeCriteriaMap, currentGrade?: string) => {
+        const syncTreeWithCustomCriteria = (
+            node: FileSystemItem,
+            customStore: GradeCriteriaMap,
+            allBankQuestions: any[],
+            currentGrade?: string
+        ) => {
             if (!node) return;
             let g = currentGrade;
             const m = node.name?.match(/(?:Lớp|Khối)\s*(\d+)/i) || node.name?.match(/\b([6-9])\b/);
@@ -52,17 +146,47 @@ const MatrixBuilder: React.FC = () => {
                 g = m[1];
             }
             if (node.type === 'file' && node.content) {
-                const fGrade = String(node.content.info?.grade || node.content.thongTinChung?.khoi || g || '7');
-                const fLesson = String(node.content.info?.lesson || node.content.thongTinChung?.bai || node.name.replace(/\.json$/i, '') || '');
+                const fGrade = String(node.content.info?.grade || node.content.thongTinChung?.khoi || g || '7').match(/\d+/)?.[0] || g || '7';
+                const fLesson = String(node.content.info?.lesson || node.content.thongTinChung?.bai || node.name.replace(/\.json$/i, '') || '').trim();
                 if (Array.isArray(node.content.questions)) {
-                    node.content.questions = filterQuestionsByActiveCriteria(node.content.questions, fGrade, fLesson, customStore).valid;
+                    const filtered = filterQuestionsByActiveCriteria(node.content.questions, fGrade, fLesson, customStore);
+                    if (filtered.valid.length > 0 || node.content.questions.length === 0) {
+                        node.content.questions = filtered.valid;
+                    }
                 }
                 if (Array.isArray(node.content.tracNghiem)) {
-                    node.content.tracNghiem = filterQuestionsByActiveCriteria(node.content.tracNghiem, fGrade, fLesson, customStore).valid;
+                    const filtered = filterQuestionsByActiveCriteria(node.content.tracNghiem, fGrade, fLesson, customStore);
+                    if (filtered.valid.length > 0 || node.content.tracNghiem.length === 0) {
+                        node.content.tracNghiem = filtered.valid;
+                    }
                 }
                 if (Array.isArray(node.content.tuLuan)) {
-                    node.content.tuLuan = filterQuestionsByActiveCriteria(node.content.tuLuan, fGrade, fLesson, customStore).valid;
+                    const filtered = filterQuestionsByActiveCriteria(node.content.tuLuan, fGrade, fLesson, customStore);
+                    if (filtered.valid.length > 0 || node.content.tuLuan.length === 0) {
+                        node.content.tuLuan = filtered.valid;
+                    }
                 }
+
+                // Tự động khôi phục từ Ngân hàng câu hỏi nếu file bài học trong đề từng bị lọc rỗng do lỗi cũ
+                const totalInFile =
+                    (node.content.questions?.length || 0) +
+                    (node.content.tracNghiem?.length || 0) +
+                    (node.content.tuLuan?.length || 0);
+                if (totalInFile === 0 && fLesson && allBankQuestions.length > 0) {
+                    const fLessonNum = fLesson.match(/Bài\s*\d+[ab]?/i)?.[0]?.toLowerCase();
+                    const restored = allBankQuestions.filter(q => {
+                        if (fGrade && q.grade && String(q.grade) !== fGrade) return false;
+                        const qLesson = String(q.lesson || '').trim();
+                        const qLessonNum = qLesson.match(/Bài\s*\d+[ab]?/i)?.[0]?.toLowerCase();
+                        return qLesson === fLesson || (fLessonNum && qLessonNum === fLessonNum);
+                    });
+                    if (restored.length > 0) {
+                        node.content.questions = restored;
+                    }
+                }
+            }
+            if (Array.isArray(node.children)) {
+                node.children.forEach(c => syncTreeWithCustomCriteria(c, customStore, allBankQuestions, g));
             }
             if (node.matrixData?.specifications?.rows && Array.isArray(node.matrixData.specifications.rows)) {
                 node.matrixData.specifications.rows.forEach((row: string[], rIdx: number) => {
@@ -70,20 +194,29 @@ const MatrixBuilder: React.FC = () => {
                     const subTopic = row[2] || node.matrixData?.matrix?.rows?.[rIdx]?.[2] || '';
                     const lessonName = row[3] || node.matrixData?.matrix?.rows?.[rIdx]?.[3] || '';
                     const effGrade = g || detectGradeFromLessonOrContext(lessonName || subTopic || mainTopic, node.name);
-                    if (row[4] || lessonName) {
+
+                    const gradeBankQs = allBankQuestions.filter(q => !effGrade || !q.grade || String(q.grade) === effGrade);
+                    const poolQs = collectRowPoolQuestionsFromDir(node, subTopic, lessonName, effGrade, customStore, gradeBankQs);
+                    if (poolQs.length > 0) {
+                        const poolSpec = buildSpecHtmlFromQuestionPool(effGrade, lessonName, subTopic, poolQs, customStore);
+                        if (poolSpec && poolSpec.specHtml) {
+                            row[4] = poolSpec.specHtml;
+                            return;
+                        }
+                    }
+
+                    if (row[4] || lessonName || subTopic) {
+                        const baseHtml = row[4] || getRequirementsHtml(effGrade, mainTopic, subTopic, lessonName, customStore);
                         const syncedHtml = syncSpecHtmlWithCustomStore(
-                            row[4] || getRequirementsHtml(effGrade, mainTopic, subTopic, lessonName, customStore),
+                            baseHtml,
                             effGrade,
                             subTopic,
                             lessonName,
                             customStore
                         );
-                        row[4] = syncedHtml;
+                        row[4] = syncedHtml || getRequirementsHtml(effGrade, mainTopic, subTopic, lessonName, customStore);
                     }
                 });
-            }
-            if (Array.isArray(node.children)) {
-                node.children.forEach(c => syncTreeWithCustomCriteria(c, customStore, g));
             }
         };
 
@@ -93,7 +226,9 @@ const MatrixBuilder: React.FC = () => {
                 try {
                     const parsed = JSON.parse(saved);
                     const customStore = loadCustomCriteriaStore();
-                    syncTreeWithCustomCriteria(parsed, customStore);
+                    const bankRes = loadQuestionBank();
+                    const validBankQs = filterQuestionsByActiveCriteria(bankRes.data || [], undefined, undefined, customStore).valid;
+                    syncTreeWithCustomCriteria(parsed, customStore, validBankQs);
                     setFileSystem(parsed);
                 } catch (e) {
                     console.error("Failed to load file system", e);
@@ -284,22 +419,24 @@ const MatrixBuilder: React.FC = () => {
                             // Support both old and new formats for Lesson Name
                             const lessonName = file.content?.info?.lesson || file.content?.thongTinChung?.bai || file.name.replace('.json', '');
                             const soTiet = (file.content?.info?.soTiet || file.content?.thongTinChung?.soTiet || 1).toString();
-                            const requirements = getRequirementsHtml(grade, mainTopic, subTopic, lessonName);
-                            
-                            // Count available questions (chỉ tính các câu có YCCĐ hợp lệ trong bài học)
-                            const counts = { NB: {TN:0,TL:0}, TH: {TN:0,TL:0}, VD: {TN:0,TL:0}, VDC: {TN:0,TL:0} };
                             const gradeDigits = gradeNumberMatch[0];
+                            
+                            // Count available questions & collect question pool (chỉ tính các câu có YCCĐ hợp lệ trong bài học)
+                            const counts = { NB: {TN:0,TL:0}, TH: {TN:0,TL:0}, VD: {TN:0,TL:0}, VDC: {TN:0,TL:0} };
+                            const filePoolQuestions: any[] = [];
                             
                             // Old format counts
                             (file.content?.tracNghiem || []).forEach((q: any) => {
                                 if (!isQuestionCriteriaValidForLesson(q, gradeDigits, lessonName, customStore)) return;
                                 const l = (q.mucDo || 'NB').toUpperCase() as keyof AvailableCounts;
                                 if(counts[l]) counts[l].TN++;
+                                filePoolQuestions.push({ ...q, level: l, category: 'mc', criteria: q.tieuChi || q.criteria || '' });
                             });
                             (file.content?.tuLuan || []).forEach((q: any) => {
                                 if (!isQuestionCriteriaValidForLesson(q, gradeDigits, lessonName, customStore)) return;
                                 const l = (q.mucDo || 'NB').toUpperCase() as keyof AvailableCounts;
                                 if(counts[l]) counts[l].TL++;
+                                filePoolQuestions.push({ ...q, level: l, category: 'essay', criteria: q.tieuChi || q.criteria || '' });
                             });
 
                             // New format counts
@@ -311,7 +448,13 @@ const MatrixBuilder: React.FC = () => {
                                     if (isMC) counts[l].TN++;
                                     else counts[l].TL++;
                                 }
+                                filePoolQuestions.push({ ...q, level: l, category: q.category || 'mc', criteria: q.criteria || q.tieuChi || '' });
                             });
+
+                            const poolSpec = filePoolQuestions.length > 0
+                                ? buildSpecHtmlFromQuestionPool(gradeDigits, lessonName, subTopic, filePoolQuestions, customStore)
+                                : null;
+                            const requirements = poolSpec?.specHtml || getRequirementsHtml(grade, mainTopic, subTopic, lessonName, customStore);
 
                             // Push Rows
                             // Matrix Row: 
@@ -341,7 +484,7 @@ const MatrixBuilder: React.FC = () => {
                                 r[1] === mainTopic && r[2] === subTopic && r[3] === lessonName
                             );
                             if (existingSpec) {
-                                const syncedExistingHtml = syncSpecHtmlWithCustomStore(
+                                const syncedExistingHtml = poolSpec?.specHtml || syncSpecHtmlWithCustomStore(
                                     existingSpec[4] || requirements,
                                     gradeNumberMatch[0],
                                     subTopic,
@@ -349,7 +492,7 @@ const MatrixBuilder: React.FC = () => {
                                     customStore
                                 );
                                 specRows.push([
-                                    stt.toString(), mainTopic, subTopic, lessonName, syncedExistingHtml, 
+                                    stt.toString(), mainTopic, subTopic, lessonName, syncedExistingHtml || requirements, 
                                     existingSpec[5] || '0-0', existingSpec[6] || '0-0', existingSpec[7] || '0-0', existingSpec[8] || '0-0'
                                 ]);
                             } else {
@@ -491,45 +634,86 @@ const MatrixBuilder: React.FC = () => {
             const rowLesson = String(row[3] || '').trim();
             const rowSubTopic = String(row[2] || '').trim();
 
+            // Thu thập kho câu hỏi trong đề (từ tệp JSON trong thư mục đề hoặc Ngân hàng câu hỏi của bài học đó)
+            const rowPoolQuestions = collectRowPoolQuestionsFromDir(
+                currentDir,
+                rowSubTopic,
+                rowLesson,
+                gradeNum,
+                customStore,
+                liveBankQuestions
+            );
+
             // Kết hợp số lượng câu có sẵn trong thư mục và trong Ngân hàng câu hỏi nội bộ
             const baseAvail = data.availableCounts?.[idx] || { NB: { TN: 0, TL: 0 }, TH: { TN: 0, TL: 0 }, VD: { TN: 0, TL: 0 }, VDC: { TN: 0, TL: 0 } };
-            const liveCounts = { NB: { TN: 0, TL: 0 }, TH: { TN: 0, TL: 0 }, VD: { TN: 0, TL: 0 }, VDC: { TN: 0, TL: 0 } };
-            if (rowLesson || rowSubTopic) {
-                const lessonNum = rowLesson.match(/Bài\s*\d+[ab]?/i)?.[0]?.toLowerCase();
-                liveBankQuestions.forEach(q => {
-                    const qLesson = (q.lesson || '').trim();
-                    const qLessonNum = qLesson.match(/Bài\s*\d+[ab]?/i)?.[0]?.toLowerCase();
-                    const isMatch =
-                        (rowLesson && (qLesson === rowLesson || (lessonNum && qLessonNum === lessonNum))) ||
-                        (!rowLesson && rowSubTopic && qLesson.toLowerCase().includes(rowSubTopic.replace(/^\d+\.\s*/, '').toLowerCase()));
-                    if (isMatch) {
-                        const lvl = ((q.level || 'NB').toUpperCase()) as 'NB' | 'TH' | 'VD' | 'VDC';
-                        if (liveCounts[lvl]) {
-                            if (q.category === 'essay') liveCounts[lvl].TL++;
-                            else liveCounts[lvl].TN++;
-                        }
-                    }
-                });
-            }
-            const mergedAvail = {
-                NB: { TN: Math.max(baseAvail.NB?.TN || 0, liveCounts.NB.TN), TL: Math.max(baseAvail.NB?.TL || 0, liveCounts.NB.TL) },
-                TH: { TN: Math.max(baseAvail.TH?.TN || 0, liveCounts.TH.TN), TL: Math.max(baseAvail.TH?.TL || 0, liveCounts.TH.TL) },
-                VD: { TN: Math.max(baseAvail.VD?.TN || 0, liveCounts.VD.TN), TL: Math.max(baseAvail.VD?.TL || 0, liveCounts.VD.TL) },
-                VDC: { TN: Math.max(baseAvail.VDC?.TN || 0, liveCounts.VDC.TN), TL: Math.max(baseAvail.VDC?.TL || 0, liveCounts.VDC.TL) }
-            };
+            const poolCounts = { NB: { TN: 0, TL: 0 }, TH: { TN: 0, TL: 0 }, VD: { TN: 0, TL: 0 }, VDC: { TN: 0, TL: 0 } };
+            rowPoolQuestions.forEach(q => {
+                const lvl = getLevelCodeFromTitle(String(q.level || q.mucDo || 'NB')) as 'NB' | 'TH' | 'VD' | 'VDC';
+                if (poolCounts[lvl]) {
+                    if (q.category === 'essay') poolCounts[lvl].TL++;
+                    else poolCounts[lvl].TN++;
+                }
+            });
+
+            const mergedAvail = rowPoolQuestions.length > 0
+                ? poolCounts
+                : {
+                    NB: { TN: baseAvail.NB?.TN || 0, TL: baseAvail.NB?.TL || 0 },
+                    TH: { TN: baseAvail.TH?.TN || 0, TL: baseAvail.TH?.TL || 0 },
+                    VD: { TN: baseAvail.VD?.TN || 0, TL: baseAvail.VD?.TL || 0 },
+                    VDC: { TN: baseAvail.VDC?.TN || 0, TL: baseAvail.VDC?.TL || 0 }
+                };
             if (data.availableCounts) {
                 data.availableCounts[idx] = mergedAvail;
             }
 
-            // Kiểm tra Bản đặc tả của dòng này có sẵn mức Nhận biết / Thông hiểu / Vận dụng không (đồng bộ từ YCCĐ bài học)
+            // Dựa trực tiếp vào KHO CÂU HỎI TRONG ĐỀ để biết có ra Yêu cầu cần đạt ở mức Nhận biết / Thông hiểu / Vận dụng trên Bản đặc tả không
+            const poolSpec = rowPoolQuestions.length > 0
+                ? buildSpecHtmlFromQuestionPool(gradeNum || currentDir.name, rowLesson, rowSubTopic, rowPoolQuestions, customStore)
+                : null;
+
             const freshSpecHtml = getRequirementsHtml(gradeNum || currentDir.name, String(row[1] || ''), rowSubTopic, rowLesson, customStore);
-            const specHtml = freshSpecHtml || syncSpecHtmlWithCustomStore(String(data.specifications?.rows?.[idx]?.[4] || ''), gradeNum, rowSubTopic, rowLesson, customStore);
+            let specHtml =
+                poolSpec?.specHtml ||
+                freshSpecHtml ||
+                syncSpecHtmlWithCustomStore(String(data.specifications?.rows?.[idx]?.[4] || ''), gradeNum, rowSubTopic, rowLesson, customStore);
+
+            let hasNBSpec = poolSpec
+                ? poolSpec.hasNB
+                : /<strong[^>]*>\s*(?:\d+[\.\)]\s*)?(?:nhận biết|biết|- biết)/i.test(specHtml);
+            let hasTHSpec = poolSpec
+                ? poolSpec.hasTH
+                : /<strong[^>]*>\s*(?:\d+[\.\)]\s*)?(?:thông hiểu|hiểu|- hiểu)/i.test(specHtml);
+            let hasVDSpec = poolSpec
+                ? poolSpec.hasVD
+                : /<strong[^>]*>\s*(?:\d+[\.\)]\s*)?(?:vận dụng|- vận dụng)/i.test(specHtml);
+
+            // Nếu dòng không có mảng câu hỏi chi tiết nhưng có cấu hình availableCounts > 0,
+            // cũng giới hạn mức độ YCCĐ theo đúng các mức có số lượng câu hỏi > 0 trong kho câu hỏi của dòng đó
+            const availNBTotal = (mergedAvail.NB?.TN || 0) + (mergedAvail.NB?.TL || 0);
+            const availTHTotal = (mergedAvail.TH?.TN || 0) + (mergedAvail.TH?.TL || 0);
+            const availVDTotal = (mergedAvail.VD?.TN || 0) + (mergedAvail.VD?.TL || 0) + (mergedAvail.VDC?.TN || 0) + (mergedAvail.VDC?.TL || 0);
+            const hasExplicitAvailCounts = !poolSpec && (availNBTotal + availTHTotal + availVDTotal > 0);
+
+            if (hasExplicitAvailCounts) {
+                hasNBSpec = hasNBSpec && availNBTotal > 0;
+                hasTHSpec = hasTHSpec && availTHTotal > 0;
+                hasVDSpec = hasVDSpec && availVDTotal > 0;
+
+                const parsedSecs = parseYccdSections(specHtml).filter(sec => {
+                    const code = getLevelCodeFromTitle(sec.levelTitle);
+                    if (code === 'NB') return availNBTotal > 0;
+                    if (code === 'TH') return availTHTotal > 0;
+                    return availVDTotal > 0;
+                });
+                if (parsedSecs.length > 0) {
+                    specHtml = serializeYccdSections(parsedSecs);
+                }
+            }
+
             if (data.specifications?.rows?.[idx]) {
                 data.specifications.rows[idx][4] = specHtml;
             }
-            const hasNBSpec = /<strong[^>]*>\s*(?:\d+[\.\)]\s*)?(?:nhận biết|biết|- biết)/i.test(specHtml);
-            const hasTHSpec = /<strong[^>]*>\s*(?:\d+[\.\)]\s*)?(?:thông hiểu|hiểu|- hiểu)/i.test(specHtml);
-            const hasVDSpec = /<strong[^>]*>\s*(?:\d+[\.\)]\s*)?(?:vận dụng|- vận dụng)/i.test(specHtml);
 
             return { 
                 idx, 

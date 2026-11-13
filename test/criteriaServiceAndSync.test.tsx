@@ -394,4 +394,139 @@ describe('Criteria Service & Matrix Synchronization', () => {
             if (rowVD > 0) expect(specHtml).toMatch(/Vận dụng/i);
         }
     });
+
+    it('relies on the question pool in the exam (kho câu hỏi trong đề) to determine which YCCĐ and cognitive levels appear in the Specification table and never renders empty placeholders', () => {
+        // Giả lập người dùng từng xóa bản trùng 1.1 của Bài 2 trong localStorage cũ
+        localStorage.setItem(
+            CUSTOM_CRITERIA_STORAGE_KEY,
+            JSON.stringify({
+                '8': {
+                    'Bài 2: Thông tin trong môi trường số': {
+                        __deleted: [
+                            'nêu được các đặc điểm của thông tin số đa dạng được thu thập ngày càng nhanh và nhiều được lưu trữ với dung lượng khổng lồ bởi nhiều tổ chức và cá nhân có tính bản quyền có độ tin cậy rất khác nhau có các công cụ tìm kiếm chuyển đổi truyền và xử lí hiệu quả'
+                        ],
+                        __deletedCodes: ['1.1', 'NB:1.1']
+                    }
+                }
+            })
+        );
+
+        // Kho câu hỏi trong đề:
+        // - Bài 1: có cả câu NB (1.1) và câu TH (2.1)
+        // - Bài 2: chỉ có câu NB (1.1), KHÔNG có câu TH hay VD trong kho câu hỏi của đề
+        // - Bài 3: chỉ có câu TH thuộc YCCĐ 2.1 (không có câu 2.2 và không có câu VD trong đề)
+        const mockFs = {
+            name: 'Thư mục gốc',
+            type: 'folder',
+            children: [
+                {
+                    name: 'Lớp 8 - Kiểm tra định kì',
+                    type: 'folder',
+                    children: [
+                        {
+                            name: 'Sơ lược về lịch sử phát triển máy tính',
+                            type: 'folder',
+                            children: [
+                                {
+                                    name: 'Bài 1.json',
+                                    type: 'file',
+                                    content: {
+                                        info: { grade: '8', lesson: 'Bài 1: Lược sử công cụ tính toán', soTiet: 2 },
+                                        questions: [
+                                            { id: 'b1-nb', level: 'NB', category: 'mc', criteria: '1.1 Trình bày được sơ lược lịch sử phát triển máy tính.' },
+                                            { id: 'b1-th', level: 'TH', category: 'mc', criteria: '2.1 Nêu được ví dụ cho thấy sự phát triển máy tính đã đem đến những thay đổi lớn lao cho xã hội loài người.' }
+                                        ]
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            name: '1. Đặc điểm của thông tin trong môi trường số',
+                            type: 'folder',
+                            children: [
+                                {
+                                    name: 'Bài 2.json',
+                                    type: 'file',
+                                    content: {
+                                        info: { grade: '8', lesson: 'Bài 2: Thông tin trong môi trường số', soTiet: 2 },
+                                        questions: [
+                                            { id: 'b2-nb', level: 'NB', category: 'mc', criteria: '1.1 Nêu được các đặc điểm của thông tin số: đa dạng, được thu thập ngày càng nhanh và nhiều, dung lượng lớn, có bản quyền, độ tin cậy khác nhau, có công cụ tìm kiếm/chuyển đổi/truyền/xử lí hiệu quả.' }
+                                        ]
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            name: '2. Thông tin với giải quyết vấn đề',
+                            type: 'folder',
+                            children: [
+                                {
+                                    name: 'Bài 3.json',
+                                    type: 'file',
+                                    content: {
+                                        info: { grade: '8', lesson: 'Bài 3: Thực hành: Khai thác thông tin số', soTiet: 2 },
+                                        questions: [
+                                            { id: 'b3-th', level: 'TH', category: 'mc', criteria: '2.1 Nêu ví dụ minh hoạ sử dụng công cụ tìm kiếm, xử lí, trao đổi thông tin trong môi trường số.' }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    matrixData: {
+                        matrixFormat: 'new_4part',
+                        matrix: {
+                            rows: [
+                                ['1', 'Chủ đề A', 'Sơ lược về lịch sử phát triển máy tính', 'Bài 1: Lược sử công cụ tính toán', '2', '', '', '', '', '', '', '', '', '33.3', '0'],
+                                ['2', 'Chủ đề C', '1. Đặc điểm của thông tin trong môi trường số', 'Bài 2: Thông tin trong môi trường số', '2', '', '', '', '', '', '', '', '', '33.3', '0'],
+                                ['3', 'Chủ đề C', '2. Thông tin với giải quyết vấn đề', 'Bài 3: Thực hành: Khai thác thông tin số', '2', '', '', '', '', '', '', '', '', '33.3', '0']
+                            ]
+                        },
+                        specifications: {
+                            rows: [
+                                ['1', 'Chủ đề A', 'Sơ lược về lịch sử phát triển máy tính', 'Bài 1: Lược sử công cụ tính toán', '', '0-0', '0-0', '0-0', '0-0'],
+                                ['2', 'Chủ đề C', '1. Đặc điểm của thông tin trong môi trường số', 'Bài 2: Thông tin trong môi trường số', '', '0-0', '0-0', '0-0', '0-0'],
+                                ['3', 'Chủ đề C', '2. Thông tin với giải quyết vấn đề', 'Bài 3: Thực hành: Khai thác thông tin số', '', '0-0', '0-0', '0-0', '0-0']
+                            ]
+                        },
+                        availableCounts: []
+                    }
+                }
+            ]
+        };
+        localStorage.setItem('matrixFileSystem', JSON.stringify(mockFs));
+
+        render(<MatrixBuilder />);
+
+        const folderItem = screen.getByText('Lớp 8 - Kiểm tra định kì');
+        fireEvent.click(folderItem);
+
+        const distBtn = screen.getByText('Phân bổ');
+        fireEvent.click(distBtn);
+
+        const savedFs = JSON.parse(localStorage.getItem('matrixFileSystem') || '{}');
+        const mData = savedFs.children[0].matrixData;
+        const specRows = mData.specifications.rows;
+        const nfRows = mData.newFormatRows;
+
+        // Bài 1 có cả NB và TH trong kho câu hỏi của đề -> Bản đặc tả có cả Nhận biết và Thông hiểu
+        expect(specRows[0][4]).toMatch(/Nhận biết/i);
+        expect(specRows[0][4]).toMatch(/Thông hiểu/i);
+        expect((nfRows[0].mc.B.count || 0) + (nfRows[0].tf.B.count || 0) + (nfRows[0].sa.B.count || 0)).toBeGreaterThanOrEqual(1);
+        expect((nfRows[0].mc.H.count || 0) + (nfRows[0].tf.H.count || 0) + (nfRows[0].sa.H.count || 0)).toBeGreaterThanOrEqual(1);
+
+        // Bài 2 trong kho câu hỏi của đề CHỈ có NB (1.1), không có TH hay VD -> Bản đặc tả chỉ ra Nhận biết, không ra Thông hiểu hay Vận dụng và không bị rỗng!
+        expect(specRows[1][4]).toMatch(/Nhận biết/i);
+        expect(specRows[1][4]).toMatch(/Nêu được các đặc điểm của thông tin số/i);
+        expect(specRows[1][4]).not.toMatch(/Thông hiểu/i);
+        expect(specRows[1][4]).not.toMatch(/Vận dụng/i);
+        expect((nfRows[1].mc.B.count || 0) + (nfRows[1].tf.B.count || 0) + (nfRows[1].sa.B.count || 0)).toBeGreaterThanOrEqual(1);
+        expect((nfRows[1].mc.H.count || 0) + (nfRows[1].tf.H.count || 0) + (nfRows[1].sa.H.count || 0)).toBe(0);
+
+        // Bài 3 trong kho câu hỏi của đề CHỈ có TH (2.1), không có 2.2 và không có VD -> Bản đặc tả chỉ ra 2.1 ở Thông hiểu
+        expect(specRows[2][4]).toMatch(/Thông hiểu/i);
+        expect(specRows[2][4]).toMatch(/Nêu ví dụ minh hoạ sử dụng công cụ tìm kiếm/i);
+        expect(specRows[2][4]).not.toMatch(/Xác định được lợi ích của thông tin tìm được/i);
+        expect(specRows[2][4]).not.toMatch(/Nhận biết/i);
+    });
 });
