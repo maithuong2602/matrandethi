@@ -207,13 +207,20 @@ describe('Criteria Service & Matrix Synchronization', () => {
         const savedFs = JSON.parse(localStorage.getItem('matrixFileSystem') || '{}');
         const rows = savedFs.children[0].matrixData.matrix.rows;
 
-        // First 3 rows (2 tiết, 2 tiết đã KT -> Gợi ý ~5 câu / 1,33đ) must each get 5 or 6 TN questions, NEVER 1!
+        // First 3 rows (2 tiết, 2 tiết đã KT) must each get 4 or 5 TN questions evenly (5 - 5 - 4), NEVER 7 - 6 - 1!
+        let totalExaminedQuestions = 0;
+        let totalExaminedPercent = 0;
         for (let i = 0; i < 3; i++) {
             const nb = parseInt(rows[i][5] || '0', 10);
             const th = parseInt(rows[i][7] || '0', 10);
             const totalRowQ = nb + th;
-            expect(totalRowQ).toBeGreaterThanOrEqual(5);
-            expect(totalRowQ).toBeLessThanOrEqual(6);
+            expect(totalRowQ).toBeGreaterThanOrEqual(4);
+            expect(totalRowQ).toBeLessThanOrEqual(5);
+            totalExaminedQuestions += totalRowQ;
+            totalExaminedPercent += parseFloat(rows[i][13] || '0');
         }
+        // Tổng tỷ lệ % đã kiểm tra cuối kỳ không vượt quá 35% (tối đa 14 câu TN = 3,5đ = 35%)
+        expect(totalExaminedQuestions).toBeLessThanOrEqual(14);
+        expect(totalExaminedPercent).toBeLessThanOrEqual(35.0);
     });
 });

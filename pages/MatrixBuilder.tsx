@@ -512,11 +512,12 @@ const MatrixBuilder: React.FC = () => {
             r.currentScore = (r.allocNB + r.allocTH) * SCORE_TN + (r.allocVD + r.allocVDC) * SCORE_TL;
         };
 
-        // Calculate Target Score for Old Pool (30% - 40%, unified with MatrixView & buildMatrixNotesSummary)
+        // Calculate Target Score for Old Pool (Max 35% for examined lessons in Final Exam, unified with MatrixView & buildMatrixNotesSummary)
         const totalSoTietAll = rows.reduce((s: number, r: any) => s + r.soTiet, 0);
         const totalSoTietExaminedAll = rows.reduce((s: number, r: any) => s + r.soTietExamined, 0);
         const totalSoTietNewAll = rows.reduce((s: number, r: any) => s + r.soTietNew, 0);
         const hasExaminedReduction = totalSoTietExaminedAll > 0 && totalSoTietNewAll > 0;
+        const LIMIT_OLD_SCORE = hasExaminedReduction ? (TOTAL_SCORE * MAX_OLD_PERCENT) : TOTAL_SCORE; // Max 3.5đ (35%)
 
         if (!hasExaminedReduction) {
             // --- PROPORTIONAL TO TOTAL PERIODS ---
@@ -526,9 +527,9 @@ const MatrixBuilder: React.FC = () => {
                 }
             });
         } else {
-            // --- WEIGHTED OLD VS NEW (Giảm tỷ lệ bài đã kiểm tra còn 30% - 40% khớp với gợi ý trên bảng) ---
+            // --- WEIGHTED OLD VS NEW (Tổng tỷ lệ % đã kiểm tra không vượt quá 35%) ---
             const naturalOldPct = (totalSoTietExaminedAll / totalSoTietAll) * 100;
-            const targetOldPct = Math.max(30, Math.min(40, naturalOldPct));
+            const targetOldPct = Math.min(MAX_OLD_PERCENT * 100, naturalOldPct);
             const scoreForOld = TOTAL_SCORE * (targetOldPct / 100);
             const scoreForNew = TOTAL_SCORE - scoreForOld;
 
@@ -614,8 +615,27 @@ const MatrixBuilder: React.FC = () => {
         while ((currentNB < targetNB_TN || currentTH < targetTH_TN) && safetyLoop < 5000) {
             safetyLoop++;
 
-            // Chọn bài đang thiếu hụt nhiều nhất so với targetScore (targetScore - currentScore lớn nhất)
-            let rowCandidates = rows.filter((r: any) => r.soTiet > 0);
+            // Tính tổng điểm hiện tại của cụm bài học đã kiểm tra (không được vượt quá LIMIT_OLD_SCORE = 3.5đ = 35%)
+            const currentTotalOldScore = rows.reduce((sum: number, r: any) => {
+                if (r.isOldLesson) return sum + r.currentScore;
+                if (r.soTietExamined > 0 && r.soTiet > 0) {
+                    return sum + r.currentScore * (r.soTietExamined / r.soTiet);
+                }
+                return sum;
+            }, 0);
+
+            // Chọn bài đang thiếu hụt nhiều nhất so với targetScore và đảm bảo tổng điểm bài đã KT <= 35%
+            let rowCandidates = rows.filter((r: any) => {
+                if (r.soTiet <= 0) return false;
+                if (hasExaminedReduction && r.soTietExamined > 0) {
+                    const addedOldScore = r.isOldLesson ? SCORE_TN : SCORE_TN * (r.soTietExamined / r.soTiet);
+                    if (currentTotalOldScore + addedOldScore > LIMIT_OLD_SCORE + 1e-6) return false;
+                }
+                return true;
+            });
+            if (rowCandidates.length === 0) {
+                rowCandidates = rows.filter((r: any) => r.soTiet > 0);
+            }
             if (rowCandidates.length === 0) break;
 
             rowCandidates.sort((a: any, b: any) => {

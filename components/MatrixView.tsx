@@ -556,7 +556,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
         sumSoTietUnchecked += validNew;
     });
 
-    // Calculate Target Score for Old Pool (Min 30%, Max 40%)
+    // Calculate Target Score for Old Pool (Max 35% for mixed / Final exams)
     let targetPercentOld = 0;
     if (totalSoTietAll > 0) {
         if (sumSoTietChecked > 0 && sumSoTietUnchecked === 0) {
@@ -566,8 +566,8 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
         } else {
             // Natural ratio based purely on periods
             const naturalPercent = (sumSoTietChecked / totalSoTietAll) * 100;
-            // Clamp strictly between 30% and 40% for mixed exams
-            targetPercentOld = Math.max(30, Math.min(40, naturalPercent));
+            // Tổng tỷ lệ % đã kiểm tra không vượt quá 35%
+            targetPercentOld = Math.min(35, naturalPercent);
         }
     }
     const targetPercentNew = 100 - targetPercentOld;
@@ -2407,7 +2407,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
 
                                                             {/* Tỷ lệ % điểm */}
                                                             <td className="bg-emerald-50/30 border border-slate-300 p-1.5 text-center font-bold text-emerald-800">
-                                                                {rowPct > 0 ? `${rowPct.toFixed(0)}%` : '-'}
+                                                                {rowPct > 0 ? `${(rowPct % 1 === 0 ? rowPct.toFixed(0) : rowPct.toFixed(1).replace('.', ','))}%` : '-'}
                                                             </td>
                                                         </tr>
                                                     );
@@ -2805,7 +2805,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
                                         <div>
                                             <span className="font-bold text-orange-800">- Nội dung đã kiểm tra (Giữa kì):</span>{' '}
                                             {notesSummary.totalExaminedPeriods}/{notesSummary.totalPeriods} tiết ({(notesSummary.actualOldPercent || 0).toFixed(1)}% thời lượng)
-                                            {' ➝ '}Giảm tỷ lệ còn <b>{(notesSummary.realizedOldPercent || 0).toFixed(1)}%</b> (mục tiêu {(notesSummary.targetOldPercent || 0).toFixed(0)}%).
+                                            {' ➝ '}Giảm tỷ lệ còn <b className={(notesSummary.realizedOldPercent || 0) > 35.01 ? 'text-red-600' : ''}>{(notesSummary.realizedOldPercent || 0).toFixed(1)}%</b> (mục tiêu ≤ {(notesSummary.targetOldPercent || 0).toFixed(0)}%, tối đa 35%).
                                         </div>
                                         <div>
                                             <span className="font-bold text-emerald-800">- Nội dung mới:</span>{' '}

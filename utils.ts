@@ -951,7 +951,7 @@ export const buildMatrixNotesSummary = (data: MatrixData, examName: string = '')
             targetPercentOldPool = 0;
         } else {
             const naturalOld = (sumSoTietChecked / totalSoTiet) * 100;
-            targetPercentOldPool = Math.max(30, Math.min(40, naturalOld));
+            targetPercentOldPool = Math.min(35, naturalOld);
         }
     }
     const targetPercentNewPool = 100 - targetPercentOldPool;
@@ -1234,7 +1234,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
 
     // Dynamic Weight Logic for Column Calculations (Target %)
     const MIN_CHECKED_RATIO = 0.3; // 30%
-    const MAX_CHECKED_RATIO = 0.4; // 40%
+    const MAX_CHECKED_RATIO = 0.35; // 35%
     let weightChecked = 1.0;
     let weightUnchecked = 1.0;
 
