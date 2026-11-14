@@ -732,6 +732,56 @@ const ExamGenerator: React.FC = () => {
         }));
     };
 
+    const handleAutoDistributeManualConfig = () => {
+        const lessons = Object.keys(availableStats).sort();
+        if (lessons.length === 0) return;
+
+        const nextConfig: Record<string, Record<string, number>> = {};
+        lessons.forEach(l => {
+            nextConfig[l] = { NB: 0, TH: 0, VD: 0, VDC: 0 };
+        });
+
+        // Mục tiêu chuẩn 4 - 3 - 3 (16 Biết : 12 Hiểu : 3 Vận dụng)
+        const levelTargets: Record<'NB' | 'TH' | 'VD', number> = {
+            NB: 16,
+            TH: 12,
+            VD: 3
+        };
+
+        // Chia đều từng mức độ qua các bài học theo nguyên lý Min-Max (ưu tiên bài đang có ít câu ở mức đó nhất, sau đó ít tổng số câu nhất)
+        (['VD', 'TH', 'NB'] as const).forEach(lvl => {
+            let rem = levelTargets[lvl];
+            let guard = 0;
+            while (rem > 0 && guard < 500) {
+                guard++;
+                const candidates = lessons.filter(
+                    l => (availableStats[l]?.[lvl] || 0) > (nextConfig[l]?.[lvl] || 0)
+                );
+                if (candidates.length === 0) break;
+
+                candidates.sort((a, b) => {
+                    const cntLvlA = nextConfig[a][lvl] || 0;
+                    const cntLvlB = nextConfig[b][lvl] || 0;
+                    if (cntLvlA !== cntLvlB) return cntLvlA - cntLvlB;
+
+                    const totalA = (nextConfig[a].NB || 0) + (nextConfig[a].TH || 0) + (nextConfig[a].VD || 0) + (nextConfig[a].VDC || 0);
+                    const totalB = (nextConfig[b].NB || 0) + (nextConfig[b].TH || 0) + (nextConfig[b].VD || 0) + (nextConfig[b].VDC || 0);
+                    if (totalA !== totalB) return totalA - totalB;
+
+                    const availA = (availableStats[a]?.[lvl] || 0) - cntLvlA;
+                    const availB = (availableStats[b]?.[lvl] || 0) - cntLvlB;
+                    return availB - availA;
+                });
+
+                const pick = candidates[0];
+                nextConfig[pick][lvl] = (nextConfig[pick][lvl] || 0) + 1;
+                rem--;
+            }
+        });
+
+        setManualConfig(nextConfig);
+    };
+
     const applyMatrixData = (data: ImportedMatrixData) => {
         setImportedMatrix(data);
         if (data.thongTinChung?.tenDe) {
@@ -1862,7 +1912,20 @@ const ExamGenerator: React.FC = () => {
 
                         {/* Mode 1: Manual Table */}
                         {configMode === 'manual' && (
-                            <div className="overflow-x-auto border rounded-xl mb-5 max-h-[420px] overflow-y-auto">
+                            <div className="mb-5">
+                                <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+                                    <p className="text-xs text-gray-500">
+                                        Nhập số câu cho từng bài hoặc bấm nút tự động chia đều theo tỉ lệ chuẩn 4:3:3 (không dồn quá nhiều câu vào 1 mức độ).
+                                    </p>
+                                    <button
+                                        type="button"
+                                        onClick={handleAutoDistributeManualConfig}
+                                        className="px-3 py-1.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-bold hover:bg-indigo-100 flex items-center gap-1.5 transition-all cursor-pointer"
+                                    >
+                                        <Sparkles size={13} /> Phân bổ đều tự động (4:3:3)
+                                    </button>
+                                </div>
+                                <div className="overflow-x-auto border rounded-xl max-h-[420px] overflow-y-auto">
                                 <table className="w-full border-collapse">
                                     <thead className="sticky top-0 z-10">
                                         <tr className="bg-gray-50 text-gray-700 text-xs">
@@ -1901,6 +1964,7 @@ const ExamGenerator: React.FC = () => {
                                         })}
                                     </tbody>
                                 </table>
+                                </div>
                             </div>
                         )}
 

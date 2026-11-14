@@ -393,6 +393,15 @@ describe('Criteria Service & Matrix Synchronization', () => {
                 expect(rowB).toBeGreaterThanOrEqual(1);
             }
 
+            // Phân bổ đều giữa các mức độ: Không bài nào bị dồn quá 4 câu vào 1 mức độ đơn lẻ (không bao giờ có 5, 6, 7 câu ở 1 mức độ)
+            expect(rowB).toBeLessThanOrEqual(4);
+            expect(rowH).toBeLessThanOrEqual(4);
+            // Phân bổ đều giữa Nhiều lựa chọn và Đúng-Sai trong cùng dòng & mức độ (mỗi ô <= 2 câu)
+            expect(nf.mc.B.count).toBeLessThanOrEqual(2);
+            expect(nf.tf.B.count).toBeLessThanOrEqual(2);
+            expect(nf.mc.H.count).toBeLessThanOrEqual(2);
+            expect(nf.tf.H.count).toBeLessThanOrEqual(2);
+
             if (rowB > 0) expect(specHtml).toMatch(/Nhận biết/i);
             if (rowH > 0) expect(specHtml).toMatch(/Thông hiểu/i);
             if (rowVD > 0) expect(specHtml).toMatch(/Vận dụng/i);
@@ -821,9 +830,20 @@ describe('Criteria Service & Matrix Synchronization', () => {
         expect((nfRows[2].mc.B.count || 0) + (nfRows[2].tf.B.count || 0)).toBe(0);
         expect((nfRows[3].mc.B.count || 0) + (nfRows[3].tf.B.count || 0)).toBe(0);
 
-        // Bài 12 và Bài 13 có cả Biết và Hiểu trên Bản đặc tả
+        // Bài 12 và Bài 13 có cả Biết và Hiểu trên Bản đặc tả, và không bài nào bị dồn quá 4 câu vào 1 mức độ
         expect(specRows[4][4]).toMatch(/Nhận biết/i);
         expect(specRows[5][4]).toMatch(/Nhận biết/i);
+        for (let i = 0; i < 7; i++) {
+            const r = nfRows[i];
+            const rowB = (r.mc.B.count || 0) + (r.tf.B.count || 0) + (r.sa.B.count || 0) + (r.essay.B.count || 0);
+            const rowH = (r.mc.H.count || 0) + (r.tf.H.count || 0) + (r.sa.H.count || 0) + (r.essay.H.count || 0);
+            expect(rowB).toBeLessThanOrEqual(4);
+            expect(rowH).toBeLessThanOrEqual(4);
+            expect(r.mc.B.count).toBeLessThanOrEqual(2);
+            expect(r.tf.B.count).toBeLessThanOrEqual(2);
+            expect(r.mc.H.count).toBeLessThanOrEqual(2);
+            expect(r.tf.H.count).toBeLessThanOrEqual(2);
+        }
     });
 
     it('deduplicates semantically identical Vietnamese YCCĐ between CURRICULUM and REQUIREMENTS_DATA and never resurrects deleted criteria', () => {

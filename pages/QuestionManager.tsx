@@ -1179,30 +1179,42 @@ const QuestionManager: React.FC = () => {
           'essay': 'Tự luận (Đủ 4 ý a, b, c, d kèm Hướng dẫn chấm dạng bảng chi tiết)'
       };
 
-      const targetLevels = genLevel === 'ALL' ? ['NB', 'TH', 'VD', 'VDC'] : [genLevel];
+      const activeLessonLevels = (['NB', 'TH', 'VD', 'VDC'] as const).filter(l => getCriteriaOptionsForLevel(l).length > 0);
+      const targetLevels = genLevel === 'ALL'
+          ? (activeLessonLevels.length > 0 ? activeLessonLevels : ['NB', 'TH', 'VD'])
+          : [genLevel];
+      const firstActiveLevel = targetLevels[0] || 'NB';
+
       let criteriaBlock = '';
       if (genCriteriaCode) {
-          const list = getCriteriaOptionsForLevel(genLevel === 'ALL' ? 'NB' : genLevel);
+          const list = getCriteriaOptionsForLevel(genLevel === 'ALL' ? firstActiveLevel : genLevel);
           const found = list.find(c => c.startsWith(genCriteriaCode)) || genCriteriaCode;
-          criteriaBlock = `- Tiêu chí (Yêu cầu cần đạt) trọng tâm cần bám sát: [${genLevel === 'ALL' ? 'NB' : genLevel} - ${genCriteriaCode}] ${found}`;
+          criteriaBlock = `- Tiêu chí (Yêu cầu cần đạt) trọng tâm cần bám sát: [${genLevel === 'ALL' ? firstActiveLevel : genLevel} - ${genCriteriaCode}] ${found}`;
       } else {
           const lines: string[] = [];
-          targetLevels.forEach(lvl => {
+          targetLevels.forEach((lvl, idx) => {
               const opts = getCriteriaOptionsForLevel(lvl);
+              const basePerLvl = Math.floor(genQuantity / targetLevels.length);
+              const extra = idx < (genQuantity % targetLevels.length) ? 1 : 0;
+              const quotaForLvl = genLevel === 'ALL' ? ` (Phân bổ đều: ${basePerLvl + extra} câu)` : '';
               opts.forEach(c => {
                   const code = c.split(' ')[0];
-                  lines.push(`  + [${lvl} - ${code}] ${c}`);
+                  lines.push(`  + [${lvl} - ${code}] ${c}${quotaForLvl}`);
               });
           });
           if (lines.length > 0) {
-              criteriaBlock = `- Danh sách Yêu cầu cần đạt (Tiêu chí) của bài học (hãy gắn đúng mã này vào đầu mỗi câu hỏi):\n${lines.join('\n')}`;
+              const evenNote = genLevel === 'ALL' && targetLevels.length > 1
+                  ? `\n- YÊU CẦU CÂN BẰNG MỨC ĐỘ: Phân bổ ĐỀU ${genQuantity} câu hỏi qua tất cả các mức độ hiện có (${targetLevels.join(', ')}), tuyệt đối KHÔNG dồn quá nhiều câu vào 1 mức độ duy nhất.`
+                  : '';
+              criteriaBlock = `- Danh sách Yêu cầu cần đạt (Tiêu chí) của bài học (hãy gắn đúng mã này vào đầu mỗi câu hỏi):\n${lines.join('\n')}${evenNote}`;
           }
       }
 
       let formatExample = '';
+      const defaultFirstCode = getCriteriaOptionsForLevel(firstActiveLevel)[0]?.split(' ')[0] || '1.1';
       const tagSample = genCriteriaCode
-          ? `[${genLevel === 'ALL' ? 'NB' : genLevel} - ${genCriteriaCode}]`
-          : `[${genLevel === 'ALL' ? 'NB' : genLevel} - 1.1]`;
+          ? `[${genLevel === 'ALL' ? firstActiveLevel : genLevel} - ${genCriteriaCode}]`
+          : `[${genLevel === 'ALL' ? firstActiveLevel : genLevel} - ${defaultFirstCode}]`;
 
       if (genType === 'true-false') {
           formatExample = `Tình huống 1: ${tagSample} [Mô tả tình huống cụ thể khai thác trực tiếp từ tài liệu nguồn đính kèm, đủ thông tin để học sinh phân tích.]
@@ -1274,14 +1286,68 @@ ${formatExample}`;
           setAlertMessage("Vui lòng chọn Khối và Bài học trước.");
           return;
       }
-      
-      const effectiveLevel = genLevel === 'ALL' ? 'NB' : genLevel;
+
+      // Xác định danh sách mức độ hợp lệ của bài học để phân bổ đều khi chọn "Tất cả mức độ (ALL)"
+      const validLevelsForLesson = (['NB', 'TH', 'VD', 'VDC'] as const).filter(
+          lvl => getCriteriaOptionsForLevel(lvl).length > 0
+      );
+      const candidateLevels: string[] = genLevel === 'ALL'
+          ? (validLevelsForLesson.length > 0 ? [...validLevelsForLesson] : ['NB', 'TH', 'VD'])
+          : [genLevel];
+
+      // Sắp xếp ưu tiên mức độ đang có ít câu hỏi nhất trong bài học lên trước để cân bằng kho câu hỏi
+      const existingCountByLevel: Record<string, number> = { NB: 0, TH: 0, VD: 0, VDC: 0 };
+      filteredQuestions.forEach(q => {
+          existingCountByLevel[q.level] = (existingCountByLevel[q.level] || 0) + 1;
+      });
+      const pickBalancedLevelForNextQuestion = (): { level: string; critCode: string; critText: string } => {
+          const sortedLvls = [...candidateLevels].sort(
+              (a, b) => (existingCountByLevel[a] || 0) - (existingCountByLevel[b] || 0)
+          );
+          const chosenLvl = sortedLvls[0] || 'NB';
+          existingCountByLevel[chosenLvl] = (existingCountByLevel[chosenLvl] || 0) + 1;
+          const opts = getCriteriaOptionsForLevel(chosenLvl);
+          const chosenCritFull = opts.length > 0
+              ? opts[(existingCountByLevel[chosenLvl] - 1) % opts.length]
+              : '';
+          const chosenCritCode = genCriteriaCode || (chosenCritFull ? chosenCritFull.split(' ')[0] : '');
+          return {
+              level: chosenLvl,
+              critCode: chosenCritCode,
+              critText: chosenCritFull || lesson
+          };
+      };
+
+      const effectiveLevel = candidateLevels[0] || 'NB';
       let criteriaText = lesson;
       if (currentCriteriaData && genCriteriaCode) {
           const list = getCriteriaOptionsForLevel(effectiveLevel);
           const found = list?.find(c => c.startsWith(genCriteriaCode));
           if (found) criteriaText = found;
       }
+
+      const distributeFallbackEvenly = (): ExerciseQuestion[] => {
+          const generatedAll: ExerciseQuestion[] = [];
+          for (let i = 0; i < genQuantity; i++) {
+              const slot = pickBalancedLevelForNextQuestion();
+              const oneBatch = generateOfflineQuestions(
+                  grade || '7',
+                  lesson || 'Tin học',
+                  slot.level,
+                  slot.critText,
+                  1,
+                  genType
+              );
+              oneBatch.forEach(fq => {
+                  generatedAll.push({
+                      ...fq,
+                      level: slot.level as any,
+                      criteria: slot.critCode || fq.criteria
+                  });
+              });
+          }
+          return generatedAll;
+      };
 
       setIsGenerating(true);
       try {
@@ -1297,6 +1363,10 @@ ${formatExample}`;
           
           if (results && results.length > 0) {
               const newQuestions: ExerciseQuestion[] = results.map((q: any) => {
+                  const balancedSlot = pickBalancedLevelForNextQuestion();
+                  const assignedLevel = genLevel === 'ALL'
+                      ? (q.level && candidateLevels.includes(q.level) ? q.level : balancedSlot.level)
+                      : effectiveLevel;
                   const category = (q.category === 'essay' || genType === 'essay') ? 'essay' : 'mc';
                   let mcType: any = 'multiple-choice';
                   if (genType === 'fill-blank') mcType = 'fill-blank';
@@ -1337,13 +1407,13 @@ ${formatExample}`;
                       ? options.map((o: any) => `${o.id}-${o.isCorrect ? 'Đ' : 'S'}`).join(', ')
                       : options?.filter((o: any) => o.isCorrect).map((o: any) => o.id).join(', ');
 
-                  const defaultCrit = getCriteriaOptionsForLevel(effectiveLevel)[0]?.split(' ')[0] || '';
+                  const defaultCrit = getCriteriaOptionsForLevel(assignedLevel)[0]?.split(' ')[0] || balancedSlot.critCode || '';
                   const userCanApprove = canApproveExam(currentUser);
                   const targetScope: BankScope = (bankScopeFilter === 'shared' || bankScopeFilter === 'all') && userCanApprove ? 'shared' : 'personal';
                   return {
                     id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
                     category: category,
-                    level: effectiveLevel as any,
+                    level: assignedLevel as any,
                     criteria: genCriteriaCode || defaultCrit,
                     content: q.content || 'Câu hỏi tự động',
                     grade: grade || '',
@@ -1379,22 +1449,22 @@ ${formatExample}`;
                   setAlertMessage(`AI đã tạo ${skippedCount} câu hỏi nhưng tất cả đều trùng hoặc gần giống (>90%) với câu hỏi hiện có.`);
               } else {
                   setQuestions(prev => [...prev, ...uniqueQuestions]);
-                  const msg = `Đã tạo: ${uniqueQuestions.length} câu hỏi.`;
+                  const msg = `Đã tạo: ${uniqueQuestions.length} câu hỏi (phân bổ đều các mức độ).`;
                   const skipMsg = skippedCount > 0 ? ` (Bỏ qua ${skippedCount} câu trùng).` : '';
                   setAlertMessage(msg + skipMsg);
                   setIsGenModalOpen(false);
               }
           } else {
-              const fallbackResults = generateOfflineQuestions(grade || '7', lesson || 'Tin học', effectiveLevel, criteriaText, genQuantity, genType);
+              const fallbackResults = distributeFallbackEvenly();
               setQuestions(prev => [...prev, ...fallbackResults]);
-              setAlertMessage(`Đã tạo thành công ${fallbackResults.length} câu hỏi chuẩn xác (Kích hoạt Bộ sinh Dự phòng GDPT 2018).`);
+              setAlertMessage(`Đã tạo thành công ${fallbackResults.length} câu hỏi phân bổ đều theo các mức độ YCCĐ (Kích hoạt Bộ sinh Dự phòng GDPT 2018).`);
               setIsGenModalOpen(false);
           }
       } catch (error) {
           try {
-              const fallbackResults = generateOfflineQuestions(grade || '7', lesson || 'Tin học', effectiveLevel, criteriaText, genQuantity, genType);
+              const fallbackResults = distributeFallbackEvenly();
               setQuestions(prev => [...prev, ...fallbackResults]);
-              setAlertMessage(`Đã tạo thành công ${fallbackResults.length} câu hỏi chuẩn xác (Kích hoạt Bộ sinh Dự phòng GDPT 2018).`);
+              setAlertMessage(`Đã tạo thành công ${fallbackResults.length} câu hỏi phân bổ đều theo các mức độ YCCĐ (Kích hoạt Bộ sinh Dự phòng GDPT 2018).`);
               setIsGenModalOpen(false);
           } catch (e) {
               setAlertMessage("Lỗi xử lý câu hỏi: " + (error as Error).message);
