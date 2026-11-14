@@ -570,16 +570,6 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
         onUpdateMatrix(newData);
     };
 
-    useEffect(() => {
-        if (data?.specifications?.rows) {
-            try {
-                syncCriteriaFromMatrixData(data, examName);
-            } catch (e) {
-                console.error('Failed initial criteria sync:', e);
-            }
-        }
-    }, [data, examName]);
-
     const getRowPointsTL = (rIdx: number) => {
         return rowEssayPoints[rIdx] ?? pointsTL;
     };

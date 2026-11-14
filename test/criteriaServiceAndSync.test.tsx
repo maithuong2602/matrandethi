@@ -5,6 +5,8 @@ import {
   parseYccdHtmlToCriteria, 
   getMergedCriteria, 
   addCustomCriterion, 
+  deleteCustomCriterion,
+  areCriteriaSemanticallySame,
   syncCriteriaFromMatrixData,
   CUSTOM_CRITERIA_STORAGE_KEY 
 } from '../services/criteriaService';
@@ -820,5 +822,42 @@ describe('Criteria Service & Matrix Synchronization', () => {
         // Bài 12 và Bài 13 có cả Biết và Hiểu trên Bản đặc tả
         expect(specRows[4][4]).toMatch(/Nhận biết/i);
         expect(specRows[5][4]).toMatch(/Nhận biết/i);
+    });
+
+    it('deduplicates semantically identical Vietnamese YCCĐ between CURRICULUM and REQUIREMENTS_DATA and never resurrects deleted criteria', () => {
+        const currNB =
+            '1.1 Nêu được các đặc điểm của thông tin số: đa dạng, được thu thập ngày càng nhanh và nhiều, dung lượng lớn, có bản quyền, độ tin cậy khác nhau, có công cụ tìm kiếm/chuyển đổi/truyền/xử lí hiệu quả.';
+        const reqNB =
+            'Nêu được các đặc điểm của thông tin số: đa dạng, được thu thập ngày càng nhanh và nhiều, được lưu trữ với dung lượng khổng lồ bởi nhiều tổ chức và cá nhân, có tính bản quyền, có độ tin cậy rất khác nhau, có các công cụ tìm kiếm, chuyển đổi, truyền và xử lí hiệu quả.';
+
+        expect(areCriteriaSemanticallySame(currNB, reqNB)).toBe(true);
+
+        // Giả lập localStorage từng bị lưu cả 2 bản Nhận biết trùng nhau trong Bài 2 Khối 8
+        localStorage.setItem(
+            CUSTOM_CRITERIA_STORAGE_KEY,
+            JSON.stringify({
+                '8': {
+                    'Bài 2: Thông tin trong môi trường số': {
+                        NB: [currNB, `1.2 ${reqNB}`]
+                    }
+                }
+            })
+        );
+
+        const mergedBefore = getMergedCriteria('8', 'Bài 2: Thông tin trong môi trường số');
+        expect(mergedBefore?.NB?.length).toBe(1);
+        expect(mergedBefore?.NB?.[0]).toContain('dung lượng lớn');
+
+        // Khi người dùng xóa mục Thông hiểu (2.2), nó phải bị xóa vĩnh viễn và không bao giờ tự hồi sinh
+        deleteCustomCriterion(
+            '8',
+            'Bài 2: Thông tin trong môi trường số',
+            'TH',
+            '2.2 Trình bày được tầm quan trọng của việc biết khai thác các nguồn thông tin đáng tin cậy, có ví dụ minh hoạ.'
+        );
+
+        const mergedAfterDeleteTH = getMergedCriteria('8', 'Bài 2: Thông tin trong môi trường số');
+        expect(mergedAfterDeleteTH?.NB?.length).toBe(1);
+        expect(mergedAfterDeleteTH?.TH).toBeUndefined();
     });
 });

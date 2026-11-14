@@ -46,29 +46,29 @@ export const areCriteriaSemanticallySame = (a: string, b: string): boolean => {
 
     const canonicalize = (s: string) =>
         s
-            .replace(/\bđược lưu trữ với dung lượng khổng lồ bởi nhiều tổ chức và cá nhân\b/g, 'dung lượng lớn')
-            .replace(/\bcó tính bản quyền\b/g, 'có bản quyền')
-            .replace(/\bcó độ tin cậy rất khác nhau\b/g, 'độ tin cậy khác nhau')
-            .replace(/\bcó các công cụ tìm kiếm\b/g, 'có công cụ tìm kiếm')
-            .replace(/\bvà xử lí hiệu quả\b/g, 'xử lí hiệu quả')
-            .replace(/\bthông qua\b/g, 'qua')
-            .replace(/\bnhiệm vụ học tập\b/g, 'nhiệm vụ')
-            .replace(/\btìm kiếm được\b/g, 'tìm kiếm')
-            .replace(/\bsử dụng được\b/g, 'sử dụng')
-            .replace(/\bthực hiện được\b/g, 'thực hiện')
-            .replace(/\bgiải thích được\b/g, 'giải thích')
-            .replace(/\bnêu được ví dụ minh hoạ\b/g, 'nêu ví dụ minh hoạ')
-            .replace(/\bcó ví dụ minh hoạ\b/g, 'nêu ví dụ minh hoạ')
-            .replace(/\bnêu được\b/g, 'nêu')
-            .replace(/\btrình bày được\b/g, 'trình bày')
-            .replace(/\bnhận biết được\b/g, 'nhận biết')
-            .replace(/\bbiết được\b/g, 'biết')
-            .replace(/\bxác định được\b/g, 'xác định')
-            .replace(/\bmô tả được\b/g, 'mô tả')
-            .replace(/\bthể hiện được\b/g, 'thể hiện')
-            .replace(/\blựa chọn được\b/g, 'lựa chọn')
-            .replace(/\bsao chép được\b/g, 'sao chép')
-            .replace(/\btạo được\b/g, 'tạo')
+            .replace(/được lưu trữ với dung lượng khổng lồ bởi nhiều tổ chức và cá nhân/g, 'dung lượng lớn')
+            .replace(/có tính bản quyền/g, 'có bản quyền')
+            .replace(/có độ tin cậy rất khác nhau/g, 'độ tin cậy khác nhau')
+            .replace(/có các công cụ tìm kiếm/g, 'có công cụ tìm kiếm')
+            .replace(/và xử lí hiệu quả/g, 'xử lí hiệu quả')
+            .replace(/thông qua/g, 'qua')
+            .replace(/nhiệm vụ học tập/g, 'nhiệm vụ')
+            .replace(/tìm kiếm được/g, 'tìm kiếm')
+            .replace(/sử dụng được/g, 'sử dụng')
+            .replace(/thực hiện được/g, 'thực hiện')
+            .replace(/giải thích được/g, 'giải thích')
+            .replace(/nêu được ví dụ minh hoạ/g, 'nêu ví dụ minh hoạ')
+            .replace(/có ví dụ minh hoạ/g, 'nêu ví dụ minh hoạ')
+            .replace(/nêu được/g, 'nêu')
+            .replace(/trình bày được/g, 'trình bày')
+            .replace(/nhận biết được/g, 'nhận biết')
+            .replace(/biết được/g, 'biết')
+            .replace(/xác định được/g, 'xác định')
+            .replace(/mô tả được/g, 'mô tả')
+            .replace(/thể hiện được/g, 'thể hiện')
+            .replace(/lựa chọn được/g, 'lựa chọn')
+            .replace(/sao chép được/g, 'sao chép')
+            .replace(/tạo được/g, 'tạo')
             .replace(/\s+/g, ' ')
             .trim();
 
@@ -76,6 +76,7 @@ export const areCriteriaSemanticallySame = (a: string, b: string): boolean => {
     const cb = canonicalize(nb);
     if (ca === cb) return true;
     if (ca.length > 15 && cb.length > 15 && (ca.includes(cb) || cb.includes(ca))) return true;
+    if (ca.length >= 35 && cb.length >= 35 && ca.slice(0, 35) === cb.slice(0, 35)) return true;
     return false;
 };
 
@@ -565,37 +566,59 @@ const sanitizeLoadedCriteriaStore = (store: GradeCriteriaMap): void => {
         for (const [lessonKey, entry] of Object.entries(gradeMap)) {
             if (!entry || typeof entry !== 'object') continue;
 
-            // 1. Loại bỏ các chuỗi YCCĐ giả lập từng bị lưu trong __deleted hoặc danh sách mức độ
-            //    đồng thời khôi phục nếu mục 1.1 của Bài 2 Khối 8 từng bị xóa do lỗi trùng lặp 2 bản từ REQUIREMENTS_DATA cũ
-            const lessonNum = extractLessonNumber(lessonKey);
+            const canonicalLesson = resolveCanonicalLessonName(g, lessonKey);
+            const baseMap = baseForGrade[canonicalLesson];
+            const entryAny = entry as any;
+            const replacementsMap: Record<string, string> =
+                entryAny.__replacements && typeof entryAny.__replacements === 'object' ? entryAny.__replacements : {};
+
+            // 1. Loại bỏ các chuỗi YCCĐ giả lập từng bị lưu trong __deleted,
+            //    hoặc bản trùng từ REQUIREMENTS_DATA cũ ("được lưu trữ với dung lượng khổng lồ") mà người dùng từng xóa để khử trùng lặp,
+            //    đồng thời khử trùng lặp trong __deleted
             if (Array.isArray(entry.__deleted)) {
-                entry.__deleted = entry.__deleted.filter(d => {
-                    if (isFakePlaceholderCriterion(d)) return false;
-                    if (g === '8' && lessonNum === '2' && normalizeCriterionText(d).startsWith('nêu được các đặc điểm của thông tin số')) {
-                        return false;
+                const dedupedDeleted: string[] = [];
+                entry.__deleted.forEach(d => {
+                    if (!d || isFakePlaceholderCriterion(d)) return;
+                    const normD = normalizeCriterionText(d);
+                    if (!normD) return;
+                    if (normD.includes('được lưu trữ với dung lượng khổng lồ')) return;
+                    if (!dedupedDeleted.some(ex => ex === normD || areCriteriaSemanticallySame(ex, normD))) {
+                        dedupedDeleted.push(normD);
                     }
-                    return true;
                 });
+                entry.__deleted = dedupedDeleted;
             }
+
+            const deletedList: string[] = Array.isArray(entry.__deleted) ? entry.__deleted : [];
+
+            // 2. Khử trùng lặp ngữ nghĩa (giữa CURRICULUM và REQUIREMENTS_DATA cũ) và lọc bỏ các mục đã nằm trong __deleted
             for (const [lvl, list] of Object.entries(entry)) {
                 if (lvl.startsWith('__') || !Array.isArray(list)) continue;
+                const baseForLvl = baseMap?.[lvl] || [];
                 const deduped: string[] = [];
                 list.forEach(it => {
-                    if (isFakePlaceholderCriterion(it)) return;
-                    if (!deduped.some(ex => areCriteriaSemanticallySame(ex, it))) {
-                        deduped.push(it);
+                    if (!it || isFakePlaceholderCriterion(it)) return;
+                    const normIt = normalizeCriterionText(it);
+                    if (deletedList.some(d => d === normIt || areCriteriaSemanticallySame(d, it))) return;
+
+                    // Nếu mục này tương đương ngữ nghĩa với một YCCĐ gốc trong CURRICULUM (và không phải bản sửa đổi chủ đích trong __replacements),
+                    // chuẩn hóa về đúng văn bản chuẩn của CURRICULUM để không bao giờ sinh ra 2 bản trùng lặp
+                    const matchedBase = baseForLvl.find(b => areCriteriaSemanticallySame(b, it));
+                    const isCustomReplaced = Object.values(replacementsMap).some(
+                        rv => normalizeCriterionText(rv) === normIt
+                    );
+                    const canonicalItem = matchedBase && !isCustomReplaced ? matchedBase : it;
+
+                    if (!deduped.some(ex => areCriteriaSemanticallySame(ex, canonicalItem))) {
+                        deduped.push(canonicalItem);
                     }
                 });
                 entry[lvl] = deduped;
             }
 
-            // 2. Làm sạch __deletedCodes: Nếu bài học thuộc CURRICULUM.criteriaData, chỉ giữ mã code trong __deletedCodes
+            // 3. Làm sạch __deletedCodes: Nếu bài học thuộc CURRICULUM.criteriaData, chỉ giữ mã code trong __deletedCodes
             // khi nội dung YCCĐ ứng với mã đó trong CURRICULUM thực sự nằm trong __deleted
-            const canonicalLesson = resolveCanonicalLessonName(g, lessonKey);
-            const baseMap = baseForGrade[canonicalLesson];
-            const entryAny = entry as any;
             if (baseMap && Array.isArray(entryAny.__deletedCodes)) {
-                const deletedList: string[] = Array.isArray(entry.__deleted) ? entry.__deleted : [];
                 entryAny.__deletedCodes = entryAny.__deletedCodes.filter((rawCode: string) => {
                     const pureCode = String(rawCode).includes(':') ? String(rawCode).split(':')[1] : String(rawCode);
                     const baseItemWithCode = Object.values(baseMap)
@@ -605,23 +628,6 @@ const sanitizeLoadedCriteriaStore = (store: GradeCriteriaMap): void => {
                     const normBase = normalizeCriterionText(baseItemWithCode);
                     return deletedList.some(d => d === normBase || areCriteriaSemanticallySame(d, baseItemWithCode));
                 });
-            }
-
-            // 3. Nếu toàn bộ YCCĐ gốc của một bài trong CURRICULUM đều bị đánh dấu xóa khiến bài học không còn bất kỳ YCCĐ nào,
-            //    khôi phục lại YCCĐ gốc để không bao giờ xuất hiện bài học rỗng hoàn toàn (...)
-            if (baseMap && Array.isArray(entry.__deleted) && entry.__deleted.length > 0) {
-                const allBaseItems = Object.values(baseMap).flat();
-                const allCustomActive = Object.entries(entry)
-                    .filter(([k]) => !k.startsWith('__'))
-                    .flatMap(([, v]) => (Array.isArray(v) ? v : []))
-                    .filter(it => !entry.__deleted!.some(d => d === normalizeCriterionText(it) || areCriteriaSemanticallySame(d, it)));
-                const anyBaseSurvives = allBaseItems.some(
-                    b => !entry.__deleted!.some(d => d === normalizeCriterionText(b) || areCriteriaSemanticallySame(d, b))
-                );
-                if (!anyBaseSurvives && allCustomActive.length === 0) {
-                    entry.__deleted = [];
-                    entryAny.__deletedCodes = [];
-                }
             }
         }
     }
@@ -642,18 +648,16 @@ export const loadCustomCriteriaStore = (): GradeCriteriaMap => {
         const store: GradeCriteriaMap = raw ? JSON.parse(raw) : {};
         sanitizeLoadedCriteriaStore(store);
 
-        try {
-            if (mfsRaw) {
-                const fs = JSON.parse(mfsRaw);
-                harvestCriteriaFromFileSystem(fs, store);
+        const sanitizedJson = JSON.stringify(store);
+        if (raw && sanitizedJson !== raw) {
+            try {
+                localStorage.setItem(CUSTOM_CRITERIA_STORAGE_KEY, sanitizedJson);
+            } catch (e) {
+                // ignore storage write error during read
             }
-        } catch (e) {
-            console.error('Error scanning matrixFileSystem for criteria:', e);
         }
 
-        sanitizeLoadedCriteriaStore(store);
-
-        _lastRawCustomStr = raw;
+        _lastRawCustomStr = localStorage.getItem(CUSTOM_CRITERIA_STORAGE_KEY);
         _lastMfsRawStr = mfsRaw;
         _cachedCustomStore = store;
         return store;
@@ -1612,10 +1616,6 @@ export const getMergedCriteria = (
             return `${newCode} ${clean}`;
         });
     });
-
-    if (Object.keys(merged).length === 0 && baseCriteria) {
-        return { ...baseCriteria };
-    }
 
     return Object.keys(merged).length > 0 ? merged : null;
 };
