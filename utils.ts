@@ -1171,7 +1171,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
         <style>
             @page SectionMatrix {
                 size: 29.7cm 21cm;
-                margin: 1.5cm 2cm 1.5cm 2cm;
+                margin: 1.2cm 1.5cm 1.2cm 1.5cm;
                 mso-page-orientation: landscape;
             }
             div.SectionMatrix {
@@ -1180,19 +1180,41 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             body { 
                 font-family: 'Times New Roman', Times, serif; 
                 font-size: 11pt; 
+                line-height: 1.1;
+            }
+            p.MsoNormal, li.MsoNormal, div.MsoNormal, p, div {
+                mso-style-unhide: no;
+                mso-style-qformat: yes;
+                mso-style-parent: "";
+                margin: 0pt;
+                margin-bottom: .0001pt;
+                mso-margin-top-alt: 0pt;
+                mso-margin-bottom-alt: 0pt;
+                mso-para-margin-top: 0cm;
+                mso-para-margin-right: 0cm;
+                mso-para-margin-bottom: 0cm;
+                mso-para-margin-left: 0cm;
+                mso-para-margin-bottom: .0001pt;
+                mso-add-space: auto;
+                line-height: 1.1;
+                mso-pagination: widow-orphan;
             }
             table { 
                 width: 100%; 
                 border-collapse: collapse; 
                 table-layout: fixed; 
-                margin-bottom: 20px;
+                margin-bottom: 10pt;
+                mso-table-lspace: 0pt;
+                mso-table-rspace: 0pt;
+                mso-padding-alt: 1.5pt 2pt 1.5pt 2pt;
             }
             caption, .table-caption { 
                 font-size: 13pt; 
                 font-weight: bold; 
-                margin: 12pt 0 6pt 0; 
+                margin: 6pt 0 4pt 0; 
                 text-align: center; 
                 text-transform: uppercase; 
+                line-height: 1.15;
                 page-break-after: avoid;
             }
             tr {
@@ -1200,10 +1222,25 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             }
             th, td { 
                 border: 1px solid windowtext;
-                padding: 4px; 
+                padding: 1.5pt 2pt; 
                 text-align: center; 
                 vertical-align: middle; 
                 word-wrap: break-word; 
+                line-height: 1.1;
+                mso-para-margin-top: 0cm;
+                mso-para-margin-right: 0cm;
+                mso-para-margin-bottom: 0cm;
+                mso-para-margin-left: 0cm;
+                mso-para-margin-bottom: .0001pt;
+            }
+            th p, td p, th div, td div {
+                margin: 0pt;
+                margin-bottom: .0001pt;
+                mso-margin-top-alt: 0pt;
+                mso-margin-bottom-alt: 0pt;
+                mso-para-margin: 0cm;
+                mso-para-margin-bottom: .0001pt;
+                line-height: 1.1;
             }
             th { 
                 font-weight: bold; 
@@ -2053,7 +2090,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 specSubRows.forEach((sr, srIdx) => {
                     const levelPosList = subPosByLevel[sr.levelKey] || [];
                     const posHtml = levelPosList.length > 0
-                        ? `<div style="margin-top: 3px; font-size: 10.5pt; color: #0056b3;"><i>* Vị trí câu hỏi: ${levelPosList.join('; ')}</i></div>`
+                        ? `<p style="margin: 1pt 0pt 0pt 0pt; line-height: 1.1; font-size: 10.5pt; color: #0056b3; text-align: left;"><i>* Vị trí câu hỏi: ${levelPosList.join('; ')}</i></p>`
                         : '';
 
                     newSpecBody += '<tr style="page-break-inside: avoid;">';
@@ -2066,8 +2103,13 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                     if (srIdx === 0) {
                         newSpecBody += `<td class="text-left-top" style="text-align: left; vertical-align: top;" rowspan="${subSpecSpan}">${subTopic}</td>`;
                     }
-                    const itemsHtml = sr.items.map(it => `<div>${it}</div>`).join('');
-                    newSpecBody += `<td class="text-left-top" style="text-align: left; vertical-align: top;"><div><b>${sr.title}</b></div>${itemsHtml}${posHtml}</td>`;
+                    const itemsHtml = sr.items
+                        .map(it => {
+                            const cleaned = it.replace(/^<\/?(div|p)[^>]*>|<\/?(div|p)>$/gi, '').trim();
+                            return `<p style="margin: 0pt; line-height: 1.1; text-align: left;">${cleaned}</p>`;
+                        })
+                        .join('');
+                    newSpecBody += `<td class="text-left-top" style="text-align: left; vertical-align: top;"><p style="margin: 0pt; line-height: 1.1; text-align: left;"><b>${sr.title}</b></p>${itemsHtml}${posHtml}</td>`;
 
                     activeParts.forEach(pKey => {
                         (['B', 'H', 'VD'] as const).forEach(lKey => {
@@ -2079,7 +2121,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                                 nl = agg[pKey][lKey].competency || defaultNL;
                             }
 
-                            newSpecBody += `<td>${c > 0 ? `<div>(${c})</div><div>(${nl})</div>` : ''}</td>`;
+                            newSpecBody += `<td>${c > 0 ? `<p style="margin: 0pt; line-height: 1.1; text-align: center;">(${c})</p><p style="margin: 0pt; line-height: 1.1; text-align: center;">(${nl})</p>` : ''}</td>`;
                         });
                     });
                     newSpecBody += '</tr>';
@@ -2095,8 +2137,8 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
         const grandPoints = ptB + ptH + ptVD;
 
         matrixTableHtml = `
-            <div class="table-caption" style="font-size: 13pt; font-weight: bold; margin: 12pt 0 6pt 0; text-align: center; text-transform: uppercase; page-break-after: avoid;">1. MA TRẬN ĐỀ KIỂM TRA ĐỊNH KÌ (${examName.toUpperCase()})</div>
-            <table>
+            <div class="table-caption" style="font-size: 13pt; font-weight: bold; margin: 6pt 0 4pt 0; text-align: center; text-transform: uppercase; line-height: 1.15; page-break-after: avoid;">1. MA TRẬN ĐỀ KIỂM TRA ĐỊNH KÌ (${examName.toUpperCase()})</div>
+            <table cellpadding="0" cellspacing="0">
                 <thead>
                     <tr>
                         <th rowspan="4">TT</th>
@@ -2156,8 +2198,8 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             </table>`;
 
         specTableHtml = `
-            <div class="table-caption" style="font-size: 13pt; font-weight: bold; margin: 12pt 0 6pt 0; text-align: center; text-transform: uppercase; page-break-after: avoid;">2. BẢN ĐẶC TẢ ĐỀ KIỂM TRA ĐỊNH KÌ (${examName.toUpperCase()})</div>
-            <table>
+            <div class="table-caption" style="font-size: 13pt; font-weight: bold; margin: 6pt 0 4pt 0; text-align: center; text-transform: uppercase; line-height: 1.15; page-break-after: avoid;">2. BẢN ĐẶC TẢ ĐỀ KIỂM TRA ĐỊNH KÌ (${examName.toUpperCase()})</div>
+            <table cellpadding="0" cellspacing="0">
                 <thead>
                     <tr>
                         <th rowspan="4">TT</th>
@@ -2209,6 +2251,34 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             </table>`;
     }
 
+    // Chuẩn hóa khoảng cách dòng trong mọi ô <th> / <td> để Microsoft Word không tự chèn khoảng trống 8pt-12pt dưới mỗi ô
+    const compactWordTableSpacing = (htmlStr: string) => {
+        return htmlStr.replace(/<(th|td)([^>]*)>([\s\S]*?)<\/\1>/gi, (_full, tag, attrs, inner) => {
+            const trimmed = String(inner || '').trim();
+            if (!trimmed) return `<${tag}${attrs}></${tag}>`;
+            const isLeft = /text-align:\s*left|text-left/i.test(String(attrs || ''));
+            const align = isLeft ? 'left' : 'center';
+            if (/^<p\b/i.test(trimmed)) {
+                return `<${tag}${attrs}>${trimmed}</${tag}>`;
+            }
+            if (/<div\b/i.test(trimmed)) {
+                const converted = trimmed
+                    .replace(/<div\b([^>]*)>/gi, (_m, dAttrs) => {
+                        if (/style=/i.test(dAttrs)) {
+                            return `<p${dAttrs.replace(/style="([^"]*)"/i, `style="margin: 0pt; line-height: 1.1; text-align: ${align}; $1"`)}>`;
+                        }
+                        return `<p style="margin: 0pt; line-height: 1.1; text-align: ${align};"${dAttrs}>`;
+                    })
+                    .replace(/<\/div>/gi, '</p>');
+                return `<${tag}${attrs}>${converted}</${tag}>`;
+            }
+            return `<${tag}${attrs}><p style="margin: 0pt; line-height: 1.1; text-align: ${align};">${trimmed}</p></${tag}>`;
+        });
+    };
+
+    matrixTableHtml = compactWordTableSpacing(matrixTableHtml);
+    specTableHtml = compactWordTableSpacing(specTableHtml);
+
     // Thêm phần "* Ghi chú:" cụ thể dưới bảng Ma trận cho cả 2 định dạng (New 4-Part & Classic)
     const notesSummary = buildMatrixNotesSummary(data, examName);
     const customNoteRaw = (data.customNote || '').trim();
@@ -2218,11 +2288,11 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
 
     if (noteLinesToPrint.length > 0) {
         const noteLinesHtml = noteLinesToPrint
-            .map(line => `<p style="margin: 2pt 0 2pt 12pt; font-family: 'Times New Roman', serif; font-size: 12pt; text-align: left;">${line}</p>`)
+            .map(line => `<p style="margin: 1pt 0 1pt 12pt; line-height: 1.15; font-family: 'Times New Roman', serif; font-size: 11.5pt; text-align: left;">${line}</p>`)
             .join('');
         matrixTableHtml += `
-            <div style="margin-top: 8pt; margin-bottom: 12pt; font-family: 'Times New Roman', serif; font-size: 12pt; text-align: left;">
-                <p style="margin: 0 0 3pt 12pt; font-weight: bold; font-size: 12pt; text-align: left;">* Ghi chú:</p>
+            <div style="margin-top: 6pt; margin-bottom: 8pt; font-family: 'Times New Roman', serif; font-size: 11.5pt; text-align: left;">
+                <p style="margin: 0 0 2pt 12pt; line-height: 1.15; font-weight: bold; font-size: 11.5pt; text-align: left;">* Ghi chú:</p>
                 ${noteLinesHtml}
             </div>
         `;

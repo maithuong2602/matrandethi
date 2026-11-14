@@ -219,8 +219,10 @@ const MatrixBuilder: React.FC = () => {
                 });
 
                 // Tự động làm sạch phân bổ mức độ không hợp lệ trong dữ liệu Ma trận lưu sẵn:
-                // Nếu bài học không có YCCĐ mức Nhận biết (ví dụ Bài 13 Tin 8 chỉ có Thông hiểu) mà đang bị gán câu Biết (B > 0),
-                // tự động chuyển số câu Biết đó sang các bài học thực sự có YCCĐ Nhận biết để Bản đặc tả không bao giờ hiện "- Biết: ..."
+                // 1. Nếu bài học không có YCCĐ mức Nhận biết (ví dụ Bài 13 Tin 8 chỉ có Thông hiểu) mà đang bị gán câu Biết (B > 0),
+                //    tự động chuyển số câu Biết đó sang các bài học thực sự có YCCĐ Nhận biết (ưu tiên cùng cụm bài mới / cùng Nội dung)
+                // 2. Nếu đề cuối kỳ (có cả bài đã KT và bài mới) đang bị dồn quá 35% (> 14 câu TN) vào cụm bài đã KT do dữ liệu cũ,
+                //    tự động cân đối lại phần dư sang các bài mới có YCCĐ Nhận biết để giữ đúng trần <= 35% bài đã KT.
                 const specRows = node.matrixData.specifications.rows;
                 const matRows = node.matrixData.matrix?.rows || [];
                 const nfRows = node.matrixData.newFormatRows || {};
@@ -229,16 +231,51 @@ const MatrixBuilder: React.FC = () => {
                     const mainTopic = sRow[1] || matRows[idx]?.[1] || '';
                     const subTopic = sRow[2] || matRows[idx]?.[2] || '';
                     const lessonName = sRow[3] || matRows[idx]?.[3] || '';
+                    const st = parseFloat(String(matRows[idx]?.[4] || '0')) || 0;
+                    const ex = Math.min(Math.max(parseFloat(String(matRows[idx]?.[14] || '0')) || 0, 0), st);
                     const effGrade = g || detectGradeFromLessonOrContext(lessonName || subTopic || mainTopic, node.name);
                     const canonicalHtml = getRequirementsHtml(effGrade, mainTopic, subTopic, lessonName, customStore) || sRow[4] || '';
                     const secs = parseYccdSections(canonicalHtml);
+                    if (canonicalHtml && (!sRow[4] || !sRow[4].includes('Nhận biết'))) {
+                        const synced = syncSpecHtmlWithCustomStore(canonicalHtml, effGrade, subTopic, lessonName, customStore);
+                        if (synced) sRow[4] = synced;
+                    }
                     return {
                         idx,
+                        subTopic,
+                        soTiet: st,
+                        examined: ex,
+                        isOld: ex > 0 && ex >= st,
+                        isNew: st > ex,
                         hasNB: secs.some(s => getLevelCodeFromTitle(s.levelTitle) === 'NB' && s.items.some(it => it.text.trim().length > 0)),
                         hasTH: secs.some(s => getLevelCodeFromTitle(s.levelTitle) === 'TH' && s.items.some(it => it.text.trim().length > 0)),
                         hasVD: secs.some(s => ['VD', 'VDC'].includes(getLevelCodeFromTitle(s.levelTitle)) && s.items.some(it => it.text.trim().length > 0))
                     };
                 });
+
+                const syncRowFromNf = (rIdx: number) => {
+                    const cfg = nfRows[rIdx];
+                    const mRow = matRows[rIdx];
+                    const sRow = specRows[rIdx];
+                    if (!cfg || !mRow) return;
+                    const bTN = (cfg.mc?.B?.count || 0) + (cfg.tf?.B?.count || 0) + (cfg.sa?.B?.count || 0);
+                    const hTN = (cfg.mc?.H?.count || 0) + (cfg.tf?.H?.count || 0) + (cfg.sa?.H?.count || 0);
+                    const vdTN = (cfg.mc?.VD?.count || 0) + (cfg.tf?.VD?.count || 0) + (cfg.sa?.VD?.count || 0);
+                    const bTL = cfg.essay?.B?.count || 0;
+                    const hTL = cfg.essay?.H?.count || 0;
+                    const vdTL = cfg.essay?.VD?.count || 0;
+                    mRow[5] = bTN > 0 ? String(bTN) : '';
+                    mRow[6] = bTL > 0 ? String(bTL) : '';
+                    mRow[7] = hTN > 0 ? String(hTN) : '';
+                    mRow[8] = hTL > 0 ? String(hTL) : '';
+                    mRow[9] = vdTN > 0 ? String(vdTN) : '';
+                    mRow[10] = vdTL > 0 ? String(vdTL) : '';
+                    if (sRow) {
+                        sRow[5] = `${bTN}-${bTL}`;
+                        sRow[6] = `${hTN}-${hTL}`;
+                        sRow[7] = `${vdTN}-${vdTL}`;
+                    }
+                };
 
                 const nbValidIndices = rowHasLevel.filter((m: any) => m.hasNB).map((m: any) => m.idx);
                 if (nbValidIndices.length > 0) {
@@ -246,8 +283,6 @@ const MatrixBuilder: React.FC = () => {
                         if (m.hasNB) return;
                         const rIdx = m.idx;
                         const cfg = nfRows[rIdx];
-                        const mRow = matRows[rIdx];
-                        const sRow = specRows[rIdx];
 
                         if (cfg) {
                             (['mc', 'tf', 'sa'] as const).forEach(pKey => {
@@ -255,8 +290,16 @@ const MatrixBuilder: React.FC = () => {
                                 if (invalidB > 0) {
                                     cfg[pKey].B.count = 0;
                                     while (invalidB > 0) {
-                                        // Chuyển câu Biết sang bài học có YCCĐ Nhận biết đang có ít câu Biết nhất ở phần đó
+                                        // Ưu tiên chuyển câu Biết sang bài cùng nhóm (mới -> mới, cùng subTopic) có YCCĐ Nhận biết
                                         nbValidIndices.sort((a: number, b: number) => {
+                                            const ma = rowHasLevel[a];
+                                            const mb = rowHasLevel[b];
+                                            const aSamePool = ma.isNew === m.isNew ? 1 : 0;
+                                            const bSamePool = mb.isNew === m.isNew ? 1 : 0;
+                                            if (aSamePool !== bSamePool) return bSamePool - aSamePool;
+                                            const aSameSub = ma.subTopic === m.subTopic ? 1 : 0;
+                                            const bSameSub = mb.subTopic === m.subTopic ? 1 : 0;
+                                            if (aSameSub !== bSameSub) return bSameSub - aSameSub;
                                             const ca = nfRows[a]?.[pKey]?.B?.count || 0;
                                             const cb = nfRows[b]?.[pKey]?.B?.count || 0;
                                             return ca - cb;
@@ -269,30 +312,59 @@ const MatrixBuilder: React.FC = () => {
                                     }
                                 }
                             });
-                        }
-
-                        if (mRow && parseInt(String(mRow[5] || '0'), 10) > 0) {
-                            let invalidNB_TN = parseInt(String(mRow[5] || '0'), 10) || 0;
-                            mRow[5] = '';
-                            if (sRow) sRow[5] = '0-0';
-                            while (invalidNB_TN > 0) {
-                                nbValidIndices.sort((a: number, b: number) => {
-                                    const ca = parseInt(String(matRows[a]?.[5] || '0'), 10) || 0;
-                                    const cb = parseInt(String(matRows[b]?.[5] || '0'), 10) || 0;
-                                    return ca - cb;
-                                });
-                                const targetIdx = nbValidIndices[0];
-                                if (matRows[targetIdx]) {
-                                    const nextVal = (parseInt(String(matRows[targetIdx][5] || '0'), 10) || 0) + 1;
-                                    matRows[targetIdx][5] = String(nextVal);
-                                    if (specRows[targetIdx]) {
-                                        specRows[targetIdx][5] = `${nextVal}-0`;
-                                    }
-                                }
-                                invalidNB_TN--;
-                            }
+                            syncRowFromNf(rIdx);
+                            nbValidIndices.forEach((idx: number) => syncRowFromNf(idx));
                         }
                     });
+
+                    // Kiểm tra nếu đề hỗn hợp (Cuối kỳ) đang có tổng câu TN ở các bài đã kiểm tra vượt quá 14 câu (35%)
+                    // và có bài mới có YCCĐ Nhận biết -> tự động chuyển bớt câu Biết dư từ bài cũ sang bài mới có NB
+                    const oldRowsMeta = rowHasLevel.filter((m: any) => m.isOld && m.soTiet > 0);
+                    const newNbRowsMeta = rowHasLevel.filter((m: any) => m.isNew && m.soTiet > 0 && m.hasNB);
+                    if (oldRowsMeta.length > 0 && newNbRowsMeta.length > 0) {
+                        const getRowTotalTN = (idx: number) => {
+                            const c = nfRows[idx];
+                            if (!c) return 0;
+                            return (
+                                (c.mc?.B?.count || 0) + (c.mc?.H?.count || 0) + (c.mc?.VD?.count || 0) +
+                                (c.tf?.B?.count || 0) + (c.tf?.H?.count || 0) + (c.tf?.VD?.count || 0) +
+                                (c.sa?.B?.count || 0) + (c.sa?.H?.count || 0) + (c.sa?.VD?.count || 0)
+                            );
+                        };
+                        let totalOldTN = oldRowsMeta.reduce((s: number, m: any) => s + getRowTotalTN(m.idx), 0);
+                        const sumOldPeriods = oldRowsMeta.reduce((s: number, m: any) => s + m.soTiet, 0) || 1;
+                        let guard = 0;
+                        while (totalOldTN > 14 && guard < 100) {
+                            guard++;
+                            // Chọn bài cũ đang vượt nhiều nhất so với hạn mức theo tiết (m.soTiet / sumOldPeriods * 14)
+                            const overloadedOld = oldRowsMeta
+                                .filter((m: any) => {
+                                    const c = nfRows[m.idx];
+                                    const bCount = (c?.mc?.B?.count || 0) + (c?.tf?.B?.count || 0) + (c?.sa?.B?.count || 0);
+                                    const maxForOld = Math.max(1, Math.ceil((m.soTiet / sumOldPeriods) * 14 - 1e-6));
+                                    return bCount > 1 && getRowTotalTN(m.idx) > maxForOld;
+                                })
+                                .sort((a: any, b: any) => getRowTotalTN(b.idx) - getRowTotalTN(a.idx));
+                            if (overloadedOld.length === 0) break;
+                            const donorIdx = overloadedOld[0].idx;
+                            const donorCfg = nfRows[donorIdx];
+                            const partToMove: 'mc' | 'tf' | 'sa' =
+                                (donorCfg.mc?.B?.count || 0) >= (donorCfg.tf?.B?.count || 0) ? 'mc' : 'tf';
+                            if ((donorCfg[partToMove]?.B?.count || 0) <= 0) break;
+
+                            newNbRowsMeta.sort((a: any, b: any) => {
+                                const ba = (nfRows[a.idx]?.mc?.B?.count || 0) + (nfRows[a.idx]?.tf?.B?.count || 0);
+                                const bb = (nfRows[b.idx]?.mc?.B?.count || 0) + (nfRows[b.idx]?.tf?.B?.count || 0);
+                                return ba - bb;
+                            });
+                            const recIdx = newNbRowsMeta[0].idx;
+                            donorCfg[partToMove].B.count--;
+                            nfRows[recIdx][partToMove].B.count = (nfRows[recIdx][partToMove].B.count || 0) + 1;
+                            totalOldTN--;
+                            syncRowFromNf(donorIdx);
+                            syncRowFromNf(recIdx);
+                        }
+                    }
                 }
             }
         };
@@ -956,6 +1028,16 @@ const MatrixBuilder: React.FC = () => {
         const maxIdealNBRowTN = nbCapableRowCount > 0
             ? Math.max(maxIdealRowTN, Math.ceil((targetNB_TN + dualCapableRowCount) / nbCapableRowCount))
             : maxIdealRowTN;
+        const getRowMaxTN = (r: any) => {
+            if (hasExaminedReduction && r.isOldLesson && hasNewNBRowInMatrix) {
+                const baseCap = Math.max(1, Math.min(maxOldRowTN, Math.ceil((r.tnTargetQuestions || 1) - 1e-6)));
+                return (!r.canTakeNB && r.canTakeTH && nbCapableRowCount > 0) ? Math.min(4, baseCap) : baseCap;
+            }
+            if (!r.canTakeNB && r.canTakeTH && nbCapableRowCount > 0) {
+                return Math.min(4, maxIdealRowTN);
+            }
+            return r.canTakeNB ? maxIdealNBRowTN : maxIdealRowTN;
+        };
         const softMaxTHOnlyTN = Math.max(0, targetTH_TN - dualCapableRowCount);
         const softMaxNBOnlyTN = Math.max(0, targetNB_TN - dualCapableRowCount);
 
@@ -985,14 +1067,12 @@ const MatrixBuilder: React.FC = () => {
 
             // Chọn bài đang thiếu hụt nhiều nhất so với targetScore và đảm bảo:
             // 1. Bài học phải có YCCĐ mức Biết hoặc Hiểu (canTakeNB || canTakeTH)
-            // 2. Tổng điểm bài đã KT <= 35%
+            // 2. Tổng điểm bài đã KT <= 35% và số câu từng bài cũ bám sát tỷ lệ số tiết (getRowMaxTN)
             // 3. Nhóm bài không có NB (!canTakeNB) TUYỆT ĐỐI không vượt quá softMaxTHOnlyTN để không bao giờ tràn câu NB sang bài không có NB
             let rowCandidates = rows.filter((r: any) => {
                 if (r.soTiet <= 0) return false;
                 if (!r.canTakeNB && !r.canTakeTH) return false;
-                const rowMax = (r.isOldLesson && hasNewNBRowInMatrix)
-                    ? maxOldRowTN
-                    : (r.canTakeNB ? maxIdealNBRowTN : maxIdealRowTN);
+                const rowMax = getRowMaxTN(r);
                 if ((r.allocTN || 0) >= rowMax) return false;
                 if (!r.canTakeNB && nbCapableRowCount > 0 && currentTHOnlyTN >= softMaxTHOnlyTN) return false;
                 if (!r.canTakeTH && thCapableRowCount > 0 && currentNBOnlyTN >= softMaxNBOnlyTN) return false;
@@ -1002,14 +1082,12 @@ const MatrixBuilder: React.FC = () => {
                 }
                 return true;
             });
-            // Fallback 1: Nới lỏng softMaxTHOnlyTN lên targetTH_TN nhưng VẪN giữ nguyên trần 35% (LIMIT_OLD_SCORE) và maxOldRowTN cho bài đã kiểm tra
+            // Fallback 1: Nới lỏng softMaxTHOnlyTN lên targetTH_TN nhưng VẪN giữ nguyên trần 35% (LIMIT_OLD_SCORE) và getRowMaxTN cho bài đã kiểm tra
             if (rowCandidates.length === 0) {
                 rowCandidates = rows.filter((r: any) => {
                     if (r.soTiet <= 0) return false;
                     if (!r.canTakeNB && !r.canTakeTH) return false;
-                    const rowMax = (r.isOldLesson && hasNewNBRowInMatrix)
-                        ? maxOldRowTN
-                        : (r.canTakeNB ? maxIdealNBRowTN : maxIdealRowTN);
+                    const rowMax = getRowMaxTN(r);
                     if ((r.allocTN || 0) >= rowMax) return false;
                     if (!r.canTakeNB && nbCapableRowCount > 0 && currentTHOnlyTN >= targetTH_TN) return false;
                     if (!r.canTakeTH && thCapableRowCount > 0 && currentNBOnlyTN >= targetNB_TN) return false;
@@ -1020,12 +1098,12 @@ const MatrixBuilder: React.FC = () => {
                     return true;
                 });
             }
-            // Fallback 2: Nới lỏng rowMax cho các bài mới (nhưng vẫn giữ maxOldRowTN cho bài cũ) để ưu tiên giữ trần 35% bài cũ
+            // Fallback 2: Nới lỏng rowMax cho các bài mới (nhưng vẫn giữ getRowMaxTN và trần 35% cho bài cũ)
             if (rowCandidates.length === 0) {
                 rowCandidates = rows.filter((r: any) => {
                     if (r.soTiet <= 0) return false;
                     if (!r.canTakeNB && !r.canTakeTH) return false;
-                    if (r.isOldLesson && hasNewNBRowInMatrix && (r.allocTN || 0) >= maxOldRowTN) return false;
+                    if (r.isOldLesson && hasNewNBRowInMatrix && (r.allocTN || 0) >= getRowMaxTN(r)) return false;
                     if (!r.canTakeNB && nbCapableRowCount > 0 && currentTHOnlyTN >= targetTH_TN) return false;
                     if (!r.canTakeTH && thCapableRowCount > 0 && currentNBOnlyTN >= targetNB_TN) return false;
                     if (hasExaminedReduction && r.soTietExamined > 0) {
@@ -1035,14 +1113,17 @@ const MatrixBuilder: React.FC = () => {
                     return true;
                 });
             }
-            // Fallback 3: Nếu không có bài mới nào có YCCĐ Nhận biết (chỉ có các bài cũ như Bài 1, Bài 2 có Nhận biết),
-            // giữ nguyên giới hạn cứng currentTHOnlyTN < targetTH_TN và cho phép các bài có YCCĐ Nhận biết (canTakeNB) nhận đủ số câu NB
+            // Fallback 3: Giữ nguyên giới hạn cứng currentTHOnlyTN < targetTH_TN và trần 35% bài cũ (nếu có bài mới nhận được câu hỏi)
             if (rowCandidates.length === 0) {
                 rowCandidates = rows.filter((r: any) => {
                     if (r.soTiet <= 0) return false;
                     if (!r.canTakeNB && !r.canTakeTH) return false;
                     if (!r.canTakeNB && nbCapableRowCount > 0 && currentTHOnlyTN >= softMaxTHOnlyTN) return false;
                     if (!r.canTakeTH && thCapableRowCount > 0 && currentNBOnlyTN >= softMaxNBOnlyTN) return false;
+                    if (hasExaminedReduction && hasNewNBRowInMatrix && r.soTietExamined > 0) {
+                        const addedOldScore = r.isOldLesson ? SCORE_TN : SCORE_TN * (r.soTietExamined / r.soTiet);
+                        if (currentTotalOldScore + addedOldScore > LIMIT_OLD_SCORE + 1e-6) return false;
+                    }
                     return true;
                 });
             }
@@ -1080,7 +1161,7 @@ const MatrixBuilder: React.FC = () => {
 
         // Đảm bảo tính khả thi toán học cho tỷ lệ 4-3-3 (targetNB_TN : targetTH_TN) và cân bằng mức độ trước khi bước vào Pha 2B:
         // 1. Chỉ mở mức YCCĐ khi bài học THỰC SỰ CÓ mức độ đó trong chương trình/YCCĐ hiện hành (currHasNB / currHasTH)
-        //    TUYỆT ĐỐI KHÔNG bao giờ gán hasNBSpec = true cho bài không có YCCĐ Nhận biết (như Bài 3, Bài 4, Bài 12, Bài 13, Bài 14)!
+        //    TUYỆT ĐỐI KHÔNG bao giờ gán hasNBSpec = true cho bài không có YCCĐ Nhận biết (như Bài 3, Bài 4, Bài 13)!
         rows.forEach((r: any) => {
             if (!r.currHasNB) r.hasNBSpec = false;
             if (!r.currHasTH) r.hasTHSpec = false;
@@ -1103,41 +1184,54 @@ const MatrixBuilder: React.FC = () => {
             currentTHCapacity = rows.reduce((sum: number, r: any) => sum + (r.hasTHSpec ? (r.allocTN || 0) : 0), 0);
         }
 
-        // 2. Nếu tổng số câu TN trên các bài có hasNBSpec vẫn nhỏ hơn targetNB_TN (hoặc khi chỉ có bài cũ có NB và cần thêm 1 câu TH cho mỗi bài có cả NB & TH),
-        //    dịch chuyển bớt allocTN từ các bài chỉ có TH (!hasNBSpec) sang các bài thực sự có hasNBSpec (tuyệt đối không bật hasNBSpec cho bài không có NB!)
+        // 2. Nếu tổng số câu TN trên các bài có hasNBSpec vẫn nhỏ hơn requiredTNOnNBRows,
+        //    dịch chuyển bớt allocTN từ các bài chỉ có TH (!hasNBSpec) sang các bài thực sự có hasNBSpec.
+        //    Khi có bài mới có NB (hasNewNBRow), chỉ dịch chuyển trong nội bộ nhóm bài mới (hoặc nội bộ nhóm bài cũ) để giữ nguyên tỷ lệ 35% bài đã KT!
         const validNBRows = rows.filter((r: any) => r.soTiet > 0 && r.hasNBSpec);
         const hasNewNBRow = validNBRows.some((r: any) => r.isNewLesson);
         const dualSpecCount = rows.filter((r: any) => r.soTiet > 0 && r.hasNBSpec && r.hasTHSpec).length;
-        const requiredTNOnNBRows = hasNewNBRow
-            ? Math.min(totalTargetTN, targetNB_TN)
-            : Math.min(totalTargetTN, targetNB_TN + Math.min(targetTH_TN, dualSpecCount));
+        const requiredTNOnNBRows = Math.min(totalTargetTN, targetNB_TN + Math.min(targetTH_TN, dualSpecCount));
         let shiftGuard = 0;
         while (currentNBCapacity < requiredTNOnNBRows && validNBRows.length > 0 && shiftGuard < 500) {
             shiftGuard++;
             const donors = rows
-                .filter((r: any) => !r.hasNBSpec && (r.allocTN || 0) > 1)
+                .filter((r: any) => {
+                    if (r.hasNBSpec || (r.allocTN || 0) <= 1) return false;
+                    // Không lấy câu của bài cũ nếu người nhận là bài mới (để bài cũ không bị tụt xuống 5% quá thấp so với số tiết)
+                    if (hasExaminedReduction && hasNewNBRow && r.isOldLesson) {
+                        const minOldForDonor = Math.max(1, Math.floor((r.tnTargetQuestions || 1) + 1e-6));
+                        const oldReceiversAvailable = validNBRows.some((rec: any) => rec.isOldLesson && (rec.allocTN || 0) < getRowMaxTN(rec));
+                        if (!oldReceiversAvailable || (r.allocTN || 0) <= minOldForDonor) return false;
+                    }
+                    return true;
+                })
                 .sort((a: any, b: any) => {
+                    if (a.isNewLesson !== b.isNewLesson) return a.isNewLesson ? -1 : 1;
                     if ((b.allocTN || 0) !== (a.allocTN || 0)) return (b.allocTN || 0) - (a.allocTN || 0);
-                    if (a.isOldLesson !== b.isOldLesson) return a.isOldLesson ? -1 : 1;
                     return b.idx - a.idx;
                 });
             if (donors.length === 0) break;
-            // Nếu có bài mới trong validNBRows thì chỉ chuyển sang bài mới để không vượt trần 35% của bài cũ
-            const candidateReceivers = hasNewNBRow
-                ? validNBRows.filter((r: any) => r.isNewLesson)
+            const donor = donors[0];
+            // Nếu có bài mới trong validNBRows, ưu tiên chuyển trong cùng nhóm (mới -> mới, cũ -> cũ) để giữ nguyên tổng 35% bài cũ - 65% bài mới
+            let candidateReceivers = hasExaminedReduction && hasNewNBRow
+                ? validNBRows.filter((r: any) => r.isOldLesson === donor.isOldLesson && (!r.isOldLesson || (r.allocTN || 0) < getRowMaxTN(r)))
                 : validNBRows;
+            if (candidateReceivers.length === 0) {
+                candidateReceivers = hasNewNBRow
+                    ? validNBRows.filter((r: any) => r.isNewLesson)
+                    : validNBRows;
+            }
             const receivers = [...(candidateReceivers.length > 0 ? candidateReceivers : validNBRows)].sort((a: any, b: any) => {
                 if ((a.allocTN || 0) !== (b.allocTN || 0)) return (a.allocTN || 0) - (b.allocTN || 0);
                 if (a.isNewLesson !== b.isNewLesson) return a.isNewLesson ? -1 : 1;
                 return a.idx - b.idx;
             });
-            donors[0].allocTN--;
+            donor.allocTN--;
             receivers[0].allocTN = (receivers[0].allocTN || 0) + 1;
             currentNBCapacity++;
         }
 
-        // 3. Cân bằng số câu TN giữa các bài chỉ có Thông hiểu (!hasNBSpec && hasTHSpec, ví dụ Bài 3, Bài 4, Bài 12, Bài 13):
-        //    Đảm bảo bài mới có ít nhất 2 câu TH và không bài nào bị dồn >= 5 câu TH khi bài mới khác chỉ có 1 câu TH
+        // 3. Cân bằng số câu TN giữa các bài chỉ có Thông hiểu (!hasNBSpec && hasTHSpec) trong CÙNG nhóm (mới với mới, cũ với cũ):
         const thOnlyRows = rows.filter((r: any) => r.soTiet > 0 && !r.hasNBSpec && r.hasTHSpec);
         let thBalanceGuard = 0;
         while (thOnlyRows.length >= 2 && thBalanceGuard < 200) {
@@ -1147,11 +1241,8 @@ const MatrixBuilder: React.FC = () => {
                 .sort((a: any, b: any) => (a.allocTN || 0) - (b.allocTN || 0));
             if (needyNew.length === 0) break;
             const richDonor = thOnlyRows
-                .filter((r: any) => r !== needyNew[0] && ((r.isOldLesson && (r.allocTN || 0) > 2) || (r.allocTN || 0) >= 4))
-                .sort((a: any, b: any) => {
-                    if (a.isOldLesson !== b.isOldLesson) return a.isOldLesson ? -1 : 1;
-                    return (b.allocTN || 0) - (a.allocTN || 0);
-                });
+                .filter((r: any) => r !== needyNew[0] && r.isNewLesson === needyNew[0].isNewLesson && (r.allocTN || 0) >= 4)
+                .sort((a: any, b: any) => (b.allocTN || 0) - (a.allocTN || 0));
             if (richDonor.length === 0) break;
             richDonor[0].allocTN--;
             needyNew[0].allocTN = (needyNew[0].allocTN || 0) + 1;
@@ -1162,7 +1253,7 @@ const MatrixBuilder: React.FC = () => {
         // 1. Bài không có YCCĐ mức Biết (!hasNBSpec) TUYỆT ĐỐI KHÔNG nhận câu Biết (allocNB = 0)
         // 2. Bài không có YCCĐ mức Hiểu (!hasTHSpec) TUYỆT ĐỐI KHÔNG nhận câu Hiểu (allocTH = 0)
         // 3. Bài có cả YCCĐ mức Biết và Thông hiểu (hasNBSpec && hasTHSpec) và có từ 2 câu TN trở lên
-        //    LUÔN được chọn cả mức Biết (allocNB >= 1) VÀ mức Thông hiểu (allocTH >= 1)
+        //    LUÔN được chọn cả mức Biết (allocNB >= 1) VÀ mức Thông hiểu (allocTH >= 1) khi còn dư hạn mức NB
         // 4. Không có bài nào bị dồn quá nhiều câu vào 1 mức độ (ưu tiên chia đều Biết - Hiểu trên các bài có nhiều câu TN)
         // 5. Tổng toàn đề đạt chính xác tuyệt đối tỷ lệ targetNB_TN : targetTH_TN (4-3-3 => 16 NB : 12 TH)
         let remNB = targetNB_TN;
@@ -1174,6 +1265,9 @@ const MatrixBuilder: React.FC = () => {
             r.remRowTN = r.allocTN || 0;
         });
 
+        const getRemNBCapacity = () =>
+            rows.reduce((sum: number, r: any) => sum + (r.hasNBSpec ? (r.remRowTN || 0) : 0), 0);
+
         // Bước 2B.1: Bài chỉ có mức Nhận biết (hasNBSpec && !hasTHSpec) bắt buộc nhận 100% câu NB
         rows.forEach((r: any) => {
             if (r.remRowTN > 0 && r.hasNBSpec && !r.hasTHSpec) {
@@ -1184,7 +1278,7 @@ const MatrixBuilder: React.FC = () => {
             }
         });
 
-        // Bước 2B.2: Bài chỉ có mức Thông hiểu (hasTHSpec && !hasNBSpec, ví dụ Bài 3, Bài 4 Tin 8)
+        // Bước 2B.2: Bài chỉ có mức Thông hiểu (hasTHSpec && !hasNBSpec, ví dụ Bài 3, Bài 4, Bài 13 Tin 8)
         // bắt buộc nhận 100% câu TH — tuyệt đối không cấp câu NB vào bài không có YCCĐ Nhận biết!
         rows.forEach((r: any) => {
             if (r.remRowTN > 0 && r.hasTHSpec && !r.hasNBSpec) {
@@ -1196,9 +1290,9 @@ const MatrixBuilder: React.FC = () => {
         });
 
         // Bước 2B.3: Với mọi bài học có CẢ Nhận biết VÀ Thông hiểu (hasNBSpec && hasTHSpec) và có >= 2 câu TN,
-        // đảm bảo bài đó luôn nhận ít nhất 1 câu Nhận biết VÀ 1 câu Thông hiểu để cả 2 mức độ đều được chọn trên Bản đặc tả
+        // đảm bảo bài đó luôn nhận ít nhất 1 câu Nhận biết VÀ 1 câu Thông hiểu (khi tổng chỗ trống NB còn dư cho phép cấp 1 câu sang TH)
         rows.forEach((r: any) => {
-            if (r.remRowTN >= 2 && r.hasNBSpec && r.hasTHSpec && remNB > 0 && remTH > 0) {
+            if (r.remRowTN >= 2 && r.hasNBSpec && r.hasTHSpec && remNB > 0 && remTH > 0 && getRemNBCapacity() > remNB) {
                 r.allocNB++;
                 r.allocTH++;
                 r.remRowTN -= 2;
@@ -1208,12 +1302,11 @@ const MatrixBuilder: React.FC = () => {
         });
 
         // Bước 2B.4: Phân bổ cân bằng số câu TN còn lại (remTH và remNB) trên toàn bộ các bài theo nguyên lý Min-Max:
-        // - Khi cấp thêm câu Thông hiểu (remTH > 0): Ưu tiên bài có (allocNB + remRowTN) lớn nhất (tức bài có nguy cơ bị dồn nhiều câu Biết nhất nếu không được nhận thêm Hiểu),
-        //   sau đó ưu tiên bài đang có ít câu Hiểu nhất (allocTH nhỏ nhất).
         let balanceGuard = 0;
         while (remTH > 0 && balanceGuard < 1000) {
             balanceGuard++;
-            const thCandidates = rows.filter((r: any) => r.remRowTN > 0 && r.hasTHSpec);
+            const remNBCap = getRemNBCapacity();
+            const thCandidates = rows.filter((r: any) => r.remRowTN > 0 && r.hasTHSpec && (!r.hasNBSpec || remNBCap > remNB));
             if (thCandidates.length === 0) break;
             thCandidates.sort((a: any, b: any) => {
                 const aPotentialNB = a.allocNB + a.remRowTN;

@@ -561,21 +561,8 @@ const isFakePlaceholderCriterion = (text: string, grade?: string, canonicalLesso
     if (grade === '8' && canonicalLesson) {
         const lNum = extractLessonNumber(canonicalLesson);
         if (
-            lNum === '12' &&
-            norm === 'nhận biết được chương trình là dãy các lệnh điều khiển máy tính thực hiện một thuật toán'
-        ) {
-            return true;
-        }
-        if (
             lNum === '13' &&
             norm === 'nêu được khái niệm hằng biến kiểu dữ liệu biểu thức'
-        ) {
-            return true;
-        }
-        if (
-            lNum === '14' &&
-            (norm === 'nhận biết được cấu trúc tuần tự rẽ nhánh và lặp trong môi trường lập trình trực quan' ||
-                norm === 'giải thích được hoạt động của cấu trúc tuần tự rẽ nhánh và lặp ở chương trình đơn giản')
         ) {
             return true;
         }
