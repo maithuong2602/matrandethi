@@ -7,6 +7,8 @@ import {
   addCustomCriterion, 
   deleteCustomCriterion,
   areCriteriaSemanticallySame,
+  isQuestionCriteriaValidForLesson,
+  purgeInvalidQuestionsAndResync,
   syncCriteriaFromMatrixData,
   CUSTOM_CRITERIA_STORAGE_KEY 
 } from '../services/criteriaService';
@@ -859,5 +861,68 @@ describe('Criteria Service & Matrix Synchronization', () => {
         const mergedAfterDeleteTH = getMergedCriteria('8', 'Bài 2: Thông tin trong môi trường số');
         expect(mergedAfterDeleteTH?.NB?.length).toBe(1);
         expect(mergedAfterDeleteTH?.TH).toBeUndefined();
+    });
+
+    it('purges questions whose lesson lacks YCCĐ for that cognitive level (e.g. Bài 3 & Bài 4 have no Nhận biết) and recalculates statistics', () => {
+        const mockQuestions = [
+            // Bài 3 Khối 8 KHÔNG có YCCĐ Nhận biết (NB), chỉ có Thông hiểu (2.1, 2.2) và Vận dụng (3.1)
+            {
+                id: 'q-b3-nb-invalid-1',
+                grade: '8',
+                lesson: 'Bài 3: Thực hành: Khai thác thông tin số',
+                level: 'NB',
+                category: 'mc',
+                criteria: '1.1',
+                content: 'Câu hỏi NB sai quy định ở Bài 3'
+            },
+            {
+                id: 'q-b3-nb-invalid-2',
+                grade: '8',
+                lesson: 'Bài 3: Thực hành: Khai thác thông tin số',
+                level: 'NB',
+                category: 'mc',
+                criteria: '2.1',
+                content: 'Câu hỏi NB gắn nhầm mã 2.1 ở Bài 3'
+            },
+            {
+                id: 'q-b3-th-valid',
+                grade: '8',
+                lesson: 'Bài 3: Thực hành: Khai thác thông tin số',
+                level: 'TH',
+                category: 'mc',
+                criteria: '2.1',
+                content: 'Câu hỏi TH hợp lệ ở Bài 3'
+            },
+            // Bài 4 Khối 8 KHÔNG có YCCĐ Nhận biết (NB)
+            {
+                id: 'q-b4-nb-invalid',
+                grade: '8',
+                lesson: 'Bài 4: Đạo đức và văn hóa trong sử dụng công nghệ kĩ thuật số',
+                level: 'NB',
+                category: 'mc',
+                criteria: '',
+                content: 'Câu hỏi NB không có YCCĐ ở Bài 4'
+            },
+            {
+                id: 'q-b4-th-valid',
+                grade: '8',
+                lesson: 'Bài 4: Đạo đức và văn hóa trong sử dụng công nghệ kĩ thuật số',
+                level: 'TH',
+                category: 'mc',
+                criteria: '2.1',
+                content: 'Câu hỏi TH hợp lệ ở Bài 4'
+            }
+        ];
+
+        expect(isQuestionCriteriaValidForLesson(mockQuestions[0])).toBe(false);
+        expect(isQuestionCriteriaValidForLesson(mockQuestions[1])).toBe(false);
+        expect(isQuestionCriteriaValidForLesson(mockQuestions[2])).toBe(true);
+        expect(isQuestionCriteriaValidForLesson(mockQuestions[3])).toBe(false);
+        expect(isQuestionCriteriaValidForLesson(mockQuestions[4])).toBe(true);
+
+        const report = purgeInvalidQuestionsAndResync(mockQuestions);
+        expect(report.removedCount).toBe(3);
+        expect(report.remainingCount).toBe(2);
+        expect(report.validQuestions.map((q: any) => q.id)).toEqual(['q-b3-th-valid', 'q-b4-th-valid']);
     });
 });

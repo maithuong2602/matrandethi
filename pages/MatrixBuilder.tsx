@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { 
-    ChevronRight, Copy, Trash2, Upload, FileEdit, Printer, Share2, Clipboard, FileText, FileJson, CheckSquare, Square, FolderPlus, Save, Settings, PieChart, Sparkles, Database
+    ChevronRight, Copy, Trash2, Upload, FileEdit, Printer, Share2, Clipboard, FileText, FileJson, CheckSquare, Square, FolderPlus, Save, Settings, PieChart, Sparkles, Database, ShieldCheck
 } from 'lucide-react';
 import FileExplorer from '../components/FileExplorer';
 import MatrixView from '../components/MatrixView';
@@ -9,7 +9,7 @@ import { PREDEFINED_FOLDERS as predefinedFoldersByGrade, REQUIREMENTS_DATA as re
 import { getRequirementsHtml, generatePrintHTML } from '../utils';
 import { loadQuestionBank } from '../services/storage/questionBankStorage';
 import { CANONICAL_REQUIREMENTS, KNTT_LESSON_MAPPINGS } from '../data/curriculum/index';
-import { syncSpecHtmlWithCustomStore, CUSTOM_CRITERIA_STORAGE_KEY, isQuestionCriteriaValidForLesson, filterQuestionsByActiveCriteria, loadCustomCriteriaStore, GradeCriteriaMap, detectGradeFromLessonOrContext, buildSpecHtmlFromQuestionPool, parseYccdSections, serializeYccdSections, getLevelCodeFromTitle } from '../services/criteriaService';
+import { syncSpecHtmlWithCustomStore, CUSTOM_CRITERIA_STORAGE_KEY, isQuestionCriteriaValidForLesson, filterQuestionsByActiveCriteria, purgeInvalidQuestionsAndResync, loadCustomCriteriaStore, GradeCriteriaMap, detectGradeFromLessonOrContext, buildSpecHtmlFromQuestionPool, parseYccdSections, serializeYccdSections, getLevelCodeFromTitle } from '../services/criteriaService';
 
 const collectRowPoolQuestionsFromDir = (
     dir: FileSystemItem | null | undefined,
@@ -1605,6 +1605,31 @@ const MatrixBuilder: React.FC = () => {
         showToast(`Đã đồng bộ ${gradeQuestions.length} câu hỏi (${syncedLessonCount} bài học) Khối ${gradeNum} từ Ngân hàng!`);
     };
 
+    const handlePurgeInvalidQuestionsInMatrix = () => {
+        const report = purgeInvalidQuestionsAndResync();
+        const savedRaw = localStorage.getItem('matrixFileSystem');
+        if (savedRaw) {
+            try {
+                const updatedRoot = JSON.parse(savedRaw);
+                if (currentPath.length >= 1) {
+                    const gradeDir = findDirectory([currentPath[0]], updatedRoot);
+                    if (gradeDir && gradeDir.matrixData) {
+                        regenerateMatrix(gradeDir, loadCustomCriteriaStore());
+                    }
+                }
+                setFileSystem(updatedRoot);
+            } catch (e) {
+                console.error(e);
+            }
+        }
+        if (report.removedCount > 0 || report.matrixRemovedCount > 0) {
+            const detailStr = report.removedDetails.length > 0 ? ` (${report.removedDetails.join('; ')})` : '';
+            showToast(`Đã xóa ${report.removedCount || report.matrixRemovedCount} câu hỏi không có YCCĐ tương ứng${detailStr} và thống kê lại!`);
+        } else {
+            showToast('Đã kiểm tra: Tất cả câu hỏi đều khớp hợp lệ với Yêu cầu cần đạt và đã thống kê lại!');
+        }
+    };
+
     const handlePrint = () => {
         const currentDir = getCurrentDirectory();
         if (currentDir?.matrixData) {
@@ -1715,14 +1740,24 @@ const MatrixBuilder: React.FC = () => {
                         </button>
                     )}
                     {currentPath.length >= 1 && (
-                        <button
-                            onClick={handleSyncFromQuestionBank}
-                            className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 px-4 rounded-lg shadow-sm flex items-center gap-2 transition-all text-sm"
-                            title="Tự động nạp danh sách bài học và số câu hỏi từ Ngân hàng câu hỏi nội bộ vào Ma trận này"
-                        >
-                            <Database size={18} />
-                            Đồng bộ từ Ngân hàng câu hỏi
-                        </button>
+                        <>
+                            <button
+                                onClick={handlePurgeInvalidQuestionsInMatrix}
+                                className="bg-amber-500 hover:bg-amber-600 text-white font-semibold py-2 px-4 rounded-lg shadow-sm flex items-center gap-2 transition-all text-sm"
+                                title="Kiểm tra toàn bộ câu hỏi: Nếu bài học không có YCCĐ ở mức độ đó (ví dụ không có Nhận biết) hoặc YCCĐ đã xóa thì tự động xóa câu hỏi và thống kê lại"
+                            >
+                                <ShieldCheck size={18} />
+                                Kiểm tra & Lọc câu sai YCCĐ
+                            </button>
+                            <button
+                                onClick={handleSyncFromQuestionBank}
+                                className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 px-4 rounded-lg shadow-sm flex items-center gap-2 transition-all text-sm"
+                                title="Tự động nạp danh sách bài học và số câu hỏi từ Ngân hàng câu hỏi nội bộ vào Ma trận này"
+                            >
+                                <Database size={18} />
+                                Đồng bộ từ Ngân hàng câu hỏi
+                            </button>
+                        </>
                     )}
                     {currentPath.length >= 2 && (
                          <label className="bg-sky-500 hover:bg-sky-600 text-white font-semibold py-2 px-4 rounded-lg shadow-sm cursor-pointer flex items-center gap-2 transition-all text-sm">

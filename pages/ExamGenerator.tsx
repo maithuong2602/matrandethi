@@ -24,6 +24,7 @@ import { CANONICAL_REQUIREMENTS, KNTT_LESSON_MAPPINGS } from '../data/curriculum
 import { loadQuestionBank, saveQuestionBank } from '../services/storage/questionBankStorage';
 import {
     filterQuestionsByActiveCriteria,
+    purgeInvalidQuestionsAndResync,
     getQuestionTypeKey,
     getCanonicalCriterionKeyForQuestion
 } from '../services/criteriaService';
@@ -209,6 +210,23 @@ const ExamGenerator: React.FC = () => {
                     setStep('config');
                 }
             }
+        }
+    };
+
+    const handlePurgeInvalidQuestions = () => {
+        const report = purgeInvalidQuestionsAndResync(
+            undefined,
+            selectedGradeFilter === 'all' ? undefined : selectedGradeFilter
+        );
+        loadInternalQuestionBank(selectedGradeFilter, false);
+
+        if (report.removedCount > 0 || report.matrixRemovedCount > 0) {
+            const detailStr = report.removedDetails.length > 0 ? ` (${report.removedDetails.join('; ')})` : '';
+            showNotice(
+                `Đã xóa ${report.removedCount} câu hỏi không có YCCĐ tương ứng${detailStr} và thống kê lại kho câu hỏi!`
+            );
+        } else {
+            showNotice('Đã kiểm tra: Tất cả câu hỏi trong kho đều khớp hợp lệ với Yêu cầu cần đạt và đã thống kê lại!');
         }
     };
 
@@ -1785,7 +1803,15 @@ const ExamGenerator: React.FC = () => {
                             </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                            <button
+                                type="button"
+                                onClick={handlePurgeInvalidQuestions}
+                                className="px-3.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                                title="Kiểm tra toàn bộ câu hỏi: Nếu bài học không có YCCĐ ở mức độ đó (ví dụ không có Nhận biết) hoặc YCCĐ đã xóa thì tự động xóa câu hỏi và thống kê lại"
+                            >
+                                <ShieldCheck size={14} className="text-amber-600" /> Kiểm tra & Lọc câu sai YCCĐ
+                            </button>
                             <input
                                 type="file"
                                 id="jsonUpload"

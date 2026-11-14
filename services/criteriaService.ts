@@ -1757,47 +1757,405 @@ export const isQuestionCriteriaValidForLesson = (
     const rawCrit = String(q.criteria || q.tieuChi || '').trim();
     const qLvl = getLevelCodeFromTitle(String(q.level || q.mucDo || 'NB'));
 
+    // 0. Kiểm tra bắt buộc theo mức độ nhận thức (NB / TH / VD / VDC):
+    // Nếu bài học KHÔNG có bất kỳ YCCĐ nào ở mức độ nhận thức `qLvl` của câu hỏi
+    // (ví dụ bài học không có yêu cầu về Nhận biết mà lại có câu hỏi mức Nhận biết),
+    // thì câu hỏi đó KHÔNG hợp lệ -> trả về false!
+    const levelActiveList =
+        qLvl === 'VD' || qLvl === 'VDC'
+            ? [...(allActiveByLevel['VD'] || []), ...(allActiveByLevel['VDC'] || [])]
+            : (allActiveByLevel[qLvl] || []);
+    if (levelActiveList.length === 0) {
+        return false;
+    }
+
+    const levelActiveCodes = new Set<string>();
+    levelActiveList.forEach(c => {
+        const code = c.trim().split(/\s+/)[0].replace(/[:.]$/, '');
+        if (code) levelActiveCodes.add(code);
+    });
+
     if (rawCrit) {
         const codeMatch = rawCrit.match(/^(\d+\.\d+)\b/);
         const qCode = codeMatch ? codeMatch[1] : rawCrit.split(/\s+/)[0].replace(/[:.]$/, '').trim();
         const qText = rawCrit.replace(/^\d+\.\d+\s*/, '').replace(/^[\s–\-*•]+/, '').trim();
 
-        // 1. Nếu câu hỏi gắn kèm nội dung chữ của YCCĐ -> kiểm tra xem đã bị xóa chưa hoặc có khớp YCCĐ hiện có không
-        if (qText.length > 5) {
+        // 1. Nếu câu hỏi gắn kèm nội dung chữ của YCCĐ -> kiểm tra xem đã bị xóa chưa hoặc có khớp YCCĐ hiện có của mức độ này không
+        if (qText.length > 5 && normalizeLessonString(qText) !== normalizeLessonString(rawLesson)) {
             if (Array.from(deletedNorms).some(d => areCriteriaSemanticallySame(d, qText))) {
                 return false;
             }
-            const matchesActiveText = allActiveList.some(c => areCriteriaSemanticallySame(c, qText));
-            if (!matchesActiveText) {
+            const matchesLevelText = levelActiveList.some(c => areCriteriaSemanticallySame(c, qText));
+            if (!matchesLevelText) {
                 return false;
             }
+            return true;
         }
 
-        // 2. Nếu câu hỏi gắn mã YCCĐ (ví dụ 1.1, 2.1, 3.1) -> mã đó bắt buộc phải tồn tại trong danh sách YCCĐ hiện hành của bài học
+        // 2. Nếu câu hỏi gắn mã YCCĐ (ví dụ 1.1, 2.1, 3.1) -> mã đó bắt buộc phải tồn tại trong danh sách YCCĐ thuộc mức độ này của bài học
         if (qCode && /^\d+\.\d+$/.test(qCode)) {
             if (deletedCodes.has(qCode) || deletedCodes.has(`${qLvl}:${qCode}`)) {
-                if (!activeCodes.has(qCode)) return false;
+                if (!levelActiveCodes.has(qCode)) return false;
             }
-            if (!activeCodes.has(qCode)) {
-                return false;
-            }
-        }
-    } else {
-        // Nếu câu hỏi không ghi mã tiêu chí cụ thể ("-- Mặc định (Theo bài học) --"),
-        // chỉ chặn khi người dùng đã xóa toàn bộ YCCĐ ở mức độ nhận thức đó của bài học
-        const hasDeletedInLevel = Array.from(deletedCodes).some(dc => dc.startsWith(`${qLvl}:`));
-        if (hasDeletedInLevel) {
-            const hasLevelInLesson =
-                (allActiveByLevel[qLvl] && allActiveByLevel[qLvl].length > 0) ||
-                (qLvl === 'VD' && allActiveByLevel['VDC'] && allActiveByLevel['VDC'].length > 0) ||
-                (qLvl === 'VDC' && allActiveByLevel['VD'] && allActiveByLevel['VD'].length > 0);
-            if (!hasLevelInLesson) {
+            if (!levelActiveCodes.has(qCode)) {
                 return false;
             }
         }
     }
 
     return true;
+};
+
+export interface InvalidQuestionCleanupReport {
+    validQuestions: any[];
+    removedCount: number;
+    remainingCount: number;
+    removedDetails: string[];
+    matrixRemovedCount: number;
+}
+
+/**
+ * Kiểm tra toàn bộ câu hỏi (trong danh sách đang mở, trong Ngân hàng câu hỏi lưu trữ và trong các file JSON của Ma trận).
+ * Nếu có câu hỏi mà bài học đó không có Yêu cầu cần đạt tương ứng (ví dụ bài không có YCCĐ mức Nhận biết mà lại có câu hỏi Nhận biết,
+ * hoặc câu hỏi gắn YCCĐ không tồn tại / đã bị xóa), tự động xóa bỏ câu hỏi đó và thống kê lại toàn bộ.
+ */
+export const purgeInvalidQuestionsAndResync = (
+    currentQuestions?: any[],
+    filterGrade?: string,
+    filterLesson?: string
+): InvalidQuestionCleanupReport => {
+    const store = loadCustomCriteriaStore();
+    const removedBucketMap = new Map<string, number>();
+
+    const recordRemoval = (q: any, fallbackGrade?: string, fallbackLesson?: string) => {
+        const rawLesson = String(q?.lesson || q?.bai || fallbackLesson || 'Chưa rõ bài').trim();
+        const rawGrade = String(q?.grade || q?.lop || fallbackGrade || '').trim();
+        const gMatch = rawGrade.match(/\d+/);
+        const g = gMatch ? gMatch[0] : (rawLesson ? detectGradeFromLessonOrContext(rawLesson) : '');
+        const lvl = getLevelCodeFromTitle(String(q?.level || q?.mucDo || 'NB'));
+        const lvlTitle = getLevelTitleFromCode(lvl);
+        const key = `${g ? `Khối ${g} - ` : ''}${rawLesson} (${lvlTitle} - ${lvl})`;
+        removedBucketMap.set(key, (removedBucketMap.get(key) || 0) + 1);
+    };
+
+    const matchesScope = (q: any, fallbackGrade?: string, fallbackLesson?: string) => {
+        if (!filterGrade && !filterLesson) return true;
+        const qGrade = String(q?.grade || q?.lop || fallbackGrade || '').match(/\d+/)?.[0] || '';
+        const qLesson = String(q?.lesson || q?.bai || fallbackLesson || '').trim();
+        if (filterGrade) {
+            const targetG = filterGrade.match(/\d+/)?.[0] || filterGrade.trim();
+            if (targetG && qGrade && qGrade !== targetG) return false;
+        }
+        if (filterLesson) {
+            const normFilter = normalizeLessonString(filterLesson);
+            const filterNum = extractLessonNumber(filterLesson);
+            const normQ = normalizeLessonString(qLesson);
+            const qNum = extractLessonNumber(qLesson);
+            if (normFilter && normQ !== normFilter && !(filterNum && qNum === filterNum)) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    // 1. Kiểm tra và làm sạch danh sách câu hỏi truyền vào (hoặc Ngân hàng câu hỏi lưu trữ)
+    const bankRes = loadQuestionBank();
+    const sourceList: any[] = Array.isArray(currentQuestions)
+        ? currentQuestions
+        : (bankRes.success && Array.isArray(bankRes.data) ? bankRes.data : []);
+
+    const validQuestions: any[] = [];
+    let removedCount = 0;
+
+    sourceList.forEach(q => {
+        if (!matchesScope(q)) {
+            validQuestions.push(q);
+            return;
+        }
+        if (isQuestionCriteriaValidForLesson(q, q?.grade || filterGrade, q?.lesson || filterLesson, store)) {
+            validQuestions.push(q);
+        } else {
+            removedCount++;
+            recordRemoval(q, filterGrade, filterLesson);
+        }
+    });
+
+    // Đồng bộ lưu vào Ngân hàng câu hỏi chính (questionBankStorage)
+    try {
+        if (Array.isArray(currentQuestions)) {
+            saveQuestionBank(validQuestions, { force: true });
+        } else if (removedCount > 0) {
+            saveQuestionBank(validQuestions, { force: true });
+        }
+        // Nếu người dùng truyền currentQuestions là tập con nhưng trong questionBank tổng vẫn còn câu sai -> làm sạch luôn kho tổng
+        const latestBank = loadQuestionBank();
+        if (latestBank.success && Array.isArray(latestBank.data) && latestBank.data.length > 0) {
+            const cleanedAll = latestBank.data.filter(q => {
+                if (!matchesScope(q)) return true;
+                return isQuestionCriteriaValidForLesson(q, q?.grade || filterGrade, q?.lesson || filterLesson, store);
+            });
+            if (cleanedAll.length !== latestBank.data.length) {
+                saveQuestionBank(cleanedAll, { force: true });
+            }
+        }
+    } catch (e) {
+        console.error('[criteriaService] Error saving cleaned questionBank:', e);
+    }
+
+    // 2. Kiểm tra, xóa câu hỏi sai YCCĐ trong các file JSON thuộc matrixFileSystem và thống kê lại availableCounts + Bản đặc tả
+    let matrixRemovedCount = 0;
+    try {
+        const rawFs = localStorage.getItem('matrixFileSystem');
+        if (rawFs) {
+            const fs = JSON.parse(rawFs);
+            let fsModified = false;
+
+            const cleanTreeNode = (node: any, inheritedGrade?: string) => {
+                if (!node) return;
+                let currentGrade = inheritedGrade;
+                if (node.name) {
+                    const m = node.name.match(/(?:Lớp|Khối)\s*(\d+)/i) || node.name.match(/\b([6-9])\b/);
+                    if (m && ['6', '7', '8', '9'].includes(m[1])) {
+                        currentGrade = m[1];
+                    }
+                }
+
+                // Làm sạch từng file bài học (.json)
+                if (node.type === 'file' && node.content) {
+                    const effGrade = String(node.content?.info?.grade || currentGrade || filterGrade || '8').match(/\d+/)?.[0] || '8';
+                    const fileLesson =
+                        node.content?.info?.lesson ||
+                        node.content?.thongTinChung?.bai ||
+                        String(node.name || '').replace(/\.json$/i, '');
+
+                    const cleanArray = (arr: any[]) => {
+                        if (!Array.isArray(arr)) return arr;
+                        const kept: any[] = [];
+                        arr.forEach(q => {
+                            if (!matchesScope(q, effGrade, fileLesson)) {
+                                kept.push(q);
+                                return;
+                            }
+                            if (isQuestionCriteriaValidForLesson(q, effGrade, fileLesson, store)) {
+                                kept.push(q);
+                            } else {
+                                matrixRemovedCount++;
+                                fsModified = true;
+                                if (removedCount === 0) {
+                                    recordRemoval(q, effGrade, fileLesson);
+                                }
+                            }
+                        });
+                        return kept;
+                    };
+
+                    if (Array.isArray(node.content.questions)) {
+                        node.content.questions = cleanArray(node.content.questions);
+                    }
+                    if (Array.isArray(node.content.tracNghiem)) {
+                        node.content.tracNghiem = cleanArray(node.content.tracNghiem);
+                    }
+                    if (Array.isArray(node.content.tuLuan)) {
+                        node.content.tuLuan = cleanArray(node.content.tuLuan);
+                    }
+                }
+
+                if (Array.isArray(node.children)) {
+                    node.children.forEach((child: any) => cleanTreeNode(child, currentGrade));
+                }
+
+                // Thống kê lại availableCounts, làm sạch các ô cấp phát sai mức độ và đồng bộ lại Bản đặc tả cho thư mục đề thi
+                if (node.matrixData?.matrix?.rows && Array.isArray(node.matrixData.matrix.rows)) {
+                    const effGrade = currentGrade || '8';
+                    const mRows: string[][] = node.matrixData.matrix.rows;
+                    const sRows: string[][] = node.matrixData.specifications?.rows || [];
+                    const nfRows: Record<number, any> = node.matrixData.newFormatRows || {};
+                    if (!Array.isArray(node.matrixData.availableCounts)) {
+                        node.matrixData.availableCounts = [];
+                    }
+
+                    mRows.forEach((row: string[], rIdx: number) => {
+                        const subTopic = row[2] || '';
+                        const rowLesson = row[3] || '';
+                        if (!rowLesson && !subTopic) return;
+
+                        // Tìm file JSON tương ứng trong thư mục chủ đề con để thống kê lại số lượng câu hỏi hợp lệ
+                        const subDir = Array.isArray(node.children)
+                            ? node.children.find(
+                                  (c: any) =>
+                                      c.type === 'folder' &&
+                                      normalizeLessonString(c.name) === normalizeLessonString(subTopic)
+                              )
+                            : null;
+                        const matchedFile =
+                            subDir && Array.isArray(subDir.children)
+                                ? subDir.children.find((f: any) => {
+                                      const fLesson =
+                                          f.content?.info?.lesson ||
+                                          f.content?.thongTinChung?.bai ||
+                                          String(f.name || '').replace(/\.json$/i, '');
+                                      return (
+                                          normalizeLessonString(fLesson) === normalizeLessonString(rowLesson) ||
+                                          (extractLessonNumber(fLesson) &&
+                                              extractLessonNumber(fLesson) === extractLessonNumber(rowLesson))
+                                      );
+                                  })
+                                : null;
+
+                        const poolQuestions: any[] = [];
+                        if (matchedFile?.content) {
+                            const counts = {
+                                NB: { TN: 0, TL: 0 },
+                                TH: { TN: 0, TL: 0 },
+                                VD: { TN: 0, TL: 0 },
+                                VDC: { TN: 0, TL: 0 }
+                            };
+                            (matchedFile.content.tracNghiem || []).forEach((q: any) => {
+                                if (!isQuestionCriteriaValidForLesson(q, effGrade, rowLesson, store)) return;
+                                const l = getLevelCodeFromTitle(String(q.mucDo || 'NB')) as 'NB' | 'TH' | 'VD' | 'VDC';
+                                if (counts[l]) counts[l].TN++;
+                                poolQuestions.push({ ...q, level: l, category: 'mc', criteria: q.tieuChi || q.criteria || '' });
+                            });
+                            (matchedFile.content.tuLuan || []).forEach((q: any) => {
+                                if (!isQuestionCriteriaValidForLesson(q, effGrade, rowLesson, store)) return;
+                                const l = getLevelCodeFromTitle(String(q.mucDo || 'NB')) as 'NB' | 'TH' | 'VD' | 'VDC';
+                                if (counts[l]) counts[l].TL++;
+                                poolQuestions.push({ ...q, level: l, category: 'essay', criteria: q.tieuChi || q.criteria || '' });
+                            });
+                            (matchedFile.content.questions || []).forEach((q: any) => {
+                                if (!isQuestionCriteriaValidForLesson(q, effGrade, rowLesson, store)) return;
+                                const l = getLevelCodeFromTitle(String(q.level || 'NB')) as 'NB' | 'TH' | 'VD' | 'VDC';
+                                const isMC = q.category === 'mc' || q.category !== 'essay';
+                                if (counts[l]) {
+                                    if (isMC) counts[l].TN++;
+                                    else counts[l].TL++;
+                                }
+                                poolQuestions.push({ ...q, level: l, category: isMC ? 'mc' : 'essay', criteria: q.criteria || q.tieuChi || '' });
+                            });
+                            node.matrixData.availableCounts[rIdx] = counts;
+                            fsModified = true;
+                        }
+
+                        // Kiểm tra các mức độ của bài học hiện tại: nếu mức độ nào không có YCCĐ thì xóa số câu phân bổ ở mức đó trên Ma trận
+                        if (rowLesson) {
+                            const merged = getMergedCriteria(effGrade, rowLesson, store);
+                            const hasNB = Boolean(merged?.NB && merged.NB.length > 0);
+                            const hasTH = Boolean(merged?.TH && merged.TH.length > 0);
+                            const hasVD = Boolean(
+                                (merged?.VD && merged.VD.length > 0) || (merged?.VDC && merged.VDC.length > 0)
+                            );
+
+                            if (!hasNB) {
+                                if (node.matrixData.availableCounts[rIdx]) {
+                                    node.matrixData.availableCounts[rIdx].NB = { TN: 0, TL: 0 };
+                                }
+                                if (row[5] || row[6]) {
+                                    row[5] = '';
+                                    row[6] = '';
+                                    fsModified = true;
+                                }
+                                if (sRows[rIdx] && sRows[rIdx][5] !== '0-0') {
+                                    sRows[rIdx][5] = '0-0';
+                                    fsModified = true;
+                                }
+                                if (nfRows[rIdx]) {
+                                    if (nfRows[rIdx].mc?.B) nfRows[rIdx].mc.B.count = 0;
+                                    if (nfRows[rIdx].tf?.B) nfRows[rIdx].tf.B.count = 0;
+                                    if (nfRows[rIdx].sa?.B) nfRows[rIdx].sa.B.count = 0;
+                                    if (nfRows[rIdx].essay?.B) nfRows[rIdx].essay.B.count = 0;
+                                }
+                            }
+                            if (!hasTH) {
+                                if (node.matrixData.availableCounts[rIdx]) {
+                                    node.matrixData.availableCounts[rIdx].TH = { TN: 0, TL: 0 };
+                                }
+                                if (row[7] || row[8]) {
+                                    row[7] = '';
+                                    row[8] = '';
+                                    fsModified = true;
+                                }
+                                if (sRows[rIdx] && sRows[rIdx][6] !== '0-0') {
+                                    sRows[rIdx][6] = '0-0';
+                                    fsModified = true;
+                                }
+                                if (nfRows[rIdx]) {
+                                    if (nfRows[rIdx].mc?.H) nfRows[rIdx].mc.H.count = 0;
+                                    if (nfRows[rIdx].tf?.H) nfRows[rIdx].tf.H.count = 0;
+                                    if (nfRows[rIdx].sa?.H) nfRows[rIdx].sa.H.count = 0;
+                                    if (nfRows[rIdx].essay?.H) nfRows[rIdx].essay.H.count = 0;
+                                }
+                            }
+                            if (!hasVD) {
+                                if (node.matrixData.availableCounts[rIdx]) {
+                                    node.matrixData.availableCounts[rIdx].VD = { TN: 0, TL: 0 };
+                                    node.matrixData.availableCounts[rIdx].VDC = { TN: 0, TL: 0 };
+                                }
+                                if (row[9] || row[10] || row[11] || row[12]) {
+                                    row[9] = '';
+                                    row[10] = '';
+                                    row[11] = '';
+                                    row[12] = '';
+                                    fsModified = true;
+                                }
+                                if (sRows[rIdx] && (sRows[rIdx][7] !== '0-0' || sRows[rIdx][8] !== '0-0')) {
+                                    sRows[rIdx][7] = '0-0';
+                                    sRows[rIdx][8] = '0-0';
+                                    fsModified = true;
+                                }
+                                if (nfRows[rIdx]) {
+                                    if (nfRows[rIdx].mc?.VD) nfRows[rIdx].mc.VD.count = 0;
+                                    if (nfRows[rIdx].tf?.VD) nfRows[rIdx].tf.VD.count = 0;
+                                    if (nfRows[rIdx].sa?.VD) nfRows[rIdx].sa.VD.count = 0;
+                                    if (nfRows[rIdx].essay?.VD) nfRows[rIdx].essay.VD.count = 0;
+                                }
+                            }
+                        }
+
+                        // Cập nhật lại nội dung YCCĐ trên Bản đặc tả theo kho câu hỏi đã làm sạch
+                        if (sRows[rIdx]) {
+                            const poolSpec =
+                                poolQuestions.length > 0
+                                    ? buildSpecHtmlFromQuestionPool(effGrade, rowLesson, subTopic, poolQuestions, store)
+                                    : null;
+                            if (poolSpec) {
+                                sRows[rIdx][4] = poolSpec.specHtml;
+                                fsModified = true;
+                            } else if (rowLesson) {
+                                const fallbackHtml = buildSpecHtmlFromMergedCriteria(effGrade, rowLesson, store);
+                                if (fallbackHtml !== null) {
+                                    sRows[rIdx][4] = fallbackHtml;
+                                    fsModified = true;
+                                }
+                            }
+                        }
+                    });
+                }
+            };
+
+            cleanTreeNode(fs);
+            if (fsModified) {
+                localStorage.setItem('matrixFileSystem', JSON.stringify(fs));
+            }
+        }
+    } catch (e) {
+        console.error('[criteriaService] Error cleaning matrixFileSystem:', e);
+    }
+
+    const totalRemoved = removedCount > 0 ? removedCount : matrixRemovedCount;
+    const removedDetails = Array.from(removedBucketMap.entries()).map(
+        ([label, cnt]) => `${label}: ${cnt} câu`
+    );
+
+    window.dispatchEvent(new CustomEvent('matrix_filesystem_updated', { detail: { action: 'purge_invalid_questions' } }));
+    window.dispatchEvent(new CustomEvent('criteria_updated', { detail: { action: 'purge_invalid_questions' } }));
+
+    return {
+        validQuestions,
+        removedCount: totalRemoved,
+        remainingCount: validQuestions.length,
+        removedDetails,
+        matrixRemovedCount
+    };
 };
 
 /**

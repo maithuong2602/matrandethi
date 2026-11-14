@@ -47,7 +47,8 @@ import {
   deleteCustomCriterion,
   loadCustomCriteriaStore, 
   CUSTOM_CRITERIA_STORAGE_KEY,
-  filterQuestionsByActiveCriteria
+  filterQuestionsByActiveCriteria,
+  purgeInvalidQuestionsAndResync
 } from '../services/criteriaService';
 
 
@@ -304,30 +305,38 @@ const QuestionManager: React.FC = () => {
     return getMergedCriteria(grade, lesson, customCriteriaStore);
   }, [grade, lesson, customCriteriaStore]);
 
-  // Lấy danh sách Tiêu chí (YCCĐ) theo mức độ; nếu bài học chỉ có YCCĐ ở mức độ khác (VD/VDC), tự động hiển thị toàn bộ YCCĐ của bài để không bị trống dropdown
+  // Lấy danh sách Tiêu chí (YCCĐ) theo đúng mức độ nhận thức của bài học.
+  // Riêng VD và VDC có thể dùng chung YCCĐ mức Vận dụng; các mức NB hoặc TH nếu bài học không có YCCĐ sẽ trả về mảng rỗng để không gắn nhầm mức độ.
   const getCriteriaOptionsForLevel = (targetLevel: string): string[] => {
     if (!currentCriteriaData) return [];
     const exactList = currentCriteriaData[targetLevel];
     if (Array.isArray(exactList) && exactList.length > 0) {
       return exactList;
     }
-    const allItems: string[] = [];
-    ['NB', 'TH', 'VD', 'VDC'].forEach(lvl => {
-      const arr = currentCriteriaData[lvl];
-      if (Array.isArray(arr)) {
-        arr.forEach(item => {
-          if (!allItems.includes(item)) allItems.push(item);
-        });
-      }
-    });
-    Object.entries(currentCriteriaData).forEach(([k, arr]) => {
-      if (k !== '__deleted' && Array.isArray(arr)) {
-        arr.forEach(item => {
-          if (!allItems.includes(item)) allItems.push(item);
-        });
-      }
-    });
-    return allItems;
+    if (targetLevel === 'VD' || targetLevel === 'VDC') {
+      const vdList = [...(currentCriteriaData['VD'] || []), ...(currentCriteriaData['VDC'] || [])];
+      if (vdList.length > 0) return vdList;
+    }
+    return [];
+  };
+
+  // Kiểm tra toàn bộ câu hỏi: nếu có câu hỏi mà bài học không có YCCĐ ở mức độ đó (ví dụ không có YCCĐ Nhận biết mà lại có câu hỏi Nhận biết)
+  // hoặc YCCĐ không tồn tại / đã bị xóa -> tự động xóa và thống kê lại
+  const handleVerifyAndPurgeInvalidQuestions = () => {
+    const report = purgeInvalidQuestionsAndResync(questions);
+    setQuestions(report.validQuestions);
+    setCustomCriteriaStore(loadCustomCriteriaStore());
+
+    if (report.removedCount > 0 || report.matrixRemovedCount > 0) {
+      const detailStr = report.removedDetails.length > 0 ? ` (${report.removedDetails.join('; ')})` : '';
+      setAlertMessage(
+        `Đã kiểm tra và xóa ${report.removedCount} câu hỏi không có YCCĐ tương ứng${detailStr}. Đã thống kê lại ngân hàng (còn ${report.remainingCount} câu hợp lệ)!`
+      );
+    } else {
+      setAlertMessage(
+        `Đã kiểm tra toàn bộ ${report.remainingCount} câu hỏi: Tất cả câu hỏi đều khớp hợp lệ với Yêu cầu cần đạt của từng bài học và đã cập nhật thống kê!`
+      );
+    }
   };
 
   const handleAddCustomCriterion = () => {
@@ -1653,7 +1662,7 @@ ${formatExample}`;
             
             {/* General Info Card */}
             <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
-                <div className="flex items-center justify-between mb-4">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
                     <h2 className="text-lg font-semibold text-primary flex items-center gap-2">
                         <Info size={20} /> THÔNG TIN CHUNG
                         {questions.length > 0 && lesson && (
@@ -1662,16 +1671,26 @@ ${formatExample}`;
                             </span>
                         )}
                     </h2>
-                    {filteredQuestions.length > 0 && (
-                        <button 
+                    <div className="flex flex-wrap items-center gap-2">
+                        <button
                             type="button"
-                            onClick={handleClearAllQuestions}
-                            className="text-xs text-red-600 hover:text-red-700 hover:bg-red-50 px-3 py-1.5 rounded-lg border border-red-200 transition-colors flex items-center gap-1.5 font-medium"
-                            title={lesson ? `Xóa sạch toàn bộ câu hỏi của bài "${lesson}"` : "Xóa toàn bộ câu hỏi hiện có trong danh sách"}
+                            onClick={handleVerifyAndPurgeInvalidQuestions}
+                            className="text-xs text-amber-700 hover:text-amber-800 bg-amber-50 hover:bg-amber-100 px-3 py-1.5 rounded-lg border border-amber-200 transition-colors flex items-center gap-1.5 font-semibold cursor-pointer"
+                            title="Kiểm tra toàn bộ câu hỏi: Nếu bài học không có YCCĐ ở mức độ đó (ví dụ không có Nhận biết) hoặc YCCĐ đã xóa thì tự động xóa câu hỏi và thống kê lại"
                         >
-                            <Trash size={14} /> Xóa sạch câu hỏi ({filteredQuestions.length})
+                            <CheckCircle2 size={14} className="text-amber-600" /> Kiểm tra & Lọc câu sai YCCĐ
                         </button>
-                    )}
+                        {filteredQuestions.length > 0 && (
+                            <button 
+                                type="button"
+                                onClick={handleClearAllQuestions}
+                                className="text-xs text-red-600 hover:text-red-700 hover:bg-red-50 px-3 py-1.5 rounded-lg border border-red-200 transition-colors flex items-center gap-1.5 font-medium"
+                                title={lesson ? `Xóa sạch toàn bộ câu hỏi của bài "${lesson}"` : "Xóa toàn bộ câu hỏi hiện có trong danh sách"}
+                            >
+                                <Trash size={14} /> Xóa sạch câu hỏi ({filteredQuestions.length})
+                            </button>
+                        )}
+                    </div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
@@ -2391,9 +2410,19 @@ ${formatExample}`;
             
             {/* Stats Card */}
             <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
-                <h2 className="text-lg font-semibold text-primary mb-4 flex items-center gap-2">
-                    <ChartBar size={20} /> Thống kê số câu hỏi
-                </h2>
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+                    <h2 className="text-lg font-semibold text-primary flex items-center gap-2">
+                        <ChartBar size={20} /> Thống kê số câu hỏi
+                    </h2>
+                    <button
+                        type="button"
+                        onClick={handleVerifyAndPurgeInvalidQuestions}
+                        className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                        title="Kiểm tra các câu hỏi không khớp YCCĐ (ví dụ bài không có YCCĐ Nhận biết mà có câu hỏi), xóa đi và thống kê lại"
+                    >
+                        <CheckCircle2 size={14} /> Kiểm tra YCCĐ & Thống kê lại
+                    </button>
+                </div>
                 <div className="p-4 bg-gray-50 rounded-lg border border-gray-100 font-mono text-sm text-gray-600 whitespace-pre-wrap">
                     {Object.entries(questionSummary).length > 0 
                         ? Object.entries(questionSummary).map(([key, count]) => `${key}: ${count}`).join('\n')
