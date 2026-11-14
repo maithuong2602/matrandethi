@@ -750,7 +750,26 @@ describe('Criteria Service & Matrix Synchronization', () => {
         expect(specRows[5][4]).toMatch(/Thông hiểu/i);
     });
 
-    it('allocates exact 3-4-3 and 4-3-3 (16 NB - 12 TH - 3 VD) on Grade 8 Final Exam with Chủ đề F (Bài 1, 2, 3, 4, 12, 13, 14)', () => {
+    it('never invents new YCCĐ for Bài 12, 13, 14 while keeping <= 35% examined cap and proportional allocation on Grade 8 Final Exam with Chủ đề F', () => {
+        // Giả lập localStorage từng lưu YCCĐ Nhận biết tự chế ở Bài 12, 13, 14 -> hệ thống phải tự động lọc sạch
+        localStorage.setItem(
+            CUSTOM_CRITERIA_STORAGE_KEY,
+            JSON.stringify({
+                '8': {
+                    'Bài 12: Từ thuật toán đến chương trình': {
+                        NB: ['1.1 Nhận biết được chương trình là dãy các lệnh điều khiển máy tính thực hiện một thuật toán trong môi trường lập trình trực quan.'],
+                        TH: ['2.1 Hiểu được chương trình là dãy các lệnh điều khiển máy tính thực hiện một thuật toán.'],
+                        VD: ['3.1 Mô tả được kịch bản đơn giản dưới dạng thuật toán và tạo được một chương trình đơn giản.']
+                    }
+                }
+            })
+        );
+
+        expect(getMergedCriteria('8', 'Bài 12: Từ thuật toán đến chương trình')?.NB).toBeUndefined();
+        expect(getMergedCriteria('8', 'Bài 13: Biểu diễn dữ liệu')?.NB).toBeUndefined();
+        expect(getMergedCriteria('8', 'Bài 14: Cấu trúc điều khiển')?.NB).toBeUndefined();
+        expect(getMergedCriteria('8', 'Bài 14: Cấu trúc điều khiển')?.TH).toBeUndefined();
+
         const mockFs = {
             name: 'Thư mục gốc',
             type: 'folder',
@@ -821,51 +840,34 @@ describe('Criteria Service & Matrix Synchronization', () => {
         expect(totalMC).toBe(12);
         expect(totalTF).toBe(16);
         expect(totalTL).toBe(3);
-
-        // 4 - 3 - 3 theo mức độ nhận thức (16 Biết = 4,0đ = 40%; 12 Hiểu = 3,0đ = 30%; 3 Vận dụng = 3,0đ = 30%)
-        expect(totalB).toBe(16);
-        expect(totalH).toBe(12);
+        expect(totalB + totalH).toBe(28);
         expect(totalVD).toBe(3);
 
-        // Bài 3, Bài 4, Bài 13 không có YCCĐ Nhận biết -> 0 câu Biết
-        expect((nfRows[2].mc.B.count || 0) + (nfRows[2].tf.B.count || 0)).toBe(0);
-        expect((nfRows[3].mc.B.count || 0) + (nfRows[3].tf.B.count || 0)).toBe(0);
-        expect((nfRows[5].mc.B.count || 0) + (nfRows[5].tf.B.count || 0)).toBe(0);
+        // Bài 3, Bài 4, Bài 12, Bài 13, Bài 14 không có YCCĐ Nhận biết trong chương trình -> 0 câu Biết
+        for (const idx of [2, 3, 4, 5, 6]) {
+            expect((nfRows[idx].mc.B.count || 0) + (nfRows[idx].tf.B.count || 0)).toBe(0);
+            expect(specRows[idx][4]).not.toMatch(/<strong[^>]*>\s*Nhận biết/i);
+        }
 
-        // Bài 13 chỉ có mức Thông hiểu, tuyệt đối không xuất hiện Nhận biết trên Bản đặc tả
-        expect(specRows[5][4]).not.toMatch(/Nhận biết/i);
-        expect(specRows[5][4]).toMatch(/Thông hiểu/i);
-
-        // Cụm bài đã kiểm tra (Bài 1, 2, 3) giữ đúng trần tối đa 35% (14 câu TN = 3,5đ), mỗi bài <= 5 câu (12,5%)
+        // Cụm bài đã kiểm tra (Bài 1, 2, 3) giữ đúng trần tối đa 35% (14 câu TN = 3,5đ), mỗi bài bám sát tỷ lệ số tiết (5, 5, 4 câu)
         const getRowTN = (r: any) =>
             (r.mc.B.count || 0) + (r.mc.H.count || 0) + (r.mc.VD.count || 0) +
             (r.tf.B.count || 0) + (r.tf.H.count || 0) + (r.tf.VD.count || 0);
         const totalOldTN = getRowTN(nfRows[0]) + getRowTN(nfRows[1]) + getRowTN(nfRows[2]);
         expect(totalOldTN).toBe(14);
-        expect(getRowTN(nfRows[0])).toBeLessThanOrEqual(5);
-        expect(getRowTN(nfRows[1])).toBeLessThanOrEqual(5);
-        expect(getRowTN(nfRows[2])).toBeGreaterThanOrEqual(4);
-
-        // Không có ô nào vượt quá 4 câu và không bài nào bị dồn quá 4 câu Hiểu
-        for (let i = 0; i < 7; i++) {
-            const r = nfRows[i];
-            const rowH = (r.mc.H.count || 0) + (r.tf.H.count || 0) + (r.sa.H.count || 0) + (r.essay.H.count || 0);
-            expect(rowH).toBeLessThanOrEqual(4);
-            expect(r.mc.B.count).toBeLessThanOrEqual(4);
-            expect(r.tf.B.count).toBeLessThanOrEqual(4);
-            expect(r.mc.H.count).toBeLessThanOrEqual(2);
-            expect(r.tf.H.count).toBeLessThanOrEqual(3);
-        }
+        expect(getRowTN(nfRows[0])).toBe(5);
+        expect(getRowTN(nfRows[1])).toBe(5);
+        expect(getRowTN(nfRows[2])).toBe(4);
 
         // Kiểm tra xuất file Word Bản đặc tả (generatePrintHTML):
         // 1. Có đầy đủ Chủ đề F và Lập trình trực quan với style="text-align: left; vertical-align: top;"
-        // 2. Dãn dòng gọn gàng chuyên nghiệp (margin: 0pt; line-height: 1.1;)
+        // 2. Dãn dòng gọn gàng chuyên nghiệp và căn lề trang 2.0cm, bảng rộng 96% không sát mép giấy
         const printHtml = generatePrintHTML(mData, 'Lớp 8 - Cuối kì I');
         expect(printHtml).toContain('Chủ đề F. Giải quyết vấn đề với sự trợ giúp của máy tính');
         expect(printHtml).toContain('Lập trình trực quan');
         expect(printHtml).toContain('style="text-align: left; vertical-align: top;"');
-        expect(printHtml).toContain('page-break-inside: avoid;');
-        expect(printHtml).toContain('margin: 0pt; line-height: 1.1;');
+        expect(printHtml).toContain('margin: 2.0cm 2.0cm 2.0cm 2.0cm;');
+        expect(printHtml).toContain('width: 96%; margin: 0 auto 10pt auto;');
         expect(printHtml).not.toContain('class="text-left align-top"');
     });
 

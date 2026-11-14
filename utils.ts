@@ -1170,19 +1170,24 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
     const css = `
         <style>
             @page SectionMatrix {
-                size: 29.7cm 21cm;
-                margin: 1.2cm 1.5cm 1.2cm 1.5cm;
+                size: 29.7cm 21.0cm;
+                margin: 2.0cm 2.0cm 2.0cm 2.0cm;
+                mso-header-margin: 1.2cm;
+                mso-footer-margin: 1.2cm;
                 mso-page-orientation: landscape;
             }
             div.SectionMatrix {
                 page: SectionMatrix;
+                padding: 8pt 10pt;
             }
             body { 
                 font-family: 'Times New Roman', Times, serif; 
                 font-size: 11pt; 
                 line-height: 1.1;
+                margin: 0;
+                padding: 0;
             }
-            p.MsoNormal, li.MsoNormal, div.MsoNormal, p, div {
+            p.MsoNormal, li.MsoNormal, div.MsoNormal, p {
                 mso-style-unhide: no;
                 mso-style-qformat: yes;
                 mso-style-parent: "";
@@ -1200,21 +1205,26 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 mso-pagination: widow-orphan;
             }
             table { 
-                width: 100%; 
+                width: 96%; 
+                margin: 0 auto 10pt auto;
                 border-collapse: collapse; 
                 table-layout: fixed; 
-                margin-bottom: 10pt;
-                mso-table-lspace: 0pt;
-                mso-table-rspace: 0pt;
-                mso-padding-alt: 1.5pt 2pt 1.5pt 2pt;
+                mso-table-lspace: 6pt;
+                mso-table-rspace: 6pt;
+                mso-padding-alt: 1.5pt 2.5pt 1.5pt 2.5pt;
             }
             caption, .table-caption { 
                 font-size: 13pt; 
                 font-weight: bold; 
-                margin: 6pt 0 4pt 0; 
+                margin: 12pt 0pt 8pt 0pt;
+                mso-margin-top-alt: 12pt;
+                mso-margin-bottom-alt: 8pt;
+                mso-para-margin-top: 12pt;
+                mso-para-margin-bottom: 8pt;
+                padding-top: 6pt;
                 text-align: center; 
                 text-transform: uppercase; 
-                line-height: 1.15;
+                line-height: 1.35;
                 page-break-after: avoid;
             }
             tr {
@@ -1649,8 +1659,8 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
         </tfoot>`;
 
     let matrixTableHtml = `
-        <div class="table-caption" style="font-size: 13pt; font-weight: bold; margin: 12pt 0 6pt 0; text-align: center; text-transform: uppercase; page-break-after: avoid;">${matrixTitle}</div>
-        <table>
+        <p class="table-caption" style="font-size: 13pt; font-weight: bold; margin: 12pt 0pt 8pt 0pt; padding-top: 6pt; line-height: 1.35; text-align: center; text-transform: uppercase; page-break-after: avoid;">${matrixTitle}</p>
+        <table align="center" style="width: 96%; margin: 0 auto 10pt auto;" cellpadding="0" cellspacing="0">
             <colgroup>
                 <col class="col-tt">
                 <col class="col-chuong">
@@ -1684,8 +1694,8 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
         </table>`;
 
     let specTableHtml = `
-        <div class="table-caption" style="font-size: 13pt; font-weight: bold; margin: 12pt 0 6pt 0; text-align: center; text-transform: uppercase; page-break-after: avoid;">${specTitle}</div>
-        <table>
+        <p class="table-caption" style="font-size: 13pt; font-weight: bold; margin: 12pt 0pt 8pt 0pt; padding-top: 6pt; line-height: 1.35; text-align: center; text-transform: uppercase; page-break-after: avoid;">${specTitle}</p>
+        <table align="center" style="width: 96%; margin: 0 auto 10pt auto;" cellpadding="0" cellspacing="0">
             <colgroup>
                 <col class="col-tt">
                 <col class="col-chuong">
@@ -2137,8 +2147,8 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
         const grandPoints = ptB + ptH + ptVD;
 
         matrixTableHtml = `
-            <div class="table-caption" style="font-size: 13pt; font-weight: bold; margin: 6pt 0 4pt 0; text-align: center; text-transform: uppercase; line-height: 1.15; page-break-after: avoid;">1. MA TRẬN ĐỀ KIỂM TRA ĐỊNH KÌ (${examName.toUpperCase()})</div>
-            <table cellpadding="0" cellspacing="0">
+            <p class="table-caption" style="font-size: 13pt; font-weight: bold; margin: 12pt 0pt 8pt 0pt; padding-top: 6pt; text-align: center; text-transform: uppercase; line-height: 1.35; page-break-after: avoid;">1. MA TRẬN ĐỀ KIỂM TRA ĐỊNH KÌ (${examName.toUpperCase()})</p>
+            <table align="center" style="width: 96%; margin: 0 auto 10pt auto;" cellpadding="0" cellspacing="0">
                 <thead>
                     <tr>
                         <th rowspan="4">TT</th>
@@ -2198,8 +2208,8 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             </table>`;
 
         specTableHtml = `
-            <div class="table-caption" style="font-size: 13pt; font-weight: bold; margin: 6pt 0 4pt 0; text-align: center; text-transform: uppercase; line-height: 1.15; page-break-after: avoid;">2. BẢN ĐẶC TẢ ĐỀ KIỂM TRA ĐỊNH KÌ (${examName.toUpperCase()})</div>
-            <table cellpadding="0" cellspacing="0">
+            <p class="table-caption" style="font-size: 13pt; font-weight: bold; margin: 12pt 0pt 8pt 0pt; padding-top: 6pt; text-align: center; text-transform: uppercase; line-height: 1.35; page-break-after: avoid;">2. BẢN ĐẶC TẢ ĐỀ KIỂM TRA ĐỊNH KÌ (${examName.toUpperCase()})</p>
+            <table align="center" style="width: 96%; margin: 0 auto 10pt auto;" cellpadding="0" cellspacing="0">
                 <thead>
                     <tr>
                         <th rowspan="4">TT</th>
@@ -2313,9 +2323,10 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
         </head>
         <body>
             <div class="SectionMatrix">
+                <p style="margin: 0pt; line-height: 8pt; font-size: 8pt;">&nbsp;</p>
                 ${matrixTableHtml}
-            </div>
-            <div class="SectionMatrix" style="page-break-before: always;">
+                <br clear="all" style="mso-special-character:line-break; page-break-before:always;" />
+                <p style="margin: 0pt; line-height: 10pt; font-size: 10pt;">&nbsp;</p>
                 ${specTableHtml}
             </div>
         </body>
