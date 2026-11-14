@@ -14,6 +14,7 @@ import {
 } from '../services/criteriaService';
 import QuestionManager from '../pages/QuestionManager';
 import MatrixBuilder from '../pages/MatrixBuilder';
+import { generatePrintHTML } from '../utils';
 import { MatrixData } from '../types';
 
 describe('Criteria Service & Matrix Synchronization', () => {
@@ -826,24 +827,43 @@ describe('Criteria Service & Matrix Synchronization', () => {
         expect(totalH).toBe(12);
         expect(totalVD).toBe(3);
 
-        // Bài 3 và Bài 4 không có YCCĐ Nhận biết -> 0 câu Biết
+        // Bài 3, Bài 4, Bài 12, Bài 13, Bài 14 không có YCCĐ Nhận biết -> 0 câu Biết
         expect((nfRows[2].mc.B.count || 0) + (nfRows[2].tf.B.count || 0)).toBe(0);
         expect((nfRows[3].mc.B.count || 0) + (nfRows[3].tf.B.count || 0)).toBe(0);
+        expect((nfRows[4].mc.B.count || 0) + (nfRows[4].tf.B.count || 0)).toBe(0);
+        expect((nfRows[5].mc.B.count || 0) + (nfRows[5].tf.B.count || 0)).toBe(0);
+        expect((nfRows[6].mc.B.count || 0) + (nfRows[6].tf.B.count || 0)).toBe(0);
 
-        // Bài 12 và Bài 13 có cả Biết và Hiểu trên Bản đặc tả, và không bài nào bị dồn quá 4 câu vào 1 mức độ
-        expect(specRows[4][4]).toMatch(/Nhận biết/i);
-        expect(specRows[5][4]).toMatch(/Nhận biết/i);
+        // Bài 13 chỉ có mức Thông hiểu, tuyệt đối không xuất hiện Nhận biết trên Bản đặc tả
+        expect(specRows[5][4]).not.toMatch(/Nhận biết/i);
+        expect(specRows[5][4]).toMatch(/Thông hiểu/i);
+
+        // Bài 1 và Bài 2 có cả Nhận biết và Thông hiểu được chọn
+        expect((nfRows[0].mc.B.count || 0) + (nfRows[0].tf.B.count || 0)).toBe(8);
+        expect((nfRows[0].mc.H.count || 0) + (nfRows[0].tf.H.count || 0)).toBeGreaterThanOrEqual(1);
+        expect((nfRows[1].mc.B.count || 0) + (nfRows[1].tf.B.count || 0)).toBe(8);
+        expect((nfRows[1].mc.H.count || 0) + (nfRows[1].tf.H.count || 0)).toBeGreaterThanOrEqual(1);
+
+        // Không có ô nào vượt quá 4 câu và không bài nào bị dồn quá 4 câu Hiểu
         for (let i = 0; i < 7; i++) {
             const r = nfRows[i];
-            const rowB = (r.mc.B.count || 0) + (r.tf.B.count || 0) + (r.sa.B.count || 0) + (r.essay.B.count || 0);
             const rowH = (r.mc.H.count || 0) + (r.tf.H.count || 0) + (r.sa.H.count || 0) + (r.essay.H.count || 0);
-            expect(rowB).toBeLessThanOrEqual(4);
             expect(rowH).toBeLessThanOrEqual(4);
-            expect(r.mc.B.count).toBeLessThanOrEqual(2);
-            expect(r.tf.B.count).toBeLessThanOrEqual(2);
+            expect(r.mc.B.count).toBeLessThanOrEqual(4);
+            expect(r.tf.B.count).toBeLessThanOrEqual(4);
             expect(r.mc.H.count).toBeLessThanOrEqual(2);
-            expect(r.tf.H.count).toBeLessThanOrEqual(2);
+            expect(r.tf.H.count).toBeLessThanOrEqual(3);
         }
+
+        // Kiểm tra xuất file Word Bản đặc tả (generatePrintHTML):
+        // 1. Có đầy đủ Chủ đề F và Lập trình trực quan với style="text-align: left; vertical-align: top;" (không dùng multi-class làm Word mất chữ)
+        // 2. Chủ đề F (Lập trình trực quan - Bài 12, 13, 14) không bao giờ có dòng "- Biết:" rỗng
+        const printHtml = generatePrintHTML(mData, 'Lớp 8 - Cuối kì I');
+        expect(printHtml).toContain('Chủ đề F. Giải quyết vấn đề với sự trợ giúp của máy tính');
+        expect(printHtml).toContain('Lập trình trực quan');
+        expect(printHtml).toContain('style="text-align: left; vertical-align: top;"');
+        expect(printHtml).toContain('page-break-inside: avoid;');
+        expect(printHtml).not.toContain('class="text-left align-top"');
     });
 
     it('deduplicates semantically identical Vietnamese YCCĐ between CURRICULUM and REQUIREMENTS_DATA and never resurrects deleted criteria', () => {

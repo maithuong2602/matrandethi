@@ -549,13 +549,38 @@ export const invalidateCriteriaStoreCache = () => {
     _cachedCustomStore = null;
 };
 
-const isFakePlaceholderCriterion = (text: string): boolean => {
+const isFakePlaceholderCriterion = (text: string, grade?: string, canonicalLesson?: string): boolean => {
     const norm = normalizeCriterionText(text);
-    return (
+    if (
         norm.startsWith('nêu được các khái niệm nội dung cơ bản thuộc') ||
         norm.startsWith('giải thích và phân biệt được các nội dung trọng tâm thuộc') ||
         norm.startsWith('vận dụng được kiến thức thuộc')
-    );
+    ) {
+        return true;
+    }
+    if (grade === '8' && canonicalLesson) {
+        const lNum = extractLessonNumber(canonicalLesson);
+        if (
+            lNum === '12' &&
+            norm === 'nhận biết được chương trình là dãy các lệnh điều khiển máy tính thực hiện một thuật toán'
+        ) {
+            return true;
+        }
+        if (
+            lNum === '13' &&
+            norm === 'nêu được khái niệm hằng biến kiểu dữ liệu biểu thức'
+        ) {
+            return true;
+        }
+        if (
+            lNum === '14' &&
+            (norm === 'nhận biết được cấu trúc tuần tự rẽ nhánh và lặp trong môi trường lập trình trực quan' ||
+                norm === 'giải thích được hoạt động của cấu trúc tuần tự rẽ nhánh và lặp ở chương trình đơn giản')
+        ) {
+            return true;
+        }
+    }
+    return false;
 };
 
 const sanitizeLoadedCriteriaStore = (store: GradeCriteriaMap): void => {
@@ -578,7 +603,7 @@ const sanitizeLoadedCriteriaStore = (store: GradeCriteriaMap): void => {
             if (Array.isArray(entry.__deleted)) {
                 const dedupedDeleted: string[] = [];
                 entry.__deleted.forEach(d => {
-                    if (!d || isFakePlaceholderCriterion(d)) return;
+                    if (!d || isFakePlaceholderCriterion(d, g, canonicalLesson)) return;
                     const normD = normalizeCriterionText(d);
                     if (!normD) return;
                     if (normD.includes('được lưu trữ với dung lượng khổng lồ')) return;
@@ -597,7 +622,7 @@ const sanitizeLoadedCriteriaStore = (store: GradeCriteriaMap): void => {
                 const baseForLvl = baseMap?.[lvl] || [];
                 const deduped: string[] = [];
                 list.forEach(it => {
-                    if (!it || isFakePlaceholderCriterion(it)) return;
+                    if (!it || isFakePlaceholderCriterion(it, g, canonicalLesson)) return;
                     const normIt = normalizeCriterionText(it);
                     if (deletedList.some(d => d === normIt || areCriteriaSemanticallySame(d, it))) return;
 

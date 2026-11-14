@@ -1385,12 +1385,13 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
             return nonEmptyAny.length > 0 ? nonEmptyAny : [grouped.B];
         }
 
-        // Chế độ mặc định: Chỉ hiện mức độ & tiêu chí được chọn ra đề (quota > 0 và checked)
+        // Chế độ mặc định: Chỉ hiện mức độ & tiêu chí được chọn ra đề (quota > 0 và bài học thực sự có YCCĐ ở mức độ đó)
         const filteredSubRows = levelDefs
             .map(d => {
                 const quota = levelQuotas[d.levelKey];
                 if (quota <= 0) return null;
                 const baseGroup = grouped[d.levelKey];
+                if (baseGroup.items.length === 0) return null;
                 let selectedItems = baseGroup.items.filter(it => it.checked);
                 if (selectedItems.length === 0 && baseGroup.items.length > 0) {
                     selectedItems = baseGroup.items.slice(0, quota);
@@ -1404,7 +1405,11 @@ const MatrixView: React.FC<MatrixViewProps> = ({ data, onUpdateMatrix, onDeleteR
             })
             .filter((r): r is NewSpecSubRowItem => r !== null);
 
-        return filteredSubRows.length > 0 ? filteredSubRows : [grouped.B];
+        if (filteredSubRows.length > 0) return filteredSubRows;
+        const nonEmptyFallback = levelDefs
+            .filter(d => grouped[d.levelKey].items.length > 0)
+            .map(d => grouped[d.levelKey]);
+        return nonEmptyFallback.length > 0 ? nonEmptyFallback : [grouped.B];
     };
 
     const renderSpecRow = (row: string[], rowIndex: number, rowspanMain: number | null, rowspanSub: number | null) => {

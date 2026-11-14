@@ -1187,12 +1187,16 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 table-layout: fixed; 
                 margin-bottom: 20px;
             }
-            caption { 
+            caption, .table-caption { 
                 font-size: 13pt; 
                 font-weight: bold; 
-                margin-bottom: 6pt; 
+                margin: 12pt 0 6pt 0; 
                 text-align: center; 
                 text-transform: uppercase; 
+                page-break-after: avoid;
+            }
+            tr {
+                page-break-inside: avoid;
             }
             th, td { 
                 border: 1px solid windowtext;
@@ -1207,6 +1211,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             }
             .text-left { text-align: left; }
             .align-top { vertical-align: top; }
+            .text-left-top { text-align: left; vertical-align: top; }
             tfoot td { font-weight: bold; }
             
             /* Print Specifics */
@@ -1319,7 +1324,18 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
         }
     };
 
-    // 2. Group Rows
+    // 2. Group Rows (ensure continuation rows always inherit non-empty mainTopic and subTopic)
+    let fallbackMainTopic = '';
+    let fallbackSubTopic = '';
+    data.matrix.rows.forEach((row: any) => {
+        const m = String(row[1] || '').trim();
+        const s = String(row[2] || '').trim() || String(row[3] || '').trim();
+        if (m) fallbackMainTopic = m;
+        else if (fallbackMainTopic) row[1] = fallbackMainTopic;
+        if (s) fallbackSubTopic = s;
+        else if (fallbackSubTopic) row[2] = fallbackSubTopic;
+    });
+
     const groupedByMainTopic = data.matrix.rows.reduce((acc: any, row) => {
         const main = row[1]; if(!acc[main]) acc[main] = [];
         acc[main].push(row);
@@ -1412,12 +1428,12 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             let contentDisplay = `${subTopic} (${subSoTiet} tiết)`;
 
             // --- MATRIX ROW ---
-            matrixBodyHtml += '<tr>';
+            matrixBodyHtml += '<tr style="page-break-inside: avoid;">';
             matrixBodyHtml += `<td>${stt}</td>`;
             if (index === 0) {
-                matrixBodyHtml += `<td class="text-left align-top" rowspan="${mainRowspan}">${mainTopicDisplay}</td>`;
+                matrixBodyHtml += `<td class="text-left-top" style="text-align: left; vertical-align: top;" rowspan="${mainRowspan}">${mainTopicDisplay}</td>`;
             }
-            matrixBodyHtml += `<td class="text-left">${contentDisplay}</td>`;
+            matrixBodyHtml += `<td class="text-left" style="text-align: left;">${contentDisplay}</td>`;
             
             // Counts & Points for 5-10
             for(let k=5; k<=10; k++){
@@ -1510,15 +1526,15 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 formattedReq += `<div style="margin-top:8px; border-top:1px dashed #ccc; padding-top:4px;"><i>Vị trí: </i><span style="color:#0056b3;">${positionSummary.join('; ')}</span></div>`;
             }
 
-            specBodyHtml += '<tr>';
-            specBodyHtml += `<td>${stt}</td>`;
+            specBodyHtml += '<tr style="page-break-inside: avoid;">';
+            specBodyHtml += `<td class="align-top" style="vertical-align: top;">${stt}</td>`;
             if (index === 0) {
-                specBodyHtml += `<td class="text-left align-top" rowspan="${mainRowspan}"><b>${mainTopic}</b></td>`;
+                specBodyHtml += `<td class="text-left-top" style="text-align: left; vertical-align: top;" rowspan="${mainRowspan}"><b>${mainTopic}</b></td>`;
             }
-            specBodyHtml += `<td class="text-left align-top"><b>${subTopic}</b></td>`;
+            specBodyHtml += `<td class="text-left-top" style="text-align: left; vertical-align: top;"><b>${subTopic}</b></td>`;
             // REMOVED LESSON COLUMN FROM SPECIFICATION TABLE
             // specBodyHtml += `<td class="text-left align-top">${lessonName}</td>`;
-            specBodyHtml += `<td class="text-left align-top">${formattedReq}</td>`;
+            specBodyHtml += `<td class="text-left-top" style="text-align: left; vertical-align: top;">${formattedReq}</td>`;
             
             const renderCountPoints = (count: number, pt: number) => {
                  return `<div>${count}</div><div>/ ${formatDiem(pt)}đ</div>`;
@@ -1596,8 +1612,8 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
         </tfoot>`;
 
     let matrixTableHtml = `
+        <div class="table-caption" style="font-size: 13pt; font-weight: bold; margin: 12pt 0 6pt 0; text-align: center; text-transform: uppercase; page-break-after: avoid;">${matrixTitle}</div>
         <table>
-            <caption>${matrixTitle}</caption>
             <colgroup>
                 <col class="col-tt">
                 <col class="col-chuong">
@@ -1631,6 +1647,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
         </table>`;
 
     let specTableHtml = `
+        <div class="table-caption" style="font-size: 13pt; font-weight: bold; margin: 12pt 0 6pt 0; text-align: center; text-transform: uppercase; page-break-after: avoid;">${specTitle}</div>
         <table>
             <colgroup>
                 <col class="col-tt">
@@ -1640,7 +1657,6 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 <col class="col-req">
                 <col class="col-level"><col class="col-level"><col class="col-level">
             </colgroup>
-            <caption>${specTitle}</caption>
             <thead>
                 <tr>
                     <th rowspan="2">TT</th><th rowspan="2">Chương/Chủ đề</th>
@@ -1728,11 +1744,8 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             items: string[];
         };
 
-        const parseReqToSpecSubRows = (
-            reqHtmlStr: string,
-            levelQuotas?: Record<'B' | 'H' | 'VD', number>
-        ): PrintSpecSubRow[] => {
-            const rawHtml = reqHtmlStr || '';
+        const extractItemsFromHtml = (htmlSource: string) => {
+            const rawHtml = htmlSource || '';
             const strongRegex = /<strong[^>]*>([\s\S]*?)<\/strong>/gi;
             const matches: { title: string; index: number; endIndex: number }[] = [];
             let m;
@@ -1784,6 +1797,17 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 }
             });
 
+            return { checkedItems, allItems };
+        };
+
+        const parseReqToSpecSubRows = (
+            reqHtmlStr: string,
+            levelQuotas?: Record<'B' | 'H' | 'VD', number>,
+            fallbackReqHtmlStr?: string
+        ): PrintSpecSubRow[] => {
+            const { checkedItems, allItems } = extractItemsFromHtml(reqHtmlStr);
+            const fallbackExtracted = fallbackReqHtmlStr ? extractItemsFromHtml(fallbackReqHtmlStr) : null;
+
             const levelDefs: { k: 'B' | 'H' | 'VD'; t: string }[] = [
                 { k: 'B', t: '- Biết:' },
                 { k: 'H', t: '- Hiểu:' },
@@ -1802,20 +1826,25 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                         return null;
                     }
                     let items = checkedItems[d.k].length > 0 ? checkedItems[d.k] : allItems[d.k];
+                    if (items.length === 0 && fallbackExtracted) {
+                        items = fallbackExtracted.checkedItems[d.k].length > 0
+                            ? fallbackExtracted.checkedItems[d.k]
+                            : fallbackExtracted.allItems[d.k];
+                    }
                     if (quota > 0 && items.length > quota) {
                         items = items.slice(0, quota);
                     }
-                    if (items.length === 0 && totalQuotaInSub > 0 && quota <= 0) {
+                    if (items.length === 0) {
                         return null;
                     }
                     return {
                         subRowId: `header_${idx}`,
                         levelKey: d.k,
                         title: d.t,
-                        items: items.length > 0 ? items : []
+                        items
                     };
                 })
-                .filter((r): r is PrintSpecSubRow => r !== null && ((levelQuotas?.[r.levelKey] || 0) > 0 || r.items.length > 0));
+                .filter((r): r is PrintSpecSubRow => r !== null && r.items.length > 0);
 
             if (activeRows.length > 0) {
                 return activeRows;
@@ -1827,7 +1856,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                     subRowId: `header_${idx}`,
                     levelKey: d.k,
                     title: d.t,
-                    items: allItems[d.k]
+                    items: allItems[d.k].length > 0 ? allItems[d.k] : (fallbackExtracted?.allItems[d.k] || [])
                 }))
                 .filter(r => r.items.length > 0);
         };
@@ -1862,9 +1891,10 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                         return idx >= 0 ? (data.specifications?.rows?.[idx]?.[4] || '') : '';
                     })
                     .filter(Boolean);
+                const fallbackReqStr = getRequirementsHtml(gradeStr, mainTopic, subTopic);
                 const reqHtmlStr = customReqs.length > 0
                     ? customReqs.join('')
-                    : getRequirementsHtml(gradeStr, mainTopic, subTopic);
+                    : fallbackReqStr;
 
                 const subQuotas: Record<'B' | 'H' | 'VD', number> = { B: 0, H: 0, VD: 0 };
                 subRows.forEach((r: any) => {
@@ -1879,7 +1909,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                     });
                 });
 
-                const parsedSubRows = parseReqToSpecSubRows(reqHtmlStr, subQuotas);
+                const parsedSubRows = parseReqToSpecSubRows(reqHtmlStr, subQuotas, fallbackReqStr);
                 subSpecRowsMap[subTopic] = parsedSubRows;
                 mainSpecRowSpan += parsedSubRows.length;
             });
@@ -1971,12 +2001,12 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 const mainTopicCellHtml = `<b>${mainTopic}</b>`;
                 const subTopicCellHtml = `${subTopic} (${subSoTiet} tiết)`;
 
-                newMatrixBody += '<tr>';
+                newMatrixBody += '<tr style="page-break-inside: avoid;">';
                 newMatrixBody += `<td>${newStt}</td>`;
                 if (sIdx === 0) {
-                    newMatrixBody += `<td class="text-left align-top" rowspan="${mainSpan}">${mainTopicCellHtml}</td>`;
+                    newMatrixBody += `<td class="text-left-top" style="text-align: left; vertical-align: top;" rowspan="${mainSpan}">${mainTopicCellHtml}</td>`;
                 }
-                newMatrixBody += `<td class="text-left">${subTopicCellHtml}</td>`;
+                newMatrixBody += `<td class="text-left" style="text-align: left;">${subTopicCellHtml}</td>`;
                 activeParts.forEach(pKey => {
                     (['B', 'H', 'VD'] as const).forEach(lKey => {
                         const c = agg[pKey][lKey].count;
@@ -2026,18 +2056,18 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                         ? `<div style="margin-top: 3px; font-size: 10.5pt; color: #0056b3;"><i>* Vị trí câu hỏi: ${levelPosList.join('; ')}</i></div>`
                         : '';
 
-                    newSpecBody += '<tr>';
+                    newSpecBody += '<tr style="page-break-inside: avoid;">';
                     if (srIdx === 0) {
-                        newSpecBody += `<td class="align-top" rowspan="${subSpecSpan}">${newStt}</td>`;
+                        newSpecBody += `<td class="align-top" style="vertical-align: top; text-align: center;" rowspan="${subSpecSpan}">${newStt}</td>`;
                     }
                     if (sIdx === 0 && srIdx === 0) {
-                        newSpecBody += `<td class="text-left align-top" rowspan="${mainSpecRowSpan}"><b>${mainTopic}</b></td>`;
+                        newSpecBody += `<td class="text-left-top" style="text-align: left; vertical-align: top;" rowspan="${mainSpecRowSpan}"><b>${mainTopic}</b></td>`;
                     }
                     if (srIdx === 0) {
-                        newSpecBody += `<td class="text-left align-top" rowspan="${subSpecSpan}">${subTopic}</td>`;
+                        newSpecBody += `<td class="text-left-top" style="text-align: left; vertical-align: top;" rowspan="${subSpecSpan}">${subTopic}</td>`;
                     }
                     const itemsHtml = sr.items.map(it => `<div>${it}</div>`).join('');
-                    newSpecBody += `<td class="text-left align-top"><div><b>${sr.title}</b></div>${itemsHtml}${posHtml}</td>`;
+                    newSpecBody += `<td class="text-left-top" style="text-align: left; vertical-align: top;"><div><b>${sr.title}</b></div>${itemsHtml}${posHtml}</td>`;
 
                     activeParts.forEach(pKey => {
                         (['B', 'H', 'VD'] as const).forEach(lKey => {
@@ -2065,8 +2095,8 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
         const grandPoints = ptB + ptH + ptVD;
 
         matrixTableHtml = `
+            <div class="table-caption" style="font-size: 13pt; font-weight: bold; margin: 12pt 0 6pt 0; text-align: center; text-transform: uppercase; page-break-after: avoid;">1. MA TRẬN ĐỀ KIỂM TRA ĐỊNH KÌ (${examName.toUpperCase()})</div>
             <table>
-                <caption>1. MA TRẬN ĐỀ KIỂM TRA ĐỊNH KÌ (${examName.toUpperCase()})</caption>
                 <thead>
                     <tr>
                         <th rowspan="4">TT</th>
@@ -2126,8 +2156,8 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             </table>`;
 
         specTableHtml = `
+            <div class="table-caption" style="font-size: 13pt; font-weight: bold; margin: 12pt 0 6pt 0; text-align: center; text-transform: uppercase; page-break-after: avoid;">2. BẢN ĐẶC TẢ ĐỀ KIỂM TRA ĐỊNH KÌ (${examName.toUpperCase()})</div>
             <table>
-                <caption>2. BẢN ĐẶC TẢ ĐỀ KIỂM TRA ĐỊNH KÌ (${examName.toUpperCase()})</caption>
                 <thead>
                     <tr>
                         <th rowspan="4">TT</th>
