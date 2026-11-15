@@ -71,6 +71,37 @@ export interface ExerciseQuestion {
   updatedAt?: string; // Dấu thời gian phục vụ đồng bộ chống xung đột
 }
 
+// Phân loại chi tiết hình thức câu hỏi (Đa dạng hóa câu hỏi tạo đề theo chuẩn GDPT 2018)
+export type QuestionSubtype = 'single-choice' | 'multiple-answer' | 'true-false' | 'short-answer' | 'essay';
+
+export const getQuestionSubtype = (q: any): QuestionSubtype => {
+  if (!q) return 'single-choice';
+  if (q.category === 'essay' || q.questionType === 'essay') return 'essay';
+  if (q.questionType === 'true-false' || q.mcType === 'true-false') return 'true-false';
+  if (q.questionType === 'short-answer' || q.questionType === 'fill-blank' || q.mcType === 'fill-blank') return 'short-answer';
+  
+  if (q.questionType === 'multiple-answer' || q.mcType === 'multiple-answer') return 'multiple-answer';
+  if (Array.isArray(q.options)) {
+    const correctCount = q.options.filter((o: any) => o.isCorrect === true).length;
+    if (correctCount > 1) return 'multiple-answer';
+  }
+  if (typeof q.answer === 'string' && /^[A-D]\s*,\s*[A-D]/i.test(q.answer.trim())) {
+    return 'multiple-answer';
+  }
+
+  return 'single-choice';
+};
+
+export const getQuestionSubtypeLabel = (subtype: QuestionSubtype): string => {
+  switch (subtype) {
+    case 'single-choice': return 'Trắc nghiệm 1 đáp án';
+    case 'multiple-answer': return 'Trắc nghiệm nhiều đáp án';
+    case 'true-false': return 'Trắc nghiệm Đúng - Sai';
+    case 'short-answer': return 'Trả lời ngắn';
+    case 'essay': return 'Tự luận';
+  }
+};
+
 // Multi-code Exam Variant Structure
 export interface ExamVariant {
   code: string;

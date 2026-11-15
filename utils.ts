@@ -1,5 +1,5 @@
 import { REQUIREMENTS_DATA, getDefaultCompetencyForTopic, createEmptyNewFormatRow } from './data/matrixConstants';
-import { MatrixData, ExerciseQuestion, NewMatrixFormatRowConfig } from './types';
+import { MatrixData, ExerciseQuestion, NewMatrixFormatRowConfig, QuestionSubtype, getQuestionSubtype, getQuestionSubtypeLabel } from './types';
 import { CURRICULUM } from './data/curriculum';
 import { syncSpecHtmlWithCustomStore, buildSpecHtmlFromMergedCriteria, detectGradeFromLessonOrContext, GradeCriteriaMap } from './services/criteriaService';
 
@@ -182,8 +182,14 @@ export const isQuestionForHskt = (
     return false;
 };
 
-export const getDefaultHsktQuestionIds = (questions: any[], headerInfo?: any): string[] => {
-    if (!Array.isArray(questions) || questions.length === 0) return [];
+export const buildHsktExamQuestions = (
+    regularQuestions: any[],
+    bank: any[] = [],
+    headerInfo?: any,
+    targetMcCount: number = 28
+): any[] => {
+    if (!Array.isArray(regularQuestions) || regularQuestions.length === 0) return [];
+
     let hsktChecked: Record<string, boolean> = {};
     let hasAnyHsktConfigured = false;
     try {
@@ -196,7 +202,149 @@ export const getDefaultHsktQuestionIds = (questions: any[], headerInfo?: any): s
         }
     } catch { }
 
-    const gradeFromHeader = headerInfo?.monHoc?.match(/\d+/)?.[0] || '6';
+    const targetGrade = headerInfo?.monHoc?.match(/\d+/)?.[0] || '8';
+
+    // Xác định xem một câu hỏi có thuộc YCCĐ KHÔNG giảm tải (phù hợp HSKT) hay không
+    const isNonReduced = (q: any): boolean => {
+        if (!q) return false;
+        if (hasAnyHsktConfigured) {
+            return isQuestionForHskt(q, hsktChecked, targetGrade);
+        }
+        // Mặc định nếu chưa tích YCCĐ HSKT riêng: mức NB và TH là không giảm tải; mức VD và VDC là giảm tải
+        const lvl = (q.level || 'NB').toUpperCase();
+        return lvl === 'NB' || lvl === 'TH';
+    };
+
+    const regularMc = regularQuestions.filter(q => q.category !== 'essay');
+    const regularEssay = regularQuestions.filter(q => q.category === 'essay');
+
+    // 1. Lọc các câu hỏi trắc nghiệm không giảm tải từ đề thi chính thức
+    const keptMc = regularMc.filter(q => isNonReduced(q));
+    const usedIds = new Set(keptMc.map(q => String(q.id)));
+
+    // Đếm số lượng câu đã lấy cho mỗi bài / đơn vị kiến thức không giảm tải
+    const lessonCount = new Map<string, number>();
+    keptMc.forEach(q => {
+        const lKey = (q.lesson || 'Bài chung').toLowerCase().trim();
+        lessonCount.set(lKey, (lessonCount.get(lKey) || 0) + 1);
+    });
+
+    // 2. NẾU YCCĐ NÀO GIẢM TẢI THÌ CÁC YÊU CẦU KHÁC CẦN TĂNG SỐ LƯỢNG CÂU LÊN, ĐỦ 28 CÂU TRẮC NGHIỆM
+    if (keptMc.length < targetMcCount && Array.isArray(bank) && bank.length > 0) {
+        const validLessons = Array.from(lessonCount.keys());
+
+        // Lọc ngân hàng các câu trắc nghiệm tiềm năng chưa dùng
+        const bankCandidates = bank.filter(b => {
+            if (b.category === 'essay') return false;
+            if (usedIds.has(String(b.id))) return false;
+            return true;
+        });
+
+        // Ưu tiên 1: Câu trắc nghiệm thuộc YCCĐ không giảm tải và thuộc đúng các bài học trong đề
+        const tier1 = bankCandidates.filter(b => {
+            const bLesson = (b.lesson || '').toLowerCase().trim();
+            const matchesLesson = validLessons.length === 0 || validLessons.some(vl => vl.includes(bLesson) || bLesson.includes(vl));
+            return matchesLesson && isNonReduced(b);
+        });
+
+        // Ưu tiên 2: Câu trắc nghiệm bất kỳ thuộc YCCĐ không giảm tải (mức NB/TH) cùng khối lớp
+        const tier2 = bankCandidates.filter(b => {
+            if (tier1.some(t => t.id === b.id)) return false;
+            return isNonReduced(b);
+        });
+
+        // Ưu tiên 3: Câu trắc nghiệm mức NB hoặc TH bất kỳ trong ngân hàng
+        const tier3 = bankCandidates.filter(b => {
+            if (tier1.some(t => t.id === b.id) || tier2.some(t => t.id === b.id)) return false;
+            const lvl = (b.level || '').toUpperCase();
+            return lvl === 'NB' || lvl === 'TH';
+        });
+
+        const sortCandidates = (list: any[]) => {
+            return [...list].sort((a, b) => {
+                const lA = (a.lesson || '').toLowerCase().trim();
+                const lB = (b.lesson || '').toLowerCase().trim();
+                const cntA = lessonCount.get(lA) || 0;
+                const cntB = lessonCount.get(lB) || 0;
+                // Tăng số lượng câu cho các yêu cầu/bài đang có ít câu hơn để cân đối đều
+                if (cntA !== cntB) return cntA - cntB;
+
+                // Ưu tiên mức Nhận biết trước Thông hiểu
+                const lvlScore = (lvl: string) => (lvl === 'NB' ? 0 : lvl === 'TH' ? 1 : 2);
+                const sA = lvlScore((a.level || '').toUpperCase());
+                const sB = lvlScore((b.level || '').toUpperCase());
+                if (sA !== sB) return sA - sB;
+
+                return 0.5 - Math.random();
+            });
+        };
+
+        const sortedTier1 = sortCandidates(tier1);
+        const sortedTier2 = sortCandidates(tier2);
+        const sortedTier3 = sortCandidates(tier3);
+        const combinedPool = [...sortedTier1, ...sortedTier2, ...sortedTier3];
+
+        for (const candidate of combinedPool) {
+            if (keptMc.length >= targetMcCount) break;
+            keptMc.push({
+                ...candidate,
+                points: 0.25,
+                uniqueId: Math.random()
+            });
+            usedIds.add(String(candidate.id));
+            const lKey = (candidate.lesson || 'Bài chung').toLowerCase().trim();
+            lessonCount.set(lKey, (lessonCount.get(lKey) || 0) + 1);
+        }
+    }
+
+    // 3. Sắp xếp lại danh sách câu trắc nghiệm HSKT theo thứ tự hình thức câu hỏi và mức độ nhận thức
+    const getPartOrder = (q: any): number => {
+        const sub = getQuestionSubtype(q);
+        switch (sub) {
+            case 'single-choice': return 1;
+            case 'multiple-answer': return 2;
+            case 'true-false': return 3;
+            case 'short-answer': return 4;
+            default: return 5;
+        }
+    };
+
+    const levelOrder: Record<string, number> = { NB: 1, TH: 2, VD: 3, VDC: 4 };
+    keptMc.sort((a, b) => {
+        const pa = getPartOrder(a);
+        const pb = getPartOrder(b);
+        if (pa !== pb) return pa - pb;
+        const la = levelOrder[(a.level || 'NB').toUpperCase()] || 5;
+        const lb = levelOrder[(b.level || 'NB').toUpperCase()] || 5;
+        if (la !== lb) return la - lb;
+        return (a.lesson || '').localeCompare(b.lesson || '');
+    });
+
+    // 4. Lấy tự luận không giảm tải (nếu có)
+    const keptEssay = regularEssay.filter(q => isNonReduced(q));
+
+    return [...keptMc, ...keptEssay];
+};
+
+export const getDefaultHsktQuestionIds = (questions: any[], headerInfo?: any, bank: any[] = []): string[] => {
+    if (!Array.isArray(questions) || questions.length === 0) return [];
+    if (bank && bank.length > 0) {
+        const hsktQs = buildHsktExamQuestions(questions, bank, headerInfo, 28);
+        return hsktQs.map(q => String(q.id));
+    }
+    let hsktChecked: Record<string, boolean> = {};
+    let hasAnyHsktConfigured = false;
+    try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+            const saved = localStorage.getItem('hsktChecked');
+            if (saved) {
+                hsktChecked = JSON.parse(saved);
+                hasAnyHsktConfigured = Object.values(hsktChecked).some(v => !!v);
+            }
+        }
+    } catch { }
+
+    const gradeFromHeader = headerInfo?.monHoc?.match(/\d+/)?.[0] || '8';
     if (hasAnyHsktConfigured) {
         const matched = questions.filter(q => isQuestionForHskt(q, hsktChecked, gradeFromHeader));
         if (matched.length > 0) {
@@ -233,19 +381,27 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
     const isHsktExam = Boolean(headerInfo?.isHsktExam);
     const exportSection: 'both' | 'exam_only' | 'grading_only' = headerInfo?.exportSection || 'both';
 
-    const tracNghiemQuestions = questions.filter(q => q.category !== 'essay');
-    const tuLuanQuestions = questions.filter(q => q.category === 'essay');
+    const singleChoiceQuestions = questions.filter(q => getQuestionSubtype(q) === 'single-choice');
+    const multipleAnswerQuestions = questions.filter(q => getQuestionSubtype(q) === 'multiple-answer');
+    const trueFalseQuestions = questions.filter(q => getQuestionSubtype(q) === 'true-false');
+    const shortAnswerQuestions = questions.filter(q => getQuestionSubtype(q) === 'short-answer');
+    const tuLuanQuestions = questions.filter(q => getQuestionSubtype(q) === 'essay');
+    const tracNghiemQuestions = questions.filter(q => getQuestionSubtype(q) !== 'essay');
 
     const getMcQuestionPoint = (q: any) => {
-        if (!isHsktExam && tracNghiemQuestions.length === 28 && (q.points === 1.0 || q.points === 0.5)) {
+        if (!isHsktExam && tracNghiemQuestions.length === 28 && (q.points === 1.0 || q.points === 0.5) && getQuestionSubtype(q) === 'single-choice') {
             return 0.25;
         }
-        return q.points || 0.25;
+        return q.points || (getQuestionSubtype(q) === 'essay' ? 1.0 : 0.25);
     };
 
-    const totalTracNghiemPoints = tracNghiemQuestions.reduce((sum, q) => sum + getMcQuestionPoint(q), 0);
+    const totalSingleChoicePoints = singleChoiceQuestions.reduce((sum, q) => sum + getMcQuestionPoint(q), 0);
+    const totalMultipleAnswerPoints = multipleAnswerQuestions.reduce((sum, q) => sum + getMcQuestionPoint(q), 0);
+    const totalTrueFalsePoints = trueFalseQuestions.reduce((sum, q) => sum + getMcQuestionPoint(q), 0);
+    const totalShortAnswerPoints = shortAnswerQuestions.reduce((sum, q) => sum + getMcQuestionPoint(q), 0);
     const totalTuLuanPoints = tuLuanQuestions.reduce((sum, q) => sum + (q.points || 1.0), 0);
-    const unitMcPoint = tracNghiemQuestions.length > 0 ? getMcQuestionPoint(tracNghiemQuestions[0]) : 0.25;
+    const totalTracNghiemPoints = totalSingleChoicePoints + totalMultipleAnswerPoints + totalTrueFalsePoints + totalShortAnswerPoints;
+    const unitMcPoint = singleChoiceQuestions.length > 0 ? getMcQuestionPoint(singleChoiceQuestions[0]) : 0.25;
     
     const currentYear = new Date().getFullYear();
     const nextYear = currentYear + 1;
@@ -416,24 +572,82 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
         </table>
     `;
 
-    // Part 1: Trac Nghiem
-    if (tracNghiemQuestions.length > 0) {
-        // Answer Grid
-        let answerGridHtml = `
-            <div style="margin-top:5pt; margin-bottom:5pt;">
-                <h3 style="font-size: 13pt; font-weight: bold; margin: 0; text-transform: uppercase;">PHẦN 1. TRẮC NGHIỆM (${formatDiem(totalTracNghiemPoints)} điểm)</h3>
-                <p style="font-size: 13pt; font-style: italic; margin: 3pt 0 5pt 0;">- Em hãy điền đáp án vào khung bên dưới cho câu trả lời đúng: (mỗi câu đúng ${formatDiem(unitMcPoint)} điểm)</p>
-            </div>
-            <table style="border-collapse: collapse; margin: 0 auto; width: 100%; table-layout: fixed;">`;
-        
-        // Dynamically calculate columns (max 15 per row)
+    // Bản đồ vị trí câu hỏi toàn bài (đảm bảo thứ tự Câu 1, Câu 2... liên tục bám sát ma trận và đề thi)
+    const questionIndexMap = new Map<any, number>();
+    questions.forEach((q, idx) => questionIndexMap.set(q, idx + 1));
+
+    interface ExamSectionDef {
+        type: QuestionSubtype;
+        questions: any[];
+        points: number;
+        title: string;
+        instruction: string;
+    }
+
+    const sections: ExamSectionDef[] = [];
+    const romanNumerals = ['I', 'II', 'III', 'IV', 'V'];
+    let currentRomanIdx = 0;
+
+    if (singleChoiceQuestions.length > 0) {
+        sections.push({
+            type: 'single-choice',
+            questions: singleChoiceQuestions,
+            points: totalSingleChoicePoints,
+            title: `PHẦN ${romanNumerals[currentRomanIdx++]}. CÂU HỎI TRẮC NGHIỆM 1 ĐÁP ÁN`,
+            instruction: 'Mỗi câu hỏi thí sinh chỉ chọn 01 phương án đúng nhất và điền vào bảng trả lời bên dưới:'
+        });
+    }
+
+    if (multipleAnswerQuestions.length > 0) {
+        sections.push({
+            type: 'multiple-answer',
+            questions: multipleAnswerQuestions,
+            points: totalMultipleAnswerPoints,
+            title: `PHẦN ${romanNumerals[currentRomanIdx++]}. CÂU HỎI TRẮC NGHIỆM NHIỀU ĐÁP ÁN`,
+            instruction: 'Thí sinh chọn tất cả các phương án đúng (có thể có nhiều hơn 01 đáp án đúng) và điền vào bảng trả lời bên dưới:'
+        });
+    }
+
+    if (trueFalseQuestions.length > 0) {
+        sections.push({
+            type: 'true-false',
+            questions: trueFalseQuestions,
+            points: totalTrueFalsePoints,
+            title: `PHẦN ${romanNumerals[currentRomanIdx++]}. CÂU HỎI TRẮC NGHIỆM ĐÚNG - SAI`,
+            instruction: 'Trong mỗi ý a), b), c), d) ở mỗi câu, thí sinh chọn Đúng (Đ) hoặc Sai (S) và điền vào bảng trả lời bên dưới:'
+        });
+    }
+
+    if (shortAnswerQuestions.length > 0) {
+        sections.push({
+            type: 'short-answer',
+            questions: shortAnswerQuestions,
+            points: totalShortAnswerPoints,
+            title: `PHẦN ${romanNumerals[currentRomanIdx++]}. CÂU HỎI TRẢ LỜI NGẮN`,
+            instruction: 'Thí sinh ghi câu trả lời ngắn gọn vào khung trả lời bên dưới:'
+        });
+    }
+
+    if (tuLuanQuestions.length > 0) {
+        sections.push({
+            type: 'essay',
+            questions: tuLuanQuestions,
+            points: totalTuLuanPoints,
+            title: `PHẦN ${romanNumerals[currentRomanIdx++]}. TỰ LUẬN`,
+            instruction: 'Thí sinh trình bày bài làm chi tiết cho các câu hỏi sau vào giấy kiểm tra:'
+        });
+    }
+
+    // Helper: Bảng điền đáp án cho câu hỏi trắc nghiệm 1 đáp án, nhiều đáp án hoặc trả lời ngắn
+    const buildAnswerGridHtml = (secQuestions: any[], unitPoint?: number, isMultipleAnswer?: boolean) => {
+        if (secQuestions.length === 0) return '';
         let cols = 15;
-        if (tracNghiemQuestions.length > 15) {
+        if (secQuestions.length > 15) {
             let minEmpty = 15;
             let bestCols = 15;
             for (let c = 15; c >= 10; c--) {
-                const rows = Math.ceil(tracNghiemQuestions.length / c);
-                const empty = (rows * c) - tracNghiemQuestions.length;
+                const rows = Math.ceil(secQuestions.length / c);
+                const empty = (rows * c) - secQuestions.length;
                 if (empty < minEmpty) {
                     minEmpty = empty;
                     bestCols = c;
@@ -441,37 +655,121 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
             }
             cols = bestCols;
         } else {
-            cols = tracNghiemQuestions.length;
+            cols = secQuestions.length;
         }
-        const numTotalRows = Math.ceil(tracNghiemQuestions.length / cols);
-
+        const numTotalRows = Math.ceil(secQuestions.length / cols);
+        let gridHtml = `<table style="border-collapse: collapse; margin: 4pt auto 8pt auto; width: 100%; table-layout: fixed;">`;
         for (let i = 0; i < numTotalRows; i++) {
-            // Row for Question Numbers
-            answerGridHtml += '<tr>'; 
+            gridHtml += '<tr>';
             for (let j = 0; j < cols; j++) {
-                const num = i * cols + j + 1;
-                if (num <= tracNghiemQuestions.length) {
-                    answerGridHtml += `<td width="${(100 / cols).toFixed(2)}%" style="border: 1px solid black; text-align: center; font-weight: bold; padding: 5px 2px; font-size: 12pt; width: ${100 / cols}%;">Câu<br/>${num}</td>`;
+                const qIdx = i * cols + j;
+                if (qIdx < secQuestions.length) {
+                    const qNum = questionIndexMap.get(secQuestions[qIdx]) || (qIdx + 1);
+                    gridHtml += `<td width="${(100 / cols).toFixed(2)}%" style="border: 1px solid black; text-align: center; font-weight: bold; padding: 4px 2px; font-size: 11pt; width: ${100 / cols}%;">Câu<br/>${qNum}</td>`;
                 } else {
-                    answerGridHtml += `<td width="${(100 / cols).toFixed(2)}%" style="border: 1px solid black; padding: 5px 2px; width: ${100 / cols}%;">&nbsp;</td>`; // Fill empty cells to keep grid structure
+                    gridHtml += `<td width="${(100 / cols).toFixed(2)}%" style="border: 1px solid black; padding: 4px 2px; width: ${100 / cols}%;">&nbsp;</td>`;
                 }
             }
-            answerGridHtml += '</tr>';
-            
-            // Row for Answers (Empty boxes)
-            answerGridHtml += '<tr>';
+            gridHtml += '</tr><tr>';
             for (let j = 0; j < cols; j++) {
-                answerGridHtml += `<td width="${(100 / cols).toFixed(2)}%" style="border: 1px solid black; height: 35px; width: ${100 / cols}%;">&nbsp;</td>`;
+                gridHtml += `<td width="${(100 / cols).toFixed(2)}%" style="border: 1px solid black; height: 30px; width: ${100 / cols}%;">&nbsp;</td>`;
             }
-            answerGridHtml += '</tr>';
+            gridHtml += '</tr>';
         }
-        answerGridHtml += '</table>';
+        gridHtml += '</table>';
+        return gridHtml;
+    };
 
-        let tfScenarioCounter = 0;
-        const questionContent = tracNghiemQuestions.map((q, index) => {
-            const displayContent = (q.content || '').replace(/\n/g, '<br/>');
-            
-            if (q.questionType === 'true-false') {
+    // Helper: Bảng điền đáp án dạng Đ/S cho câu hỏi trắc nghiệm Đúng - Sai
+    const buildTrueFalseGridHtml = (tfQuestions: any[]) => {
+        if (tfQuestions.length === 0) return '';
+        const chunkSize = 4;
+        let html = '';
+        for (let i = 0; i < tfQuestions.length; i += chunkSize) {
+            const chunk = tfQuestions.slice(i, i + chunkSize);
+            const subColWidth = (82 / (chunk.length * 4)).toFixed(2);
+            html += `<table style="border-collapse: collapse; margin: 4pt auto 8pt auto; width: 100%; table-layout: fixed; font-size: 11pt; text-align: center;">`;
+            html += `<tr><td style="border: 1px solid black; font-weight: bold; padding: 3px; width: 18%; background-color: #f7f7f7;">Câu hỏi</td>`;
+            chunk.forEach(q => {
+                const qNum = questionIndexMap.get(q) || '';
+                html += `<td colspan="4" style="border: 1px solid black; font-weight: bold; padding: 3px; background-color: #f7f7f7;">Câu ${qNum}</td>`;
+            });
+            html += `</tr><tr><td style="border: 1px solid black; font-weight: bold; padding: 3px; background-color: #fafafa;">Lệnh hỏi</td>`;
+            chunk.forEach(() => {
+                ['a', 'b', 'c', 'd'].forEach(letter => {
+                    html += `<td style="border: 1px solid black; font-weight: bold; padding: 3px; width: ${subColWidth}%;">${letter}</td>`;
+                });
+            });
+            html += `</tr><tr><td style="border: 1px solid black; font-weight: bold; padding: 3px; font-size: 10pt;">Thí sinh điền (Đ/S)</td>`;
+            chunk.forEach(() => {
+                ['a', 'b', 'c', 'd'].forEach(() => {
+                    html += `<td style="border: 1px solid black; height: 26px;">&nbsp;</td>`;
+                });
+            });
+            html += `</tr></table>`;
+        }
+        return html;
+    };
+
+    let tfScenarioCounter = 0;
+
+    sections.forEach(sec => {
+        // Tiêu đề phân phần và hướng dẫn làm bài
+        examBodyHtml += `
+            <div style="margin-top: 10pt; margin-bottom: 4pt;">
+                <h3 style="font-size: 13pt; font-weight: bold; margin: 0; text-transform: uppercase;">
+                    ${sec.title} (${formatDiem(sec.points)} điểm)
+                </h3>
+                <p style="font-size: 13pt; font-style: italic; margin: 2pt 0 4pt 0;">
+                    ${sec.instruction}
+                </p>
+            </div>
+        `;
+
+        // Bảng điền đáp án
+        if (sec.type === 'single-choice') {
+            examBodyHtml += buildAnswerGridHtml(sec.questions);
+        } else if (sec.type === 'multiple-answer') {
+            examBodyHtml += buildAnswerGridHtml(sec.questions, undefined, true);
+        } else if (sec.type === 'true-false') {
+            examBodyHtml += buildTrueFalseGridHtml(sec.questions);
+        } else if (sec.type === 'short-answer') {
+            examBodyHtml += buildAnswerGridHtml(sec.questions);
+        }
+
+        // Nội dung câu hỏi trong phần
+        if (sec.type === 'essay') {
+            const essayHtml = sec.questions.map((q) => {
+                const qNum = questionIndexMap.get(q) || 1;
+                const pointsStr = (q.points || 1.0).toFixed(1).replace('.', ',');
+                const lines = (q.content || '').split('\n');
+                const firstLine = lines[0] || '';
+                const remainingLines = lines.slice(1);
+
+                let questionTextHtml = `<p style="margin-bottom: 3pt; font-size: 13pt; text-align: justify;">
+                    <strong>Câu ${qNum} (${pointsStr} điểm):</strong> ${firstLine}
+                </p>`;
+                
+                if (remainingLines.length > 0) {
+                    questionTextHtml += remainingLines.map((line: string) => 
+                        `<p style="margin: 3pt 0 3pt 15pt; font-size: 13pt; text-align: justify;">${line}</p>`
+                    ).join('');
+                }
+                
+                let dotLines = '';
+                for(let i=0; i<6; i++) {
+                    dotLines += `<div style="border-bottom: 1px dotted black; height: 24px; width: 100%; margin-bottom: 4px;">&nbsp;</div>`;
+                }
+
+                return `<div style="margin-top: 8pt;">
+                            ${questionTextHtml}
+                            ${dotLines}
+                        </div>`;
+            }).join('');
+            examBodyHtml += essayHtml;
+        } else if (sec.type === 'true-false') {
+            const tfHtml = sec.questions.map((q) => {
+                const qNum = questionIndexMap.get(q) || 1;
                 const hasFourStatements = Array.isArray(q.options) && q.options.some((o: any) => ['a', 'b', 'c', 'd'].includes(String(o.id || '').toLowerCase()));
                 if (hasFourStatements) {
                     tfScenarioCounter++;
@@ -486,86 +784,53 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                     }).join('') + '</div>';
                     return `
                         <p style="margin-top: 8pt; margin-bottom: 3pt; font-size: 13pt; text-align: justify;"><strong>Tình huống ${tfScenarioCounter}:</strong> ${cleanScenario}</p>
-                        <p style="margin-top: 3pt; margin-bottom: 3pt; font-size: 13pt; text-align: justify;"><strong>Câu ${index + 1}.</strong> Xác định tính đúng hoặc sai của các phát biểu sau:</p>
+                        <p style="margin-top: 3pt; margin-bottom: 3pt; font-size: 13pt; text-align: justify;"><strong>Câu ${qNum}.</strong> Xác định tính đúng hoặc sai của các phát biểu sau:</p>
                         ${subStatementsHtml}
                     `;
                 }
-                return `<p style="margin-top: 6pt; margin-bottom: 0; font-size: 13pt; text-align: justify;"><strong>Câu ${index + 1}.</strong> ${displayContent}</p>`;
-            }
+                const displayContent = (q.content || '').replace(/\n/g, '<br/>');
+                return `<p style="margin-top: 6pt; margin-bottom: 0; font-size: 13pt; text-align: justify;"><strong>Câu ${qNum}.</strong> ${displayContent}</p>`;
+            }).join('');
+            examBodyHtml += tfHtml;
+        } else {
+            // single-choice, multiple-answer, short-answer
+            const mcHtml = sec.questions.map((q) => {
+                const qNum = questionIndexMap.get(q) || 1;
+                const displayContent = (q.content || '').replace(/\n/g, '<br/>');
+                const multiNote = sec.type === 'multiple-answer' ? ' <em style="font-weight: normal; font-size: 12pt; color: #333;">(Chọn các đáp án đúng)</em>' : '';
+                let questionHtml = `<p style="margin-top: 6pt; margin-bottom: 0; font-size: 13pt; text-align: justify;"><strong>Câu ${qNum}.</strong> ${displayContent}${multiNote}</p>`;
 
-            let questionHtml = `<p style="margin-top: 6pt; margin-bottom: 0; font-size: 13pt; text-align: justify;"><strong>Câu ${index + 1}.</strong> ${displayContent}</p>`;
-
-            if (q.options && q.options.length > 0) {
-                // Modified heuristic: If any option is > 25 chars, assume it might wrap in a 2-col table, so switch to vertical.
-                // This prevents the "rớt dòng" (orphan word) issue in table cells.
-                const allShort = q.options.every((opt: any) => (opt.text || '').trim().length < 25);
-                let optionsHtml = '';
-                
-                if (allShort) {
-                    // Two Columns (Table)
-                    optionsHtml = '<table border="0" cellpadding="0" cellspacing="0" style="width: 100%; border: none; border-collapse: collapse; table-layout: fixed; margin-left: 0.5cm;">';
-                    for (let i = 0; i < q.options.length; i += 2) {
-                        const opt1 = q.options[i];
-                        const opt2 = q.options[i + 1];
-                        optionsHtml += `<tr>
-                            <td style="border: none; width: 50%; vertical-align: top; padding: 2pt 5pt 2pt 0; font-size: 13pt;"><strong>${opt1.id}.</strong> ${opt1.text}</td>
-                            <td style="border: none; width: 50%; vertical-align: top; padding: 2pt 0 2pt 5pt; font-size: 13pt;">${opt2 ? `<strong>${opt2.id}.</strong> ${opt2.text}` : ''}</td>
-                        </tr>`;
+                if (q.options && q.options.length > 0) {
+                    const allShort = q.options.every((opt: any) => (opt.text || '').trim().length < 25);
+                    let optionsHtml = '';
+                    
+                    if (allShort) {
+                        optionsHtml = '<table border="0" cellpadding="0" cellspacing="0" style="width: 100%; border: none; border-collapse: collapse; table-layout: fixed; margin-left: 0.5cm;">';
+                        for (let i = 0; i < q.options.length; i += 2) {
+                            const opt1 = q.options[i];
+                            const opt2 = q.options[i + 1];
+                            optionsHtml += `<tr>
+                                <td style="border: none; width: 50%; vertical-align: top; padding: 2pt 5pt 2pt 0; font-size: 13pt;"><strong>${opt1.id}.</strong> ${opt1.text}</td>
+                                <td style="border: none; width: 50%; vertical-align: top; padding: 2pt 0 2pt 5pt; font-size: 13pt;">${opt2 ? `<strong>${opt2.id}.</strong> ${opt2.text}` : ''}</td>
+                            </tr>`;
+                        }
+                        optionsHtml += '</table>';
+                    } else {
+                        optionsHtml = '<div style="margin-left: 0.5cm;">' + q.options.map((opt: any) => {
+                            return `<p style="padding: 2px 0; font-size: 13pt; margin:0; text-align: justify;"><strong>${opt.id}.</strong> ${opt.text}</p>`;
+                        }).join('') + '</div>';
                     }
-                    optionsHtml += '</table>';
-                } else {
-                    // Vertical List (No Table - prevents cell wrapping issues)
-                    optionsHtml = '<div style="margin-left: 0.5cm;">' + q.options.map((opt: any) => {
-                        return `<p style="padding: 2px 0; font-size: 13pt; margin:0; text-align: justify;"><strong>${opt.id}.</strong> ${opt.text}</p>`;
-                    }).join('') + '</div>';
+                    questionHtml += optionsHtml;
                 }
-                questionHtml += optionsHtml;
-            }
-            return questionHtml;
-        }).join('');
-        
-        examBodyHtml += answerGridHtml + questionContent;
-    }
-
-    // Part 2: Tu Luan
-    if (tuLuanQuestions.length > 0) {
-        const questionContent = tuLuanQuestions.map((q, index) => {
-            const pointsStr = (q.points || 1.0).toFixed(1).replace('.', ',');
-            const lines = (q.content || '').split('\n');
-            const firstLine = lines[0] || '';
-            const remainingLines = lines.slice(1);
-
-            let questionTextHtml = `<p style="margin-bottom: 3pt; font-size: 13pt; text-align: justify;">
-                <strong>Câu ${index + tracNghiemQuestions.length + 1} (${pointsStr} điểm):</strong> ${firstLine}
-            </p>`;
-            
-            if (remainingLines.length > 0) {
-                // Explicit new lines for multi-part questions to ensure "xuống hàng"
-                questionTextHtml += remainingLines.map(line => 
-                    `<p style="margin: 3pt 0 3pt 15pt; font-size: 13pt; text-align: justify;">${line}</p>`
-                ).join('');
-            }
-            
-            let dotLines = '';
-            for(let i=0; i<6; i++) {
-                dotLines += `<div style="border-bottom: 1px dotted black; height: 24px; width: 100%; margin-bottom: 4px;">&nbsp;</div>`;
-            }
-
-            return `<div style="margin-top: 10pt;">
-                        ${questionTextHtml}
-                        ${dotLines}
-                    </div>`;
-        }).join('');
-
-        examBodyHtml += `
-            <h3 style="font-size: 13pt; text-align:left; font-weight:bold; margin-top: 15pt; text-transform: uppercase;">PHẦN 2. TỰ LUẬN (${totalTuLuanPoints.toFixed(1).replace('.',',')} điểm)</h3>
-            ${questionContent}
-        `;
-    }
+                return questionHtml;
+            }).join('');
+            examBodyHtml += mcHtml;
+        }
+    });
 
     // ---------------- SECTION 2: GRADING GUIDE ----------------
-    const totalQuestions = tracNghiemQuestions.length + tuLuanQuestions.length;
-    const totalPoints = totalTracNghiemPoints + totalTuLuanPoints;
+    const totalQuestions = questions.length;
+    const totalPoints = sections.reduce((sum, s) => sum + s.points, 0);
 
     let gradingGuideHeader = `
         <table style="width:100%; border: none; font-family: 'Times New Roman', serif; font-size: 13pt; margin-bottom: 15pt;">
@@ -589,183 +854,227 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
         <table style="width: 100%; border-collapse: collapse; font-family: 'Times New Roman', serif; font-size: 13pt;">
             <thead>
                 <tr style="font-weight: bold; text-align: center;">
-                    <td style="border: 1px solid black; padding: 5px; width: 15%;">Phần</td>
-                    <td style="border: 1px solid black; padding: 5px; width: 70%;">Đáp án / Hướng dẫn chấm</td>
+                    <td style="border: 1px solid black; padding: 5px; width: 22%;">Phần</td>
+                    <td style="border: 1px solid black; padding: 5px; width: 63%;">Đáp án / Hướng dẫn chấm</td>
                     <td style="border: 1px solid black; padding: 5px; width: 15%;">Điểm</td>
                 </tr>
             </thead>
             <tbody>
     `;
 
-    // MC Section (Grading Guide)
-    let mcSectionHtml = '';
-    if (tracNghiemQuestions.length > 0) {
-        // Generate nested grid for MC answers
-        let mcCols = 15;
-        if (tracNghiemQuestions.length > 15) {
-            let minEmpty = 15;
-            let bestCols = 15;
-            for (let c = 15; c >= 10; c--) {
-                const rows = Math.ceil(tracNghiemQuestions.length / c);
-                const empty = (rows * c) - tracNghiemQuestions.length;
-                if (empty < minEmpty) {
-                    minEmpty = empty;
-                    bestCols = c;
-                }
-            }
-            mcCols = bestCols;
-        } else {
-            mcCols = tracNghiemQuestions.length;
-        }
-        const mcRows = Math.ceil(tracNghiemQuestions.length / mcCols);
-        
-        let mcGrid = `<table style="width: 100%; border-collapse: collapse; text-align: center; font-size: 11pt; margin: 0 auto; table-layout: fixed;">`;
-        for (let r = 0; r < mcRows; r++) {
-            mcGrid += `<tr>`;
-            for (let c = 0; c < mcCols; c++) {
-                const idx = r * mcCols + c;
-                if (idx < tracNghiemQuestions.length) {
-                    mcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; font-weight: bold; padding: 2px; background-color: #f0f0f0; width: ${100 / mcCols}%;">${idx + 1}</td>`;
-                } else {
-                    mcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / mcCols}%;">&nbsp;</td>`;
-                }
-            }
-            mcGrid += `</tr><tr>`;
-            for (let c = 0; c < mcCols; c++) {
-                const idx = r * mcCols + c;
-                if (idx < tracNghiemQuestions.length) {
-                    const q = tracNghiemQuestions[idx];
-                    let correctOpt = '';
-                    if (q.questionType === 'true-false') {
-                        if (Array.isArray(q.options) && q.options.some((o: any) => ['a', 'b', 'c', 'd'].includes(String(o.id || '').toLowerCase()))) {
-                            correctOpt = q.options.map((o: any, sIdx: number) => `${o.id || ['a', 'b', 'c', 'd'][sIdx]}-${o.isCorrect ? 'Đ' : 'S'}`).join('<br/>');
-                        } else {
-                            correctOpt = q.answer === 'Sai' || q.options?.find((o: any) => o.isCorrect)?.id === 'Sai' ? 'S' : 'Đ';
+    let gradingRowsHtml = '';
+
+    sections.forEach(sec => {
+        if (sec.type === 'essay') {
+            const rowspan = sec.questions.length;
+            sec.questions.forEach((q, index) => {
+                const isFirst = index === 0;
+                const qNum = questionIndexMap.get(q) || 1;
+                const qLabel = `Câu ${qNum}`;
+                
+                let rawAnswer = q.answer || '';
+                rawAnswer = rawAnswer.replace(/^HƯỚNG DẪN CHẤM:?\s*/i, '');
+                rawAnswer = rawAnswer.replace(/;\s*(?=(?:[a-z]|[0-9]{1,2})\s*[\)\.\-–:])/gi, '\n');
+                rawAnswer = rawAnswer.replace(/(\s+)(?=[a-z]\s*[-–]\s*\d+(?:[\.,]\d+)?[đd])/gi, '\n');
+
+                const questionParts = parseParts(q.content);
+                const answerParts = parseParts(rawAnswer);
+                
+                let nestedTableRows = '';
+                if (answerParts.length > 1) {
+                    const getPartKey = (lbl: string) => {
+                        const m = lbl.match(/([a-z]|[0-9]{1,2})/i);
+                        return m ? m[1].toLowerCase() : lbl.replace(/[^a-z0-9]/gi, '').toLowerCase();
+                    };
+
+                    answerParts.forEach((ansPart, idx) => {
+                        const ansKey = getPartKey(ansPart.label);
+                        const qPart = questionParts.find(qp => getPartKey(qp.label) === ansKey) || { content: '' };
+                        
+                        let col1Label = ansPart.label.replace(/\s*[-–].*$/, '').trim();
+                        if (col1Label && !col1Label.endsWith(')') && !col1Label.endsWith('.')) {
+                            col1Label += ')';
                         }
-                    } else {
-                        correctOpt = q.options?.filter((o: any) => o.isCorrect).map((o: any) => o.id).join(', ') || q.answer || '';
-                    }
-                    mcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / mcCols}%;">${correctOpt || ''}</td>`;
+
+                        let col1Text = col1Label ? `<b>${col1Label}</b>` : `<b>Ý ${idx + 1}:</b>`;
+                        if (qPart.content) {
+                            col1Text += ` ${qPart.content}`; 
+                        } else if (!col1Label || col1Label === '-' || col1Label === '+' || col1Label === '*') {
+                            col1Text = `<b>Ý ${idx + 1}</b>`;
+                        }
+                        
+                        const ansContent = ansPart.content.replace(/\n/g, '<br/>');
+
+                        nestedTableRows += `
+                            <tr>
+                                <td style="border: 1px dotted #ccc; padding: 4px; width: 35%; vertical-align: top; text-align: justify;">${col1Text}</td>
+                                <td style="border: 1px dotted #ccc; padding: 4px; width: 65%; vertical-align: top; text-align: justify;">
+                                    <div>${ansContent}</div>
+                                </td>
+                            </tr>
+                        `;
+                    });
                 } else {
-                    mcGrid += `<td width="${(100 / mcCols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / mcCols}%;">&nbsp;</td>`;
-                }
-            }
-            mcGrid += `</tr>`;
-        }
-        mcGrid += `</table>`;
-
-        mcSectionHtml = `
-            <tr>
-                <td style="border: 1px solid black; padding: 10px; text-align: center; font-weight: bold; vertical-align: middle;">
-                    Trắc nghiệm:<br/>${formatDiem(totalTracNghiemPoints)} điểm
-                    <br/><span style="font-weight: normal; font-style: italic; font-size: 11pt;">(mỗi câu trả lời đúng được ${formatDiem(unitMcPoint)} đ)</span>
-                </td>
-                <td style="border: 1px solid black; padding: 10px; vertical-align: middle;">
-                    ${mcGrid}
-                </td>
-                <td style="border: 1px solid black; padding: 10px; text-align: center; font-weight: bold; vertical-align: middle;">
-                    ${formatDiem(totalTracNghiemPoints)}đ
-                </td>
-            </tr>
-        `;
-    }
-
-    // Essay Section (Grading Guide)
-    let essaySectionHtml = '';
-    if (tuLuanQuestions.length > 0) {
-        const rowspan = tuLuanQuestions.length; 
-        
-        tuLuanQuestions.forEach((q, index) => {
-            const isFirst = index === 0;
-            const qLabel = `Câu ${index + tracNghiemQuestions.length + 1}`;
-            
-            // Parsing Logic: Split by a), b), c) or -, +
-            let rawAnswer = q.answer || '';
-            
-            // PRE-PROCESSING to handle single-line answers
-            rawAnswer = rawAnswer.replace(/^HƯỚNG DẪN CHẤM:?\s*/i, '');
-            rawAnswer = rawAnswer.replace(/;\s*(?=(?:[a-z]|[0-9]{1,2})\s*[\)\.\-–:])/gi, '\n');
-            rawAnswer = rawAnswer.replace(/(\s+)(?=[a-z]\s*[-–]\s*\d+(?:[\.,]\d+)?[đd])/gi, '\n');
-
-            const questionParts = parseParts(q.content);
-            const answerParts = parseParts(rawAnswer);
-            
-            let nestedTableRows = '';
-            
-            if (answerParts.length > 1) {
-                const getPartKey = (lbl: string) => {
-                    const m = lbl.match(/([a-z]|[0-9]{1,2})/i);
-                    return m ? m[1].toLowerCase() : lbl.replace(/[^a-z0-9]/gi, '').toLowerCase();
-                };
-
-                answerParts.forEach((ansPart, idx) => {
-                    const ansKey = getPartKey(ansPart.label);
-                    const qPart = questionParts.find(qp => getPartKey(qp.label) === ansKey) || { content: '' };
-                    
-                    let col1Label = ansPart.label.replace(/\s*[-–].*$/, '').trim();
-                    if (col1Label && !col1Label.endsWith(')') && !col1Label.endsWith('.')) {
-                        col1Label += ')';
-                    }
-
-                    let col1Text = col1Label ? `<b>${col1Label}</b>` : `<b>Ý ${idx + 1}:</b>`;
-                    if (qPart.content) {
-                        col1Text += ` ${qPart.content}`; 
-                    } else if (!col1Label || col1Label === '-' || col1Label === '+' || col1Label === '*') {
-                        col1Text = `<b>Ý ${idx + 1}</b>`;
-                    }
-                    
-                    const ansContent = ansPart.content.replace(/\n/g, '<br/>');
-
-                    nestedTableRows += `
+                    const ansContent = rawAnswer.replace(/\n/g, '<br/>');
+                    nestedTableRows = `
                         <tr>
-                            <td style="border: 1px dotted #ccc; padding: 4px; width: 35%; vertical-align: top; text-align: justify;">${col1Text}</td>
-                            <td style="border: 1px dotted #ccc; padding: 4px; width: 65%; vertical-align: top; text-align: justify;">
+                            <td style="border: none; padding: 4px; vertical-align: top; text-align: justify;" colspan="2">
                                 <div>${ansContent}</div>
                             </td>
                         </tr>
                     `;
-                });
-            } else {
-                const ansContent = rawAnswer.replace(/\n/g, '<br/>');
-                nestedTableRows = `
-                    <tr>
-                        <td style="border: none; padding: 4px; vertical-align: top; text-align: justify;" colspan="2">
-                            <div>${ansContent}</div>
-                        </td>
-                    </tr>
-                `;
-            }
+                }
 
-            essaySectionHtml += `<tr>`;
-            if (isFirst) {
-                essaySectionHtml += `
-                    <td rowspan="${rowspan}" style="border: 1px solid black; padding: 10px; text-align: center; font-weight: bold; vertical-align: top;">
-                        Tự luận:<br/>${formatDiem(totalTuLuanPoints)} điểm
+                gradingRowsHtml += `<tr>`;
+                if (isFirst) {
+                    gradingRowsHtml += `
+                        <td rowspan="${rowspan}" style="border: 1px solid black; padding: 8px; text-align: center; font-weight: bold; vertical-align: top;">
+                            ${sec.title.replace(/^PHẦN\s*[IVX]+\.\s*/i, '')}:<br/>${formatDiem(sec.points)} điểm
+                        </td>
+                    `;
+                }
+                gradingRowsHtml += `
+                    <td style="border: 1px solid black; padding: 5px; vertical-align: top;">
+                        <div style="border-bottom: 1px solid #000; margin-bottom: 5px; padding-bottom: 2px;">
+                            <span style="font-weight: bold; text-decoration: underline;">${qLabel}:</span> ${q.content.split('\n')[0].substring(0, 100)}...
+                        </div>
+                        <table style="width: 100%; border-collapse: collapse; border: none;">
+                            ${nestedTableRows}
+                        </table>
+                    </td>
+                    <td style="border: 1px solid black; padding: 5px; text-align: center; font-weight: bold; vertical-align: middle;">
+                        ${formatDiem(q.points || 1.0)}đ
                     </td>
                 `;
-            }
-            essaySectionHtml += `
-                <td style="border: 1px solid black; padding: 5px; vertical-align: top;">
-                    <div style="border-bottom: 1px solid #000; margin-bottom: 5px; padding-bottom: 2px;">
-                        <span style="font-weight: bold; text-decoration: underline;">${qLabel}:</span> ${q.content.split('\n')[0].substring(0, 100)}...
-                    </div>
-                    <table style="width: 100%; border-collapse: collapse; border: none;">
-                        ${nestedTableRows}
-                    </table>
-                </td>
-                <td style="border: 1px solid black; padding: 5px; text-align: center; font-weight: bold; vertical-align: middle;">
-                    ${formatDiem(q.points || 1.0)}đ
-                </td>
+                gradingRowsHtml += `</tr>`;
+            });
+        } else if (sec.type === 'true-false') {
+            let tfGrid = `<table style="width: 100%; border-collapse: collapse; text-align: center; font-size: 11pt; margin: 0 auto;">
+                <tr style="background-color: #f0f0f0; font-weight: bold;">
+                    <td style="border: 1px solid black; padding: 3px; width: 25%;">Câu hỏi</td>
+                    <td style="border: 1px solid black; padding: 3px; width: 75%;">Đáp án các ý (a, b, c, d)</td>
+                </tr>`;
+            sec.questions.forEach(q => {
+                const qNum = questionIndexMap.get(q) || 1;
+                let ansStr = '';
+                if (Array.isArray(q.options) && q.options.some((o: any) => ['a', 'b', 'c', 'd'].includes(String(o.id || '').toLowerCase()))) {
+                    ansStr = q.options.map((o: any, sIdx: number) => {
+                        const lbl = o.id || ['a', 'b', 'c', 'd'][sIdx];
+                        return `<strong>${lbl}:</strong> ${o.isCorrect ? '<span style="color: green; font-weight: bold;">Đúng</span>' : '<span style="color: red; font-weight: bold;">Sai</span>'}`;
+                    }).join(';&nbsp;&nbsp;&nbsp;&nbsp;');
+                } else {
+                    const isFalse = q.answer === 'Sai' || q.options?.find((o: any) => o.isCorrect)?.id === 'Sai';
+                    ansStr = isFalse ? '<span style="color: red; font-weight: bold;">Sai</span>' : '<span style="color: green; font-weight: bold;">Đúng</span>';
+                }
+                tfGrid += `<tr>
+                    <td style="border: 1px solid black; padding: 3px; font-weight: bold;">Câu ${qNum}</td>
+                    <td style="border: 1px solid black; padding: 3px; text-align: left; padding-left: 8px;">${ansStr}</td>
+                </tr>`;
+            });
+            tfGrid += `</table>`;
+            tfGrid += `
+                <div style="margin-top: 4pt; font-size: 10pt; font-style: italic; color: #444;">
+                    * Thang điểm câu hỏi Đúng/Sai (theo chuẩn Bộ GD&ĐT): Đúng 01 ý được 0,10đ; đúng 02 ý được 0,25đ; đúng 03 ý được 0,50đ; đúng 04 ý được 1,00đ.
+                </div>
             `;
-            essaySectionHtml += `</tr>`;
-        });
-    }
+
+            gradingRowsHtml += `
+                <tr>
+                    <td style="border: 1px solid black; padding: 8px; text-align: center; font-weight: bold; vertical-align: middle;">
+                        ${sec.title.replace(/^PHẦN\s*[IVX]+\.\s*/i, '')}:<br/>${formatDiem(sec.points)} điểm
+                    </td>
+                    <td style="border: 1px solid black; padding: 8px; vertical-align: middle;">
+                        ${tfGrid}
+                    </td>
+                    <td style="border: 1px solid black; padding: 8px; text-align: center; font-weight: bold; vertical-align: middle;">
+                        ${formatDiem(sec.points)}đ
+                    </td>
+                </tr>
+            `;
+        } else {
+            let cols = 15;
+            if (sec.questions.length > 15) {
+                let minEmpty = 15;
+                let bestCols = 15;
+                for (let c = 15; c >= 10; c--) {
+                    const rows = Math.ceil(sec.questions.length / c);
+                    const empty = (rows * c) - sec.questions.length;
+                    if (empty < minEmpty) {
+                        minEmpty = empty;
+                        bestCols = c;
+                    }
+                }
+                cols = bestCols;
+            } else {
+                cols = sec.questions.length;
+            }
+            const rows = Math.ceil(sec.questions.length / cols);
+            
+            let grid = `<table style="width: 100%; border-collapse: collapse; text-align: center; font-size: 11pt; margin: 0 auto; table-layout: fixed;">`;
+            for (let r = 0; r < rows; r++) {
+                grid += `<tr>`;
+                for (let c = 0; c < cols; c++) {
+                    const idx = r * cols + c;
+                    if (idx < sec.questions.length) {
+                        const q = sec.questions[idx];
+                        const qNum = questionIndexMap.get(q) || (idx + 1);
+                        grid += `<td width="${(100 / cols).toFixed(2)}%" style="border: 1px solid black; font-weight: bold; padding: 2px; background-color: #f0f0f0; width: ${100 / cols}%;">${qNum}</td>`;
+                    } else {
+                        grid += `<td width="${(100 / cols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / cols}%;">&nbsp;</td>`;
+                    }
+                }
+                grid += `</tr><tr>`;
+                for (let c = 0; c < cols; c++) {
+                    const idx = r * cols + c;
+                    if (idx < sec.questions.length) {
+                        const q = sec.questions[idx];
+                        let correctOpt = '';
+                        if (sec.type === 'short-answer') {
+                            correctOpt = q.answer || '';
+                        } else {
+                            const corrects = q.options?.filter((o: any) => o.isCorrect).map((o: any) => o.id);
+                            if (corrects && corrects.length > 0) {
+                                correctOpt = corrects.join(', ');
+                            } else {
+                                correctOpt = q.answer || '';
+                            }
+                        }
+                        grid += `<td width="${(100 / cols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; font-weight: bold; width: ${100 / cols}%;">${correctOpt || ''}</td>`;
+                    } else {
+                        grid += `<td width="${(100 / cols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / cols}%;">&nbsp;</td>`;
+                    }
+                }
+                grid += `</tr>`;
+            }
+            grid += `</table>`;
+
+            const unitP = sec.questions.length > 0 ? getMcQuestionPoint(sec.questions[0]) : 0.25;
+            const unitNote = sec.type === 'single-choice' ? `<br/><span style="font-weight: normal; font-style: italic; font-size: 11pt;">(mỗi câu đúng ${formatDiem(unitP)} đ)</span>` : '';
+
+            gradingRowsHtml += `
+                <tr>
+                    <td style="border: 1px solid black; padding: 8px; text-align: center; font-weight: bold; vertical-align: middle;">
+                        ${sec.title.replace(/^PHẦN\s*[IVX]+\.\s*/i, '')}:<br/>${formatDiem(sec.points)} điểm
+                        ${unitNote}
+                    </td>
+                    <td style="border: 1px solid black; padding: 8px; vertical-align: middle;">
+                        ${grid}
+                    </td>
+                    <td style="border: 1px solid black; padding: 8px; text-align: center; font-weight: bold; vertical-align: middle;">
+                        ${formatDiem(sec.points)}đ
+                    </td>
+                </tr>
+            `;
+        }
+    });
+
+    const breakdownStr = sections.map(s => `${s.questions.length} ${getQuestionSubtypeLabel(s.type)}`).join(' + ');
 
     // Footer Row
     let gradingFooterRow = `
         <tr>
             <td colspan="2" style="border: 1px solid black; padding: 10px; text-align: center; font-weight: bold;">
-                Tổng số câu: ${totalQuestions} câu (${tracNghiemQuestions.length} TN${tuLuanQuestions.length > 0 ? ` + ${tuLuanQuestions.length} TL` : ''})
+                Tổng số câu: ${totalQuestions} câu (${breakdownStr})
             </td>
             <td style="border: 1px solid black; padding: 10px; text-align: center; font-weight: bold;">
                 ${formatDiem(totalPoints)}đ
@@ -807,8 +1116,7 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
             ${exportSection === 'both' ? `<br clear=all style='page-break-before:always'>` : ''}
             ${gradingGuideHeader}
             ${gradingTableStart}
-            ${mcSectionHtml}
-            ${essaySectionHtml}
+            ${gradingRowsHtml}
             ${gradingFooterRow}
             ${gradingTableEnd}
             ${gradingFooterText}
@@ -2369,25 +2677,20 @@ export const generateExamVariants = (
     shuffleOptions: boolean = true
 ): any[] => {
     // Phân loại câu hỏi theo các phần theo quy định của Bộ GD&ĐT
-    const part1 = baseQuestions.filter(q => (q.questionType === 'multiple-choice' || q.questionType === 'multiple-answer' || (!q.questionType && q.category !== 'essay' && q.options && q.options.length === 4 && q.options[0]?.id?.toUpperCase() === 'A')));
-    const part2 = baseQuestions.filter(q => q.questionType === 'true-false');
-    const part3 = baseQuestions.filter(q => q.questionType === 'short-answer' || q.mcType === 'fill-blank');
-    const part4 = baseQuestions.filter(q => q.category === 'essay' || q.questionType === 'essay' || (!q.questionType && q.category === 'essay'));
+    const part1 = baseQuestions.filter(q => getQuestionSubtype(q) === 'single-choice');
+    const part2 = baseQuestions.filter(q => getQuestionSubtype(q) === 'multiple-answer');
+    const part3 = baseQuestions.filter(q => getQuestionSubtype(q) === 'true-false');
+    const part4 = baseQuestions.filter(q => getQuestionSubtype(q) === 'short-answer');
+    const part5 = baseQuestions.filter(q => getQuestionSubtype(q) === 'essay');
 
     return variantCodes.map((code, codeIdx) => {
         let currentP1 = [...part1];
         let currentP2 = [...part2];
         let currentP3 = [...part3];
         let currentP4 = [...part4];
+        let currentP5 = [...part5];
 
-        // Mã đầu tiên (gốc) giữ nguyên thứ tự, các mã tiếp theo cũng không đảo câu hỏi để bám theo ma trận
-        // if (codeIdx > 0) {
-        //     currentP1 = shuffleArray(currentP1);
-        //     currentP2 = shuffleArray(currentP2);
-        //     currentP3 = shuffleArray(currentP3);
-        // }
-
-        // Hoán vị các phương án A, B, C, D của câu trắc nghiệm nhiều lựa chọn
+        // Hoán vị các phương án A, B, C, D của câu trắc nghiệm 1 đáp án
         if (shuffleOptions && codeIdx > 0) {
             currentP1 = currentP1.map(q => {
                 if (!q.options || q.options.length < 2) return q;
@@ -2404,31 +2707,55 @@ export const generateExamVariants = (
                     answer: correctOpt ? correctOpt.id : q.answer
                 };
             });
+
+            // Hoán vị các phương án A, B, C, D của câu trắc nghiệm nhiều đáp án (bảo toàn tất cả đáp án đúng)
+            currentP2 = currentP2.map(q => {
+                if (!q.options || q.options.length < 2) return q;
+                const shuffledOpts = shuffleArray(q.options);
+                const standardIds = ['A', 'B', 'C', 'D', 'E', 'F'];
+                const remappedOpts = shuffledOpts.map((opt, idx) => ({
+                    ...opt,
+                    id: standardIds[idx] || opt.id
+                }));
+                const correctOpts = remappedOpts.filter((o: any) => o.isCorrect);
+                return {
+                    ...q,
+                    options: remappedOpts,
+                    answer: correctOpts.length > 0 ? correctOpts.map((o: any) => o.id).sort().join(', ') : q.answer
+                };
+            });
         }
 
-        const combined = [...currentP1, ...currentP2, ...currentP3, ...currentP4];
+        const combined = [...currentP1, ...currentP2, ...currentP3, ...currentP4, ...currentP5];
         
         // Tạo bảng đáp án chi tiết cho mã đề này
         const answerKey = combined.map((q, idx) => {
             const num = idx + 1;
             let ansStr = '';
+            const sub = getQuestionSubtype(q);
             let qType: 'multiple-choice' | 'true-false' | 'short-answer' | 'essay' = 'multiple-choice';
 
-            if (q.questionType === 'true-false') {
+            if (sub === 'true-false') {
                 qType = 'true-false';
-                if (q.answer === 'Sai' || q.options?.find((o: any) => o.isCorrect)?.id === 'Sai') {
+                if (q.options && q.options.length > 2) {
+                    ansStr = q.options.map((o: any, sIdx: number) => `${o.id || ['a', 'b', 'c', 'd'][sIdx]}-${o.isCorrect ? 'Đ' : 'S'}`).join('; ');
+                } else if (q.answer === 'Sai' || q.options?.find((o: any) => o.isCorrect)?.id === 'Sai') {
                     ansStr = 'Sai';
-                } else if (q.answer === 'Đúng' || q.options?.find((o: any) => o.isCorrect)?.id === 'Đúng') {
-                    ansStr = 'Đúng';
-                } else if (q.options && q.options.length > 2) {
-                    ansStr = q.options.map((o: any) => `${o.id || 'x'}-${o.isCorrect ? 'Đ' : 'S'}`).join('; ');
                 } else {
                     ansStr = q.answer || 'Đúng';
                 }
-            } else if (q.questionType === 'short-answer' || q.mcType === 'fill-blank') {
+            } else if (sub === 'multiple-answer') {
+                qType = 'multiple-choice';
+                const corrects = q.options?.filter((o: any) => o.isCorrect);
+                if (corrects && corrects.length > 0) {
+                    ansStr = corrects.map((o: any) => o.id).sort().join(', ');
+                } else {
+                    ansStr = q.answer || '';
+                }
+            } else if (sub === 'short-answer') {
                 qType = 'short-answer';
                 ansStr = q.answer || '';
-            } else if (q.category === 'essay' || q.questionType === 'essay') {
+            } else if (sub === 'essay') {
                 qType = 'essay';
                 ansStr = 'Xem HD chấm';
             } else {

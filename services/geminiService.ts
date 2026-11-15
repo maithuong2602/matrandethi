@@ -787,25 +787,40 @@ export const generateBulkQuestions = async (
             let extraConstraints = "";
 
             switch (questionType) {
-                case 'true-false':
+                case 'true-false': {
+                    const tfDistributionPatterns = [
+                        { desc: "3 phát biểu SAI và 1 phát biểu ĐÚNG (ví dụ: a-S, b-Đ, c-S, d-S hoặc a-S, b-S, c-Đ, d-S)", sample: [false, true, false, false], ans: "a-S, b-Đ, c-S, d-S" },
+                        { desc: "3 phát biểu ĐÚNG và 1 phát biểu SAI (ví dụ: a-Đ, b-S, c-Đ, d-Đ hoặc a-Đ, b-Đ, c-S, d-Đ)", sample: [true, false, true, true], ans: "a-Đ, b-S, c-Đ, d-Đ" },
+                        { desc: "3 phát biểu SAI và 1 phát biểu ĐÚNG (ví dụ: a-Đ, b-S, c-S, d-S hoặc a-S, b-S, c-S, d-Đ)", sample: [true, false, false, false], ans: "a-Đ, b-S, c-S, d-S" },
+                        { desc: "3 phát biểu ĐÚNG và 1 phát biểu SAI (ví dụ: a-Đ, b-Đ, c-Đ, d-S hoặc a-S, b-Đ, c-Đ, d-Đ)", sample: [true, true, true, false], ans: "a-Đ, b-Đ, c-Đ, d-S" },
+                        { desc: "2 phát biểu ĐÚNG và 2 phát biểu SAI (đảo vị trí ngẫu nhiên: a-Đ, b-Đ, c-S, d-S hoặc a-S, b-Đ, c-S, d-Đ)", sample: [true, true, false, false], ans: "a-Đ, b-Đ, c-S, d-S" },
+                        { desc: "2 phát biểu ĐÚNG và 2 phát biểu SAI (đảo vị trí ngẫu nhiên: a-S, b-Đ, c-Đ, d-S hoặc a-Đ, b-S, c-S, d-Đ)", sample: [false, true, true, false], ans: "a-S, b-Đ, c-Đ, d-S" }
+                    ];
+                    const chosenPattern = tfDistributionPatterns[Math.floor(Math.random() * tfDistributionPatterns.length)];
+
                     typeInstruction = "câu hỏi trắc nghiệm Đúng/Sai theo Tình huống (mỗi câu gồm 1 Tình huống cụ thể bám sát tài liệu nguồn và 4 phát biểu a, b, c, d để học sinh xác định Đúng hoặc Sai)";
                     jsonSchemaNote = `Định dạng Đúng/Sai theo Tình huống: 'category'='mc', 'questionType'='true-false', 'mcType'='true-false'. 
                     'content': Mô tả tình huống cụ thể, đủ thông tin để học sinh phân tích, ĐƯỢC XÂY DỰNG TRỰC TIẾP TỪ KIẾN THỨC, DỮ KIỆN, VÍ DỤ TRONG TÀI LIỆU NGUỒN / BÀI HỌC "${lesson}" và Tiêu chí "${criteriaText}" (không ghi tiền tố 'Tình huống 1:' hay 'Câu 1.' vì hệ thống sẽ tự động đánh số khi in đề).
-                    'options': Mảng gồm ĐÚNG 4 phát biểu với id lần lượt là 'a', 'b', 'c', 'd' xoay quanh và khai thác trực tiếp tình huống ở trên:
+                    'options': Mảng gồm ĐÚNG 4 phát biểu với id lần lượt là 'a', 'b', 'c', 'd' xoay quanh và khai thác trực tiếp tình huống ở trên với tỷ lệ Đúng/Sai linh hoạt, phong phú (${chosenPattern.desc}):
                     [
-                        {"id": "a", "text": "Phát biểu thứ nhất bám sát tình huống và tài liệu nguồn.", "isCorrect": true},
-                        {"id": "b", "text": "Phát biểu thứ hai bám sát tình huống và tài liệu nguồn.", "isCorrect": false},
-                        {"id": "c", "text": "Phát biểu thứ ba bám sát tình huống và tài liệu nguồn.", "isCorrect": true},
-                        {"id": "d", "text": "Phát biểu thứ tư bám sát tình huống và tài liệu nguồn.", "isCorrect": false}
+                        {"id": "a", "text": "Phát biểu thứ nhất bám sát tình huống.", "isCorrect": ${chosenPattern.sample[0]}},
+                        {"id": "b", "text": "Phát biểu thứ hai bám sát tình huống.", "isCorrect": ${chosenPattern.sample[1]}},
+                        {"id": "c", "text": "Phát biểu thứ ba bám sát tình huống.", "isCorrect": ${chosenPattern.sample[2]}},
+                        {"id": "d", "text": "Phát biểu thứ tư bám sát tình huống.", "isCorrect": ${chosenPattern.sample[3]}}
                     ] (trong đó 'isCorrect'=true nếu phát biểu Đúng, 'isCorrect'=false nếu phát biểu Sai).
-                    'answer': Chuỗi tóm tắt đáp án dạng 'a-Đ, b-S, c-Đ, d-S'.`;
+                    'answer': Chuỗi tóm tắt đáp án dạng '${chosenPattern.ans}'.`;
                     extraConstraints = `
                     QUY ĐỊNH BẮT BUỘC CHO CÂU HỎI ĐÚNG / SAI THEO TÌNH HUỐNG:
+                    - PHÂN BỐ ĐÚNG / SAI TỰ NHIÊN, TUYỆT ĐỐI KHÔNG ĐÓNG ĐINH CÂU NÀO CŨNG 2 ĐÚNG 2 SAI:
+                      + Nghiêm cấm tạo đề rập khuôn lúc nào cũng 2 Đúng - 2 Sai (khiến học sinh dễ đoán mò quy luật).
+                      + Cần tạo tỷ lệ phân bố phong phú, thực tế: có câu 3 phát biểu Sai và 1 phát biểu Đúng (3 Sai - 1 Đúng); có câu 3 phát biểu Đúng và 1 phát biểu Sai (3 Đúng - 1 Sai); có câu 2 Đúng - 2 Sai với vị trí Đ/S đảo lộn tự nhiên.
+                      + Cụ thể với câu hỏi này, hãy ưu tiên tỷ lệ phân bố: ${chosenPattern.desc}.
+                      + Luôn bảo đảm có cả phát biểu Đúng và phát biểu Sai (tối thiểu 1 Đúng, tối thiểu 1 Sai trong 4 ý a, b, c, d).
                     - Nội dung Tình huống ('content') và cả 4 phát biểu a, b, c, d BẮT BUỘC phải NGẮN GỌN, cô đọng, bám sát thực tế giảng dạy và yêu cầu cần đạt "${criteriaText}".
                     - TUYỆT ĐỐI KHÔNG bắt đầu hoặc chứa các cụm từ tham chiếu SGK: "Trong bảng...", "Ở Hình X.Y...", "Trong chương trình ở Hình 14.7...", "Theo SGK...". Sách chỉ để lấy đúng thuật ngữ; tình huống phải tự chứa dữ kiện độc lập, học sinh làm bài không có sách giáo khoa.
-                    - Kèm theo đúng 4 phát biểu a, b, c, d trong mảng 'options' (với id là 'a', 'b', 'c', 'd') có cả phát biểu Đúng (isCorrect: true) và phát biểu Sai (isCorrect: false) để học sinh phân tích dựa trên tình huống đó.
                     `;
                     break;
+                }
 
                 case 'short-answer':
                     typeInstruction = "câu hỏi trắc nghiệm Trả lời ngắn (Định dạng Phần III mới của Bộ GD&ĐT)";
@@ -846,15 +861,28 @@ export const generateBulkQuestions = async (
                     `;
                     break;
 
-                case 'multiple-answer':
-                    typeInstruction = "câu hỏi trắc nghiệm có nhiều đáp án đúng (từ 2 đáp án đúng trở lên trong 4 lựa chọn A, B, C, D)";
-                    jsonSchemaNote = `Trắc nghiệm nhiều đáp án: 'category'='mc', 'questionType'='multiple-answer', 'mcType'='multiple-answer'. 'options' có đúng 4 phần tử với id là 'A', 'B', 'C', 'D'. BẮT BUỘC có từ 2 phương án trở lên có 'isCorrect'=true. 'answer' là chuỗi các đáp án đúng cách nhau bởi dấu phẩy (ví dụ: 'A, C' hoặc 'B, D'). Mọi text trong options PHẢI kết thúc bằng dấu chấm (.).`;
+                case 'multiple-answer': {
+                    const maDistributionPatterns = [
+                        { count: 2, desc: "ĐÚNG 2 đáp án ĐÚNG và 2 đáp án SAI (ví dụ: A và C đúng; hoặc B và D đúng; hoặc A và B đúng)", sampleAns: "A, C" },
+                        { count: 2, desc: "ĐÚNG 2 đáp án ĐÚNG và 2 đáp án SAI (ví dụ: B và C đúng; hoặc A và D đúng; hoặc C và D đúng)", sampleAns: "B, D" },
+                        { count: 2, desc: "ĐÚNG 2 đáp án ĐÚNG và 2 đáp án SAI (ví dụ: A và B đúng; hoặc B và D đúng; hoặc A và C đúng)", sampleAns: "A, B" },
+                        { count: 3, desc: "ĐÚNG 3 đáp án ĐÚNG và 1 đáp án SAI (ví dụ: A, B, D đúng; hoặc A, C, D đúng; hoặc B, C, D đúng)", sampleAns: "A, B, D" },
+                        { count: 3, desc: "ĐÚNG 3 đáp án ĐÚNG và 1 đáp án SAI (ví dụ: A, B, C đúng; hoặc A, C, D đúng; hoặc B, C, D đúng)", sampleAns: "A, C, D" }
+                    ];
+                    const chosenMaPattern = maDistributionPatterns[Math.floor(Math.random() * maDistributionPatterns.length)];
+
+                    typeInstruction = `câu hỏi trắc nghiệm có nhiều đáp án đúng (thiết kế có ĐÚNG ${chosenMaPattern.count} đáp án đúng trong 4 lựa chọn A, B, C, D)`;
+                    jsonSchemaNote = `Trắc nghiệm nhiều đáp án: 'category'='mc', 'questionType'='multiple-answer', 'mcType'='multiple-answer'. 'options' có đúng 4 phần tử với id là 'A', 'B', 'C', 'D'. Trong đó BẮT BUỘC có ĐÚNG ${chosenMaPattern.count} phương án có 'isCorrect'=true (và ${4 - chosenMaPattern.count} phương án có 'isCorrect'=false). 'answer' là chuỗi các đáp án đúng cách nhau bởi dấu phẩy (ví dụ: '${chosenMaPattern.sampleAns}'). Mọi text trong options PHẢI kết thúc bằng dấu chấm (.).`;
                     extraConstraints = `
-                    QUY ĐỊNH CÂU HỎI TRẮC NGHIỆM NHIỀU ĐÁP ÁN:
-                    - Câu hỏi và phương án ngắn gọn, tường minh, không rườm rà.
-                    - Có 4 lựa chọn A, B, C, D. Phải có từ 2 đến 3 đáp án đúng ('isCorrect'=true) và ít nhất 1 đáp án sai để phân loại.
+                    QUY ĐỊNH BẮT BUỘC CHO CÂU HỎI TRẮC NGHIỆM NHIỀU ĐÁP ÁN:
+                    - PHÂN BỐ SỐ ĐÁP ÁN ĐÚNG LINH HOẠT, TUYỆT ĐỐI KHÔNG ĐỂ RẬP KHUÔN TOÀN 3 ĐÁP ÁN ĐÚNG:
+                      + Phải cân bằng tự nhiên giữa 2 đáp án đúng và 3 đáp án đúng. Tuyệt đối không để câu nào cũng 3 đáp án đúng.
+                      + CỤ THỂ VỚI CÂU HỎI NÀY, BẮT BUỘC THIẾT KẾ: ${chosenMaPattern.desc} (Đúng ${chosenMaPattern.count} đáp án đúng và ${4 - chosenMaPattern.count} đáp án sai).
+                    - Câu hỏi và 4 lựa chọn PHẢI NGẮN GỌN, cô đọng, đi thẳng vào vấn đề, không viết dài dòng nhiều chữ gây quá tải cho học sinh THCS.
+                    - TUYỆT ĐỐI KHÔNG bắt đầu bằng "Trong bảng...", "Ở Hình X.Y...", "Trong chương trình ở Hình 14.7...", "Theo SGK...". Sách chỉ dùng để lấy đúng thuật ngữ; câu hỏi trong đề kiểm tra phải độc lập, học sinh không có SGK trước mặt. Nếu cần mã hay bảng, đưa trực tiếp ngắn gọn vào câu hỏi.
                     `;
                     break;
+                }
 
                 default: // multiple-choice
                     typeInstruction = "câu hỏi trắc nghiệm khách quan nhiều lựa chọn (4 lựa chọn A, B, C, D - 1 đáp án đúng)";

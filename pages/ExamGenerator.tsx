@@ -5,10 +5,11 @@ import {
     Wand2, ShieldCheck, CheckCircle2, AlertTriangle, FileSpreadsheet,
     Shuffle, Copy, Loader2, FolderCheck, FileBox, Search, Database, Trash2, PlusCircle
 } from 'lucide-react';
-import { ExerciseQuestion, ImportedMatrixData, ExamVariant, ExamReviewResult, SavedExamDossier } from '../types';
+import { ExerciseQuestion, ImportedMatrixData, ExamVariant, ExamReviewResult, SavedExamDossier, QuestionSubtype, getQuestionSubtype, getQuestionSubtypeLabel } from '../types';
 import {
     generateExamWordHtml,
     generateHsktExamWordHtml,
+    buildHsktExamQuestions,
     getDefaultHsktQuestionIds,
     generateAzotaKeyHtml,
     generateExamVariants,
@@ -186,6 +187,7 @@ const ExamGenerator: React.FC = () => {
 
     // Review Sub-Tab: Đề Chính Thức vs Đề & Biểu mẫu chấm HSKT riêng
     const [reviewTab, setReviewTab] = useState<'regular' | 'hskt'>('regular');
+    const [hsktTest, setHsktTest] = useState<BankQuestion[]>([]);
     const [hsktSelectedIds, setHsktSelectedIds] = useState<string[]>([]);
     const [hsktPointMap, setHsktPointMap] = useState<Record<string, number>>({});
 
@@ -324,7 +326,8 @@ const ExamGenerator: React.FC = () => {
                                 noiDung: row[2],
                                 bai: row[3] || row[2],
                                 soTiet: parseFloat(row[4]) || 0,
-                                daThi: row[14] === '1'
+                                daThi: row[14] === '1' || (parseFloat(row[14]) || 0) > 0 || row[14] === true,
+                                soTietDaThi: parseFloat(row[14]) || 0
                             },
                             yeuCauCanDat: sRows[idx] ? sRows[idx][4] : '',
                             tracNghiem: {
@@ -583,24 +586,33 @@ const ExamGenerator: React.FC = () => {
     // Tự động khởi tạo danh sách câu hỏi HSKT khi đề thi thay đổi mà chưa có lựa chọn HSKT
     useEffect(() => {
         if (generatedTest.length > 0) {
-            const validIds = new Set(generatedTest.map(q => String(q.id)));
-            const currentValid = hsktSelectedIds.filter(id => validIds.has(id));
-            if (currentValid.length === 0) {
-                setHsktSelectedIds(getDefaultHsktQuestionIds(generatedTest, headerInfo));
+            if (hsktTest.length === 0) {
+                const built = buildHsktExamQuestions(generatedTest, activeBank, headerInfo, 28);
+                setHsktTest(built);
+                setHsktSelectedIds(built.map(q => String(q.id)));
+            } else {
+                const validIds = new Set(hsktTest.map(q => String(q.id)));
+                const currentValid = hsktSelectedIds.filter(id => validIds.has(id));
+                if (currentValid.length === 0) {
+                    setHsktSelectedIds(hsktTest.map(q => String(q.id)));
+                }
             }
         }
-    }, [generatedTest]);
+    }, [generatedTest, activeBank]);
 
     // Danh sách câu hỏi dành riêng cho Đề HSKT (đã lọc và áp điểm HSKT)
     const activeHsktQuestions = useMemo(() => {
+        const baseList = hsktTest.length > 0 ? hsktTest : generatedTest;
         const selectedSet = new Set(hsktSelectedIds.map(String));
-        return activeQuestions
-            .filter(q => selectedSet.has(String(q.id)))
-            .map(q => ({
-                ...q,
-                points: hsktPointMap[String(q.id)] ?? (q.category === 'essay' ? (q.points || 1.0) : (q.points || 0.25))
-            }));
-    }, [activeQuestions, hsktSelectedIds, hsktPointMap]);
+        const filtered = hsktSelectedIds.length > 0
+            ? baseList.filter(q => selectedSet.has(String(q.id)))
+            : baseList;
+
+        return filtered.map(q => ({
+            ...q,
+            points: hsktPointMap[String(q.id)] ?? (q.category === 'essay' ? (q.points || 1.0) : 0.25)
+        }));
+    }, [hsktTest, generatedTest, hsktSelectedIds, hsktPointMap]);
 
     const toggleHsktQuestion = (qId: string) => {
         const strId = String(qId);
@@ -611,17 +623,29 @@ const ExamGenerator: React.FC = () => {
 
     const applyHsktPreset = (preset: 'yccd' | 'nb' | 'nb_th' | 'all') => {
         if (preset === 'yccd') {
-            setHsktSelectedIds(getDefaultHsktQuestionIds(generatedTest, headerInfo));
-            showNotice('Đã chọn câu hỏi HSKT theo chuẩn YCCĐ!');
+            const built = buildHsktExamQuestions(activeQuestions, activeBank, headerInfo, 28);
+            setHsktTest(built);
+            setHsktSelectedIds(built.map(q => String(q.id)));
+            const mcCount = built.filter(q => q.category !== 'essay').length;
+            showNotice(`Đã chọn ${mcCount} câu trắc nghiệm HSKT (các YCCĐ không giảm tải tự động tăng số lượng câu)!`);
         } else if (preset === 'nb') {
-            const nbIds = generatedTest.filter(q => (q.level || 'NB') === 'NB').map(q => String(q.id));
-            setHsktSelectedIds(nbIds);
-            showNotice(`Đã chọn ${nbIds.length} câu mức Nhận biết (NB) cho Đề HSKT!`);
+            const nbFromExam = activeQuestions.filter(q => (q.level || 'NB') === 'NB' && q.category !== 'essay');
+            const usedIds = new Set(nbFromExam.map(q => String(q.id)));
+            const extraNb = activeBank.filter(b => b.category !== 'essay' && (b.level || 'NB') === 'NB' && !usedIds.has(String(b.id)));
+            const fullNb = [...nbFromExam, ...extraNb].slice(0, 28);
+            setHsktTest(fullNb);
+            setHsktSelectedIds(fullNb.map(q => String(q.id)));
+            showNotice(`Đã chọn ${fullNb.length} câu mức Nhận biết (NB) cho Đề HSKT!`);
         } else if (preset === 'nb_th') {
-            const ids = generatedTest.filter(q => ['NB', 'TH'].includes(q.level || 'NB')).map(q => String(q.id));
-            setHsktSelectedIds(ids);
-            showNotice(`Đã chọn ${ids.length} câu mức Nhận biết & Thông hiểu cho Đề HSKT!`);
+            const nbThFromExam = activeQuestions.filter(q => ['NB', 'TH'].includes((q.level || 'NB').toUpperCase()) && q.category !== 'essay');
+            const usedIds = new Set(nbThFromExam.map(q => String(q.id)));
+            const extraNbTh = activeBank.filter(b => b.category !== 'essay' && ['NB', 'TH'].includes((b.level || 'NB').toUpperCase()) && !usedIds.has(String(b.id)));
+            const fullNbTh = [...nbThFromExam, ...extraNbTh].slice(0, 28);
+            setHsktTest(fullNbTh);
+            setHsktSelectedIds(fullNbTh.map(q => String(q.id)));
+            showNotice(`Đã chọn ${fullNbTh.length} câu mức Nhận biết & Thông hiểu cho Đề HSKT!`);
         } else {
+            setHsktTest(generatedTest);
             setHsktSelectedIds(generatedTest.map(q => String(q.id)));
             showNotice('Đã chọn toàn bộ câu hỏi vào Đề HSKT!');
         }
@@ -808,6 +832,42 @@ const ExamGenerator: React.FC = () => {
             nextConfig[l] = { NB: 0, TH: 0, VD: 0, VDC: 0 };
         });
 
+        const isFinal = /cuối\s*k[ỳì]|học\s*k[ỳì]\s*(i{1,3}|iv|v|\d+)|hk\s*(i{1,3}|iv|v|\d+)/i.test(
+            headerInfo.tenKyThi || importedMatrix?.thongTinChung?.tenDe || ''
+        );
+        const targetG = detectGradeFromContext([], headerInfo, importedMatrix);
+        const gradeCurriculum = curriculum[targetG] || [];
+        const isLessonNew = (lessonName: string): boolean => {
+            if (importedMatrix?.chiTiet) {
+                const row = importedMatrix.chiTiet.find(r => {
+                    const b = (r.thongTinChung.bai || '').toLowerCase().trim();
+                    const nd = (r.thongTinChung.noiDung || '').toLowerCase().trim();
+                    const lNorm = lessonName.toLowerCase().trim();
+                    return (b && (lNorm.includes(b) || b.includes(lNorm))) ||
+                           (nd && (lNorm.includes(nd) || nd.includes(lNorm)));
+                });
+                if (row) {
+                    const isOld = Boolean(row.thongTinChung.daThi || (row.thongTinChung.soTietDaThi && row.thongTinChung.soTietDaThi > 0));
+                    return !isOld;
+                }
+            }
+            if (gradeCurriculum.length > 0) {
+                const lNorm = lessonName.toLowerCase().trim();
+                const idx = gradeCurriculum.findIndex(c => {
+                    const cNorm = c.toLowerCase().trim();
+                    return lNorm.includes(cNorm) || cNorm.includes(lNorm);
+                });
+                if (idx !== -1) {
+                    return idx >= Math.floor(gradeCurriculum.length / 2);
+                }
+            }
+            const m = lessonName.match(/bài\s*(\d+)/i);
+            if (m) {
+                return parseInt(m[1]) >= 4;
+            }
+            return true;
+        };
+
         // Mục tiêu chuẩn 4 - 3 - 3 (16 Biết : 12 Hiểu : 3 Vận dụng)
         const levelTargets: Record<'NB' | 'TH' | 'VD', number> = {
             NB: 16,
@@ -815,7 +875,8 @@ const ExamGenerator: React.FC = () => {
             VD: 3
         };
 
-        // Chia đều từng mức độ qua các bài học theo nguyên lý Min-Max (ưu tiên bài đang có ít câu ở mức đó nhất, sau đó ít tổng số câu nhất)
+        // Chia đều từng mức độ qua các bài học theo nguyên lý Min-Max
+        // Khi Cuối kỳ, mức Vận dụng (VD) BẮT BUỘC ưu tiên chọn các bài mới chưa ra kiểm tra (nếu bài mới có vận dụng)
         (['VD', 'TH', 'NB'] as const).forEach(lvl => {
             let rem = levelTargets[lvl];
             let guard = 0;
@@ -827,6 +888,13 @@ const ExamGenerator: React.FC = () => {
                 if (candidates.length === 0) break;
 
                 candidates.sort((a, b) => {
+                    // Ưu tiên bài mới cho mức Vận dụng trong đề Cuối kỳ (nếu bài mới có câu hỏi Vận dụng)
+                    if (isFinal && lvl === 'VD') {
+                        const newA = isLessonNew(a) ? 1 : 0;
+                        const newB = isLessonNew(b) ? 1 : 0;
+                        if (newA !== newB) return newB - newA;
+                    }
+
                     const cntLvlA = nextConfig[a][lvl] || 0;
                     const cntLvlB = nextConfig[b][lvl] || 0;
                     if (cntLvlA !== cntLvlB) return cntLvlA - cntLvlB;
@@ -890,20 +958,18 @@ const ExamGenerator: React.FC = () => {
             q: BankQuestion,
             preferredQuestionType: 'multiple-choice' | 'true-false' | 'short-answer' | 'essay'
         ) => {
+            const sub = getQuestionSubtype(q);
             if (preferredQuestionType === 'short-answer') {
-                return q.questionType === 'short-answer' || q.questionType === 'fill-blank' || q.mcType === 'fill-blank';
+                return sub === 'short-answer';
             }
             if (preferredQuestionType === 'true-false') {
-                return q.questionType === 'true-false' || q.mcType === 'true-false';
+                return sub === 'true-false';
             }
             if (preferredQuestionType === 'multiple-choice') {
-                return (
-                    (q.questionType === 'multiple-choice' || !q.questionType) &&
-                    q.mcType !== 'true-false' &&
-                    q.mcType !== 'fill-blank'
-                );
+                // Nhóm Trắc nghiệm nhiều lựa chọn bao gồm cả Trắc nghiệm 1 đáp án và Trắc nghiệm nhiều đáp án
+                return sub === 'single-choice' || sub === 'multiple-answer';
             }
-            return q.category === 'essay' || q.questionType === 'essay';
+            return sub === 'essay';
         };
 
         // Chuẩn hóa chuỗi để so khớp tên bài / đơn vị kiến thức chính xác bất kể dấu chấm, hai chấm, gạch ngang
@@ -1057,6 +1123,18 @@ const ExamGenerator: React.FC = () => {
         const criterionTypesUsed = new Map<string, Set<string>>();
         const criterionCountByType = new Map<string, Map<string, number>>();
 
+        // Theo dõi tần suất các loại câu hỏi đã chọn cho từng mức độ nhận thức (NB, TH, VD)
+        // RÀNG BUỘC CỐT LÕI: "Nếu mức độ của loại nào đã ra rồi thì nếu cùng mức độ cần ưu tiên loại câu hỏi khác"
+        const levelTypeCounts = new Map<string, Map<QuestionSubtype, number>>();
+        const recordPickedLevelType = (lvl: string, sub: QuestionSubtype) => {
+            const normalizedLvl = lvl === 'VDC' ? 'VD' : lvl;
+            if (!levelTypeCounts.has(normalizedLvl)) {
+                levelTypeCounts.set(normalizedLvl, new Map());
+            }
+            const m = levelTypeCounts.get(normalizedLvl)!;
+            m.set(sub, (m.get(sub) || 0) + 1);
+        };
+
         const recordPickedCriterion = (q: BankQuestion, effectiveType: string, effectiveLesson: string) => {
             const cKey = getCanonicalCriterionKeyForQuestion(q, targetGrade, effectiveLesson);
             if (!criterionTypesUsed.has(cKey)) {
@@ -1069,6 +1147,37 @@ const ExamGenerator: React.FC = () => {
             }
             const typeMap = criterionCountByType.get(cKey)!;
             typeMap.set(effectiveType, (typeMap.get(effectiveType) || 0) + 1);
+        };
+
+        const isFinalExam = /cuối\s*k[ỳì]|học\s*k[ỳì]\s*(i{1,3}|iv|v|\d+)|hk\s*(i{1,3}|iv|v|\d+)/i.test(
+            headerInfo.tenKyThi || importedMatrix?.thongTinChung?.tenDe || ''
+        );
+        const gradeCurriculum = curriculum[targetGrade] || [];
+        const isQuestionFromNewLesson = (q: BankQuestion): boolean => {
+            if (importedMatrix?.chiTiet) {
+                const row = importedMatrix.chiTiet.find(r =>
+                    doesQuestionMatchRow(q, r.thongTinChung.bai || r.thongTinChung.noiDung, r.thongTinChung.noiDung, r.thongTinChung.chuong)
+                );
+                if (row) {
+                    const isOld = Boolean(row.thongTinChung.daThi || (row.thongTinChung.soTietDaThi && row.thongTinChung.soTietDaThi > 0));
+                    return !isOld;
+                }
+            }
+            if (gradeCurriculum.length > 0) {
+                const qLessonNorm = (q.lesson || '').toLowerCase();
+                const idx = gradeCurriculum.findIndex(c => {
+                    const cNorm = c.toLowerCase();
+                    return qLessonNorm.includes(cNorm) || cNorm.includes(qLessonNorm);
+                });
+                if (idx !== -1) {
+                    return idx >= Math.floor(gradeCurriculum.length / 2);
+                }
+            }
+            const m = (q.lesson || '').match(/bài\s*(\d+)/i);
+            if (m) {
+                return parseInt(m[1]) >= 4;
+            }
+            return true;
         };
 
         const findQuestions = (
@@ -1202,6 +1311,25 @@ const ExamGenerator: React.FC = () => {
                             if (aExact !== bExact) return aExact - bExact;
                         }
 
+                        // 0.0. ĐỀ CUỐI KỲ: BẮT BUỘC ƯU TIÊN CHỌN BÀI MỚI CHƯA RA KIỂM TRA CHO MỨC VẬN DỤNG (VD/VDC)
+                        // "khi cuối kỳ, phần vận dụng cần ưu tiên chọn bài mới chưa ra (nếu bài mới đó có vận dụng)"
+                        if (isFinalExam && (level === 'VD' || level === 'VDC')) {
+                            const newA = isQuestionFromNewLesson(a) ? 1 : 0;
+                            const newB = isQuestionFromNewLesson(b) ? 1 : 0;
+                            if (newA !== newB) return newB - newA;
+                        }
+
+                        // 0.1. RÀNG BUỘC ĐA DẠNG LOẠI CÂU HỎI THEO MỨC ĐỘ:
+                        // "Nếu mức độ của loại nào đã ra rồi thì nếu cùng mức độ cần ưu tiên loại câu hỏi khác"
+                        const normLvl = level === 'VDC' ? 'VD' : level;
+                        const subA = getQuestionSubtype(a);
+                        const subB = getQuestionSubtype(b);
+                        const countPickedA = levelTypeCounts.get(normLvl)?.get(subA) || 0;
+                        const countPickedB = levelTypeCounts.get(normLvl)?.get(subB) || 0;
+                        if (countPickedA !== countPickedB) {
+                            return countPickedA - countPickedB; // Ưu tiên loại câu hỏi đã ra ít hơn hoặc chưa ra ở mức độ này
+                        }
+
                         const ckA = getCanonicalCriterionKeyForQuestion(a, targetGrade, effectiveLabel);
                         const ckB = getCanonicalCriterionKeyForQuestion(b, targetGrade, effectiveLabel);
 
@@ -1260,6 +1388,7 @@ const ExamGenerator: React.FC = () => {
                     const chosen = remainingInTier.shift()!;
                     picked.push(chosen);
                     usedIds.add(chosen.id);
+                    recordPickedLevelType(level, getQuestionSubtype(chosen));
                     recordPickedCriterion(chosen, targetType, effectiveLabel);
                 }
                 if (picked.length >= count) break;
@@ -1489,11 +1618,21 @@ const ExamGenerator: React.FC = () => {
             return;
         }
 
+        const getPartOrder = (q: any): number => {
+            const sub = getQuestionSubtype(q);
+            switch (sub) {
+                case 'single-choice': return 1;
+                case 'multiple-answer': return 2;
+                case 'true-false': return 3;
+                case 'short-answer': return 4;
+                case 'essay': return 5;
+            }
+        };
+
         const levelOrder = { NB: 1, TH: 2, VD: 3, VDC: 4 };
         selected.sort((a: any, b: any) => {
-            if (a.category !== b.category) return a.category === 'mc' ? -1 : 1;
-            const pa = a._partOrder ?? (a.category === 'essay' ? 4 : 1);
-            const pb = b._partOrder ?? (b.category === 'essay' ? 4 : 1);
+            const pa = getPartOrder(a);
+            const pb = getPartOrder(b);
             if (pa !== pb) return pa - pb;
             const la = levelOrder[a.level as keyof typeof levelOrder] || 5;
             const lb = levelOrder[b.level as keyof typeof levelOrder] || 5;
@@ -1506,7 +1645,9 @@ const ExamGenerator: React.FC = () => {
 
         setCurrentDossierId(null);
         setGeneratedTest(selected);
-        setHsktSelectedIds(getDefaultHsktQuestionIds(selected, headerInfo));
+        const builtHskt = buildHsktExamQuestions(selected, activeBank, headerInfo, 28);
+        setHsktTest(builtHskt);
+        setHsktSelectedIds(builtHskt.map(q => String(q.id)));
         setHsktPointMap({});
         setReviewTab('regular');
         setStep('review');
@@ -1586,6 +1727,46 @@ const ExamGenerator: React.FC = () => {
         }
     };
 
+    const isFinalExamExamGen = useMemo(() => {
+        return /cuối\s*k[ỳì]|học\s*k[ỳì]\s*(i{1,3}|iv|v|\d+)|hk\s*(i{1,3}|iv|v|\d+)/i.test(
+            headerInfo.tenKyThi || importedMatrix?.thongTinChung?.tenDe || ''
+        );
+    }, [headerInfo.tenKyThi, importedMatrix?.thongTinChung?.tenDe]);
+
+    const isQuestionFromNewLessonHelper = (q: BankQuestion, targetG: string): boolean => {
+        if (importedMatrix?.chiTiet) {
+            const row = importedMatrix.chiTiet.find(r => {
+                const b = (r.thongTinChung.bai || '').toLowerCase().trim();
+                const nd = (r.thongTinChung.noiDung || '').toLowerCase().trim();
+                const ch = (r.thongTinChung.chuong || '').toLowerCase().trim();
+                const qL = (q.lesson || '').toLowerCase().trim();
+                return (b && (qL.includes(b) || b.includes(qL))) ||
+                       (nd && (qL.includes(nd) || nd.includes(qL))) ||
+                       (ch && (qL.includes(ch) || ch.includes(qL)));
+            });
+            if (row) {
+                const isOld = Boolean(row.thongTinChung.daThi || (row.thongTinChung.soTietDaThi && row.thongTinChung.soTietDaThi > 0));
+                return !isOld;
+            }
+        }
+        const gradeCurriculum = curriculum[targetG] || [];
+        if (gradeCurriculum.length > 0) {
+            const qLessonNorm = (q.lesson || '').toLowerCase();
+            const idx = gradeCurriculum.findIndex(c => {
+                const cNorm = c.toLowerCase();
+                return qLessonNorm.includes(cNorm) || cNorm.includes(qLessonNorm);
+            });
+            if (idx !== -1) {
+                return idx >= Math.floor(gradeCurriculum.length / 2);
+            }
+        }
+        const m = (q.lesson || '').match(/bài\s*(\d+)/i);
+        if (m) {
+            return parseInt(m[1]) >= 4;
+        }
+        return true;
+    };
+
     // --- STEP 3: REVIEW & EXPORT ---
     const triggerBulkSwap = (targetLevel?: string) => {
         setIsSwapMenuOpen(false);
@@ -1651,6 +1832,14 @@ const ExamGenerator: React.FC = () => {
             }
             if (finalCandidates.length === 0) {
                 finalCandidates = searchPool;
+            }
+
+            if (isFinalExamExamGen && (q.level === 'VD' || q.level === 'VDC')) {
+                finalCandidates.sort((candA, candB) => {
+                    const newA = isQuestionFromNewLessonHelper(candA, targetG) ? 1 : 0;
+                    const newB = isQuestionFromNewLessonHelper(candB, targetG) ? 1 : 0;
+                    return newB - newA;
+                });
             }
 
             if (finalCandidates.length > 0) {
@@ -1719,6 +1908,14 @@ const ExamGenerator: React.FC = () => {
         }
         if (bestCandidates.length === 0) {
             bestCandidates = preferredPool;
+        }
+
+        if (isFinalExamExamGen && (q.level === 'VD' || q.level === 'VDC')) {
+            bestCandidates.sort((candA, candB) => {
+                const newA = isQuestionFromNewLessonHelper(candA, targetG) ? 1 : 0;
+                const newB = isQuestionFromNewLessonHelper(candB, targetG) ? 1 : 0;
+                return newB - newA;
+            });
         }
 
         if (bestCandidates.length > 0) {
@@ -2329,11 +2526,34 @@ const ExamGenerator: React.FC = () => {
                         {reviewTab === 'regular' ? (
                             <div className="p-3.5 flex flex-wrap items-center justify-between gap-3">
                                 <div className="flex flex-wrap items-center gap-2">
-                                    <span className="text-xs font-semibold text-gray-600 bg-gray-100 px-2.5 py-1 rounded-lg">
-                                        TN: <strong>{activeQuestions.filter(q => q.category !== 'essay').length} câu</strong> ({totalRegularMcPts.toFixed(1).replace('.', ',')}đ)
-                                        {' • '}
-                                        TL: <strong>{activeQuestions.filter(q => q.category === 'essay').length} câu</strong> ({totalRegularEsPts.toFixed(1).replace('.', ',')}đ)
+                                <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                                    <span className="bg-blue-50 text-blue-800 border border-blue-200 px-2.5 py-1 rounded-lg font-medium">
+                                        1 đáp án: <strong>{activeQuestions.filter(q => getQuestionSubtype(q) === 'single-choice').length}</strong>
                                     </span>
+                                    {activeQuestions.filter(q => getQuestionSubtype(q) === 'multiple-answer').length > 0 && (
+                                        <span className="bg-purple-50 text-purple-800 border border-purple-200 px-2.5 py-1 rounded-lg font-medium">
+                                            Nhiều đáp án: <strong>{activeQuestions.filter(q => getQuestionSubtype(q) === 'multiple-answer').length}</strong>
+                                        </span>
+                                    )}
+                                    {activeQuestions.filter(q => getQuestionSubtype(q) === 'true-false').length > 0 && (
+                                        <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2.5 py-1 rounded-lg font-medium">
+                                            Đúng - Sai: <strong>{activeQuestions.filter(q => getQuestionSubtype(q) === 'true-false').length}</strong>
+                                        </span>
+                                    )}
+                                    {activeQuestions.filter(q => getQuestionSubtype(q) === 'short-answer').length > 0 && (
+                                        <span className="bg-cyan-50 text-cyan-800 border border-cyan-200 px-2.5 py-1 rounded-lg font-medium">
+                                            Trả lời ngắn: <strong>{activeQuestions.filter(q => getQuestionSubtype(q) === 'short-answer').length}</strong>
+                                        </span>
+                                    )}
+                                    {activeQuestions.filter(q => getQuestionSubtype(q) === 'essay').length > 0 && (
+                                        <span className="bg-rose-50 text-rose-800 border border-rose-200 px-2.5 py-1 rounded-lg font-medium">
+                                            Tự luận: <strong>{activeQuestions.filter(q => getQuestionSubtype(q) === 'essay').length}</strong>
+                                        </span>
+                                    )}
+                                    <span className="bg-gray-100 text-gray-700 px-2.5 py-1 rounded-lg font-bold">
+                                        Tổng: {activeQuestions.length} câu ({(totalRegularMcPts + totalRegularEsPts).toFixed(1).replace('.', ',')}đ)
+                                    </span>
+                                </div>
 
                                     {variants.length > 1 && (
                                         <div className="flex items-center gap-1">
@@ -2502,7 +2722,7 @@ const ExamGenerator: React.FC = () => {
                                         Bấm vào số thứ tự câu hỏi bên dưới để Thêm / Bớt câu hỏi trong Đề HSKT (màu đỏ = có trong Đề HSKT):
                                     </div>
                                     <div className="flex flex-wrap gap-1.5">
-                                        {activeQuestions.map((q, idx) => {
+                                        {(reviewTab === 'hskt' && hsktTest.length > 0 ? hsktTest : activeQuestions).map((q, idx) => {
                                             const isSelected = hsktSelectedIds.includes(String(q.id));
                                             return (
                                                 <button
@@ -2514,7 +2734,7 @@ const ExamGenerator: React.FC = () => {
                                                             ? 'bg-rose-600 text-white border-rose-600 shadow-2xs'
                                                             : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
                                                     }`}
-                                                    title={`Câu ${idx + 1} (${q.level} - ${q.category === 'essay' ? 'Tự luận' : 'Trắc nghiệm'}): ${q.content?.slice(0, 60)}...`}
+                                                    title={`Câu ${idx + 1} (${q.level} - ${q.category === 'essay' ? 'Tự luận' : getQuestionSubtypeLabel(getQuestionSubtype(q))}): ${q.content?.slice(0, 60)}...`}
                                                 >
                                                     <span>Câu {idx + 1}</span>
                                                     <span className={`text-[10px] px-1 rounded ${isSelected ? 'bg-rose-700 text-rose-100' : 'bg-gray-200 text-gray-600'}`}>
@@ -2562,54 +2782,89 @@ const ExamGenerator: React.FC = () => {
                             </div>
                         </div>
 
-                        <div className="pt-2 border-t border-gray-200">
-                            <h3 className="text-base font-extrabold text-gray-900 uppercase">
-                                PHẦN 1. TRẮC NGHIỆM ({(reviewTab === 'hskt' ? totalHsktMcPts : totalRegularMcPts).toFixed(1).replace('.', ',')} điểm)
-                            </h3>
-                            <p className="text-xs italic text-gray-600 mt-0.5">
-                                Em hãy chọn hoặc điền đáp án đúng vào khung trả lời tương ứng:
-                            </p>
-                        </div>
                     </div>
 
                     {/* Question List Preview (Regular vs HSKT) */}
                     <div className="space-y-4">
-                        {(reviewTab === 'hskt' ? activeHsktQuestions : activeQuestions).map((q, idx, arr) => {
-                            const isFirstEssay = q.category === 'essay' && (idx === 0 || arr[idx - 1].category !== 'essay');
-                            const totalEssayPoints = arr.filter(item => item.category === 'essay').reduce((sum, item) => sum + (item.points ?? 1.0), 0);
+                        {(() => {
+                            const list = reviewTab === 'hskt' ? activeHsktQuestions : activeQuestions;
+                            const sectionOrderList: QuestionSubtype[] = ['single-choice', 'multiple-answer', 'true-false', 'short-answer', 'essay'];
+                            const presentSections = sectionOrderList.filter(type => list.some(item => getQuestionSubtype(item) === type));
+                            const romanNumerals = ['I', 'II', 'III', 'IV', 'V'];
 
-                            return (
-                                <React.Fragment key={q.uniqueId || idx}>
-                                    {isFirstEssay && (
-                                        <div className="pt-4 border-t-2 border-indigo-200 mt-6 mb-2">
-                                            <div className="flex items-center justify-between">
-                                                <h3 className="text-base font-extrabold text-indigo-950 uppercase">
-                                                    PHẦN 2. TỰ LUẬN ({totalEssayPoints.toFixed(1).replace('.', ',')} điểm)
-                                                </h3>
-                                            </div>
-                                        </div>
-                                    )}
-                                    <div className="bg-white p-5 rounded-xl shadow-xs border border-gray-200 relative group hover:border-primary/50 transition-all">
-                                        <div className="flex justify-between items-start gap-4">
-                                            <div className="flex-1">
-                                                <div className="flex items-center gap-2 mb-2 flex-wrap">
-                                                    <span className="font-extrabold text-blue-900 text-sm">Câu {idx + 1}</span>
-                                                    <span className={`text-[10px] px-2 py-0.5 rounded font-bold border ${q.level === 'NB' ? 'bg-green-50 border-green-200 text-green-700' : q.level === 'TH' ? 'bg-blue-50 border-blue-200 text-blue-700' : q.level === 'VD' ? 'bg-yellow-50 border-yellow-200 text-yellow-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
-                                                        {q.level} {q.criteria ? `- ${q.criteria}` : ''}
+                            return list.map((q, idx, arr) => {
+                                const qSub = getQuestionSubtype(q);
+                                const prevSub = idx > 0 ? getQuestionSubtype(arr[idx - 1]) : null;
+                                const isFirstOfSection = idx === 0 || qSub !== prevSub;
+
+                                const sectionIndex = presentSections.indexOf(qSub);
+                                const roman = romanNumerals[sectionIndex] || String(sectionIndex + 1);
+                                const sectionPoints = arr
+                                    .filter(item => getQuestionSubtype(item) === qSub)
+                                    .reduce((sum, item) => sum + (item.points ?? (item.category === 'essay' ? 1.0 : 0.25)), 0);
+
+                                let sectionTitle = '';
+                                let sectionDesc = '';
+                                switch (qSub) {
+                                    case 'single-choice':
+                                        sectionTitle = `PHẦN ${roman}. CÂU HỎI TRẮC NGHIỆM 1 ĐÁP ÁN`;
+                                        sectionDesc = 'Thí sinh chọn 01 phương án đúng nhất trong các phương án A, B, C, D:';
+                                        break;
+                                    case 'multiple-answer':
+                                        sectionTitle = `PHẦN ${roman}. CÂU HỎI TRẮC NGHIỆM NHIỀU ĐÁP ÁN`;
+                                        sectionDesc = 'Thí sinh chọn tất cả các phương án đúng:';
+                                        break;
+                                    case 'true-false':
+                                        sectionTitle = `PHẦN ${roman}. CÂU HỎI TRẮC NGHIỆM ĐÚNG - SAI`;
+                                        sectionDesc = 'Trong mỗi ý a), b), c), d) ở mỗi câu, thí sinh chọn Đúng hoặc Sai:';
+                                        break;
+                                    case 'short-answer':
+                                        sectionTitle = `PHẦN ${roman}. CÂU HỎI TRẢ LỜI NGẮN`;
+                                        sectionDesc = 'Thí sinh ghi câu trả lời ngắn gọn vào khung trả lời tương ứng:';
+                                        break;
+                                    case 'essay':
+                                        sectionTitle = `PHẦN ${roman}. TỰ LUẬN`;
+                                        sectionDesc = 'Thí sinh trình bày bài làm chi tiết vào giấy kiểm tra:';
+                                        break;
+                                }
+
+                                return (
+                                    <React.Fragment key={q.uniqueId || idx}>
+                                        {isFirstOfSection && (
+                                            <div className={`pt-3 ${idx > 0 ? 'mt-8 border-t-2 border-indigo-100' : ''} mb-2`}>
+                                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 pb-2 border-b border-gray-200">
+                                                    <h3 className="text-base font-extrabold text-blue-950 uppercase tracking-wide">
+                                                        {sectionTitle} ({sectionPoints.toFixed(1).replace('.', ',')} điểm)
+                                                    </h3>
+                                                    <span className="text-xs text-gray-500 italic">
+                                                        {sectionDesc}
                                                     </span>
-                                                    <span className="text-[10px] font-bold text-purple-700 border border-purple-200 bg-purple-50 px-2 py-0.5 rounded">
-                                                        {q.questionType === 'true-false'
-                                                            ? 'Đúng / Sai'
-                                                            : q.questionType === 'short-answer'
-                                                                ? 'Trả lời ngắn'
-                                                                : q.questionType === 'multiple-answer' || q.mcType === 'multiple-answer'
-                                                                    ? 'Nhiều đáp án'
-                                                                    : q.category === 'essay'
-                                                                        ? 'Tự luận'
-                                                                        : 'Trắc nghiệm'}
-                                                    </span>
-                                                    <span className="text-xs text-gray-400">({q.lesson})</span>
                                                 </div>
+                                            </div>
+                                        )}
+                                        <div className="bg-white p-5 rounded-xl shadow-xs border border-gray-200 relative group hover:border-primary/50 transition-all">
+                                            <div className="flex justify-between items-start gap-4">
+                                                <div className="flex-1">
+                                                    <div className="flex items-center gap-2 mb-2 flex-wrap">
+                                                        <span className="font-extrabold text-blue-900 text-sm">Câu {idx + 1}</span>
+                                                        <span className={`text-[10px] px-2 py-0.5 rounded font-bold border ${q.level === 'NB' ? 'bg-green-50 border-green-200 text-green-700' : q.level === 'TH' ? 'bg-blue-50 border-blue-200 text-blue-700' : q.level === 'VD' ? 'bg-yellow-50 border-yellow-200 text-yellow-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
+                                                            {q.level} {q.criteria ? `- ${q.criteria}` : ''}
+                                                        </span>
+                                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                                                            qSub === 'single-choice'
+                                                                ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                                                : qSub === 'multiple-answer'
+                                                                    ? 'bg-purple-50 text-purple-700 border-purple-200'
+                                                                    : qSub === 'true-false'
+                                                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                                        : qSub === 'short-answer'
+                                                                            ? 'bg-cyan-50 text-cyan-700 border-cyan-200'
+                                                                            : 'bg-rose-50 text-rose-700 border-rose-200'
+                                                        }`}>
+                                                            {getQuestionSubtypeLabel(qSub)}
+                                                        </span>
+                                                        <span className="text-xs text-gray-400">({q.lesson})</span>
+                                                    </div>
                                                 {q.questionType === 'true-false' && q.options && q.options.some((o: any) => ['a', 'b', 'c', 'd'].includes(String(o.id || '').toLowerCase())) ? (
                                                     <div className="space-y-2 text-sm text-gray-800">
                                                         <p className="font-medium whitespace-pre-wrap">
@@ -2784,7 +3039,8 @@ const ExamGenerator: React.FC = () => {
                                     </div>
                                 </React.Fragment>
                             );
-                        })}
+                        });
+                    })()}
                     </div>
 
                     {/* SEPARATE HSKT GRADING SHEET PREVIEW WHEN IN HSKT TAB */}
