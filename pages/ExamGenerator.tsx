@@ -846,7 +846,7 @@ const ExamGenerator: React.FC = () => {
             headerInfo.tenKyThi || importedMatrix?.thongTinChung?.tenDe || ''
         );
         const targetG = detectGradeFromContext([], headerInfo, importedMatrix);
-        const gradeCurriculum = curriculum[targetG] || [];
+        const gradeCurriculum = CURRICULUM.lessonData[targetG as keyof typeof CURRICULUM.lessonData] || [];
         const isLessonNew = (lessonName: string): boolean => {
             if (importedMatrix?.chiTiet) {
                 const row = importedMatrix.chiTiet.find(r => {
@@ -1165,7 +1165,7 @@ const ExamGenerator: React.FC = () => {
         const isFinalExam = /cuối\s*k[ỳì]|học\s*k[ỳì]\s*(i{1,3}|iv|v|\d+)|hk\s*(i{1,3}|iv|v|\d+)/i.test(
             headerInfo.tenKyThi || importedMatrix?.thongTinChung?.tenDe || ''
         );
-        const gradeCurriculum = curriculum[targetGrade] || [];
+        const gradeCurriculum = CURRICULUM.lessonData[targetGrade as keyof typeof CURRICULUM.lessonData] || [];
         const isQuestionFromNewLesson = (q: BankQuestion): boolean => {
             if (importedMatrix?.chiTiet) {
                 const row = importedMatrix.chiTiet.find(r =>
@@ -1762,7 +1762,7 @@ const ExamGenerator: React.FC = () => {
                 return !isOld;
             }
         }
-        const gradeCurriculum = curriculum[targetG] || [];
+        const gradeCurriculum = CURRICULUM.lessonData[targetG as keyof typeof CURRICULUM.lessonData] || [];
         if (gradeCurriculum.length > 0) {
             const qLessonNorm = (q.lesson || '').toLowerCase();
             const idx = gradeCurriculum.findIndex(c => {
