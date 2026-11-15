@@ -6,7 +6,12 @@ import {
     formatQuestionOptionsAndAnswer
 } from '../services/similarPromptService';
 import { BankQuestion } from '../pages/ExamGenerator';
-import { cleanQuestionContentForWord, generateExamWordHtml } from '../utils';
+import {
+    cleanQuestionContentForWord,
+    generateExamWordHtml,
+    generateAzotaKeyHtml,
+    generateExamVariants
+} from '../utils';
 import {
     getSavedSimilarExams,
     saveSimilarExamDossier,
@@ -280,6 +285,68 @@ d) Biến đếm điều khiển số lần lặp chính xác - 0,25 điểm.
             expect(importResult.success).toBe(true);
             expect(importResult.addedCount).toBe(1);
             expect(getSavedSimilarExams()).toHaveLength(1);
+        });
+
+        it('10. parseAndMapBulkSimilarQuestions resolves new answer from options rather than keeping old question answer', () => {
+            // mockQuestionSingle original answer is 'B'
+            expect(mockQuestionSingle.answer).toBe('B');
+
+            // AI returns a similar question where answer is 'D' (marked by star or option)
+            const rawPastedWithDifferentAnswer = `
+Câu 1: Thiết bị nào sau đây là bộ xử lý trung tâm của máy tính?
+A. RAM.
+B. ROM.
+C. Hard Disk.
+*D. CPU.
+            `;
+
+            const res = parseAndMapBulkSimilarQuestions(rawPastedWithDifferentAnswer, [mockQuestionSingle]);
+            expect(res.appliedCount).toBe(1);
+            const replaced = res.updatedQuestions[0];
+            // Must NOT keep original answer 'B', must be updated to 'D'
+            expect(replaced.answer).toBe('D');
+            const dOpt = replaced.options?.find(o => o.id === 'D');
+            expect(dOpt?.isCorrect).toBe(true);
+        });
+
+        it('11. generateExamVariants and generateAzotaKeyHtml faithfully generate answer key matching similar exam questions', () => {
+            const similarQuestions: BankQuestion[] = [
+                {
+                    ...mockQuestionSingle,
+                    content: 'CPU là viết tắt của từ gì?',
+                    options: [
+                        { id: 'A', text: 'Central Processing Unit.', isCorrect: true },
+                        { id: 'B', text: 'Central Power Unit.', isCorrect: false },
+                        { id: 'C', text: 'Control Processing Unit.', isCorrect: false },
+                        { id: 'D', text: 'Core Processing Unit.', isCorrect: false }
+                    ],
+                    answer: 'A'
+                },
+                {
+                    ...mockQuestionTF,
+                    content: 'Tình huống: Sử dụng mạng xã hội an toàn.',
+                    options: [
+                        { id: 'a', text: 'Không chia sẻ mật khẩu cho người lạ.', isCorrect: true },
+                        { id: 'b', text: 'Nên kết bạn với tất cả tài khoản lạ.', isCorrect: false },
+                        { id: 'c', text: 'Cần bật tính năng bảo mật hai lớp.', isCorrect: true },
+                        { id: 'd', text: 'Đăng tải thông tin cá nhân công khai.', isCorrect: false }
+                    ],
+                    answer: 'a-Đ, b-S, c-Đ, d-S'
+                }
+            ];
+
+            // Generate variants from the similar questions
+            const variants = generateExamVariants(similarQuestions, ['101', '102'], false);
+            expect(variants).toHaveLength(2);
+
+            // Variant 101 must match the similar question answer 'A' (not the original 'B')
+            expect(variants[0].answerKey[0].answer).toBe('A');
+
+            // Azota answer key must match 'A' for Q1 and 'a-Đ, b-S, c-Đ, d-S' for Q2
+            const azotaHtml = generateAzotaKeyHtml(variants[0].questions);
+            expect(azotaHtml).toContain('1. A');
+            expect(azotaHtml).toContain('2. a-Đ, b-S, c-Đ, d-S');
+            expect(azotaHtml).not.toContain('1. B');
         });
     });
 });

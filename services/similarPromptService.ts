@@ -326,6 +326,23 @@ export const parseAndMapBulkSimilarQuestions = (
     let appliedCount = 0;
     const details: string[] = [];
 
+    const resolveAnswer = (parsedQ: any, oldQ: BankQuestion): string => {
+        if (parsedQ.answer && parsedQ.answer.trim()) return parsedQ.answer.trim();
+        if (parsedQ.options && parsedQ.options.length > 0) {
+            const isTf = (parsedQ.questionType === 'true-false' || oldQ.questionType === 'true-false');
+            const isMulti = (parsedQ.questionType === 'multiple-answer' || oldQ.questionType === 'multiple-answer');
+            if (isTf) {
+                return parsedQ.options.map((o: any) => `${o.id}-${o.isCorrect ? 'Đ' : 'S'}`).join(', ');
+            } else if (isMulti) {
+                return parsedQ.options.filter((o: any) => o.isCorrect).map((o: any) => o.id).join(', ');
+            } else {
+                const correct = parsedQ.options.find((o: any) => o.isCorrect);
+                if (correct) return correct.id;
+            }
+        }
+        return oldQ.answer || '';
+    };
+
     // Nếu văn bản có chứa tường minh các số thứ tự Câu X (ví dụ: Câu 1, Câu 2...)
     if (indices.length >= parsedList.length && indices.length > 0) {
         parsedList.forEach((parsedQ, pIdx) => {
@@ -338,7 +355,7 @@ export const parseAndMapBulkSimilarQuestions = (
                     ...oldQ,
                     content: cleanQuestionContentForWord(parsedQ.content || oldQ.content),
                     options: parsedQ.options && parsedQ.options.length > 0 ? parsedQ.options : oldQ.options,
-                    answer: parsedQ.answer || oldQ.answer,
+                    answer: resolveAnswer(parsedQ, oldQ),
                     level: parsedQ.level || oldQ.level,
                     criteria: parsedQ.criteria || oldQ.criteria,
                     lesson: parsedQ.lesson || oldQ.lesson,
@@ -360,7 +377,7 @@ export const parseAndMapBulkSimilarQuestions = (
                         ...oldQ,
                         content: cleanQuestionContentForWord(parsedQ.content || oldQ.content),
                         options: parsedQ.options && parsedQ.options.length > 0 ? parsedQ.options : oldQ.options,
-                        answer: parsedQ.answer || oldQ.answer,
+                        answer: resolveAnswer(parsedQ, oldQ),
                         level: parsedQ.level || oldQ.level,
                         criteria: parsedQ.criteria || oldQ.criteria,
                         lesson: parsedQ.lesson || oldQ.lesson,
@@ -391,7 +408,7 @@ export const parseAndMapBulkSimilarQuestions = (
                     ...oldQ,
                     content: cleanQuestionContentForWord(parsedQ.content || oldQ.content),
                     options: parsedQ.options && parsedQ.options.length > 0 ? parsedQ.options : oldQ.options,
-                    answer: parsedQ.answer || oldQ.answer,
+                    answer: resolveAnswer(parsedQ, oldQ),
                     level: parsedQ.level || oldQ.level,
                     criteria: parsedQ.criteria || oldQ.criteria,
                     lesson: parsedQ.lesson || oldQ.lesson,

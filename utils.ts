@@ -15,8 +15,8 @@ export const getRequirementsHtml = (
     const gradeNum = explicitGradeMatch
         ? explicitGradeMatch[1]
         : (lessonName || subTopic)
-        ? detectGradeFromLessonOrContext(lessonName || subTopic, grade)
-        : (fallbackNumMatch ? fallbackNumMatch[0] : '');
+            ? detectGradeFromLessonOrContext(lessonName || subTopic, grade)
+            : (fallbackNumMatch ? fallbackNumMatch[0] : '');
     if (!gradeNum) return '';
 
     // Nếu xác định được Bài học cụ thể, xây dựng YCCĐ trực tiếp từ getMergedCriteria(gradeNum, lessonName)
@@ -35,17 +35,17 @@ export const getRequirementsHtml = (
         return syncSpecHtmlWithCustomStore('', gradeNum, subTopic, lessonName, customStore);
     }
     const requirementsText: string = gradeData[mainTopic][subTopic];
-    
+
     const levelKeywords = ["nhận biết", "thông hiểu", "vận dụng", "vận dụng cao"];
     let isFirstLevel = true;
-    
+
     const baseHtml = requirementsText.split('\n').map(line => {
         const trimmedLine = line.trim();
         if (!trimmedLine) return '';
 
         const coreText = trimmedLine.replace(/^[\d.]+\s*/, '').toLowerCase();
         const isLevel = levelKeywords.some(keyword => coreText.startsWith(keyword));
-        
+
         if (isLevel) {
             const marginTopClass = isFirstLevel ? '' : 'mt-2';
             isFirstLevel = false;
@@ -72,10 +72,10 @@ export const parseParts = (text: string) => {
     const lines = (text || '').split(/\n/);
     let currentLabel = '';
     let currentContent = '';
-    
+
     // Regex to match start of lines like "a)", "a.", "1.", "1)", "Bước 1:", "-", "+", "*", "a - 0.5đ:", "a -"
     const labelRegex = /^\s*([a-z]\s*[-–](?:\s*\d+(?:[\.,]\d+)?[đd]?:?)?|[a-z][\)\.]|[0-9]{1,2}[\)\.]|-|\+|\*|Bước \d+:?)(.*)/i;
-    
+
     lines.forEach(line => {
         const trimmed = line.trim();
         if (!trimmed) return;
@@ -94,12 +94,12 @@ export const parseParts = (text: string) => {
     if (currentLabel || currentContent) {
         parts.push({ label: currentLabel, content: currentContent.trim() });
     }
-    
+
     // Fallback: If no labels found but text exists, treat as one block
     if (parts.length === 0 && text.trim()) {
         parts.push({ label: '', content: text.trim() });
     }
-    
+
     return parts;
 };
 
@@ -421,10 +421,10 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
     const totalTuLuanPoints = tuLuanQuestions.reduce((sum, q) => sum + (q.points || 1.0), 0);
     const totalTracNghiemPoints = totalSingleChoicePoints + totalMultipleAnswerPoints + totalTrueFalsePoints + totalShortAnswerPoints;
     const unitMcPoint = singleChoiceQuestions.length > 0 ? getMcQuestionPoint(singleChoiceQuestions[0]) : 0.25;
-    
+
     const currentYear = new Date().getFullYear();
     const nextYear = currentYear + 1;
-    
+
     // Format tenKyThi
     let tenKyThiFull = (headerInfo.tenKyThi || '').toUpperCase().trim();
     if (tenKyThiFull.startsWith("LỚP")) {
@@ -766,15 +766,15 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                 let questionTextHtml = `<p style="margin-bottom: 3pt; font-size: 13pt; text-align: justify;">
                     <strong>Câu ${qNum} (${pointsStr} điểm):</strong> ${firstLine}
                 </p>`;
-                
+
                 if (remainingLines.length > 0) {
-                    questionTextHtml += remainingLines.map((line: string) => 
+                    questionTextHtml += remainingLines.map((line: string) =>
                         `<p style="margin: 3pt 0 3pt 15pt; font-size: 13pt; text-align: justify;">${line}</p>`
                     ).join('');
                 }
-                
+
                 let dotLines = '';
-                for(let i=0; i<6; i++) {
+                for (let i = 0; i < 6; i++) {
                     dotLines += `<div style="border-bottom: 1px dotted black; height: 24px; width: 100%; margin-bottom: 4px;">&nbsp;</div>`;
                 }
 
@@ -836,7 +836,7 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                 if (q.options && q.options.length > 0) {
                     const allShort = q.options.every((opt: any) => (opt.text || '').trim().length < 25);
                     let optionsHtml = '';
-                    
+
                     if (allShort) {
                         optionsHtml = '<table border="0" cellpadding="0" cellspacing="0" style="width: 100%; border: none; border-collapse: collapse; table-layout: fixed; margin-left: 0.5cm;">';
                         for (let i = 0; i < q.options.length; i += 2) {
@@ -904,7 +904,7 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                 const isFirst = index === 0;
                 const qNum = questionIndexMap.get(q) || 1;
                 const qLabel = `Câu ${qNum}`;
-                
+
                 let rawAnswer = q.answer || '';
                 rawAnswer = rawAnswer.replace(/^HƯỚNG DẪN CHẤM:?\s*/i, '');
                 rawAnswer = rawAnswer.replace(/;\s*(?=(?:[a-z]|[0-9]{1,2})\s*[\)\.\-–:])/gi, '\n');
@@ -912,7 +912,7 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
 
                 const questionParts = parseParts(q.content);
                 const answerParts = parseParts(rawAnswer);
-                
+
                 let nestedTableRows = '';
                 if (answerParts.length > 1) {
                     const getPartKey = (lbl: string) => {
@@ -923,7 +923,7 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                     answerParts.forEach((ansPart, idx) => {
                         const ansKey = getPartKey(ansPart.label);
                         const qPart = questionParts.find(qp => getPartKey(qp.label) === ansKey) || { content: '' };
-                        
+
                         let col1Label = ansPart.label.replace(/\s*[-–].*$/, '').trim();
                         if (col1Label && !col1Label.endsWith(')') && !col1Label.endsWith('.')) {
                             col1Label += ')';
@@ -931,11 +931,11 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
 
                         let col1Text = col1Label ? `<b>${col1Label}</b>` : `<b>Ý ${idx + 1}:</b>`;
                         if (qPart.content) {
-                            col1Text += ` ${qPart.content}`; 
+                            col1Text += ` ${qPart.content}`;
                         } else if (!col1Label || col1Label === '-' || col1Label === '+' || col1Label === '*') {
                             col1Text = `<b>Ý ${idx + 1}</b>`;
                         }
-                        
+
                         const ansContent = ansPart.content.replace(/\n/g, '<br/>');
 
                         nestedTableRows += `
@@ -1106,7 +1106,7 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                 cols = sec.questions.length;
             }
             const rows = Math.ceil(sec.questions.length / cols);
-            
+
             let grid = `<table style="width: 100%; border-collapse: collapse; text-align: center; font-size: 11pt; margin: 0 auto; table-layout: fixed;">`;
             for (let r = 0; r < rows; r++) {
                 grid += `<tr>`;
@@ -1180,7 +1180,7 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
     `;
 
     let gradingTableEnd = `</tbody></table>`;
-    
+
     let hsktFooterNote = '';
     if (isHsktExam) {
         hsktFooterNote = `
@@ -1518,10 +1518,10 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
     const gradeStr = gradeMatch ? gradeMatch[0] : "";
     const currentYear = new Date().getFullYear();
     const nextYear = currentYear + 1;
-    
+
     // Determine exam type for logic branching
     const isFinalExam = /cuối\s+k[ìỳ]/i.test(examName);
-    
+
     const cleanExamName = examName.toUpperCase().replace(new RegExp(`^LỚP\\s*${gradeStr}\\s*-\\s*`, 'i'), '');
     const matrixTitle = `KHUNG MA TRẬN ĐỀ KIỂM TRA MÔN TIN LỚP ${gradeStr} - ${cleanExamName} NĂM HỌC ${currentYear}-${nextYear}`;
     const specTitle = `BẢNG ĐẶC TẢ ĐỀ KIỂM TRA MÔN TIN LỚP ${gradeStr} - ${cleanExamName} NĂM HỌC ${currentYear}-${nextYear}`;
@@ -1690,24 +1690,24 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
     // 1. Calculate Totals & Weights Logic
     let totalExamPoints = 0;
     let totalSoTiet = 0;
-    
+
     let sumSoTietChecked = 0;
     let sumSoTietUnchecked = 0;
 
     data.matrix.rows.forEach((row, rIdx) => {
-         const st = parseFloat(String(row[4]) || '0');
-         const examined = parseFloat(String(row[14]) || '0');
-         const validExamined = Math.min(Math.max(examined, 0), st);
-         const validNew = Math.max(st - validExamined, 0);
+        const st = parseFloat(String(row[4]) || '0');
+        const examined = parseFloat(String(row[14]) || '0');
+        const validExamined = Math.min(Math.max(examined, 0), st);
+        const validNew = Math.max(st - validExamined, 0);
 
-         totalSoTiet += st;
-         sumSoTietChecked += validExamined;
-         sumSoTietUnchecked += validNew;
+        totalSoTiet += st;
+        sumSoTietChecked += validExamined;
+        sumSoTietUnchecked += validNew;
 
-         const tnkq = (parseInt(String(row[5])||'0') + parseInt(String(row[7])||'0') + parseInt(String(row[9])||'0') + parseInt(String(row[11])||'0'));
-         const tl = (parseInt(String(row[6])||'0') + parseInt(String(row[8])||'0') + parseInt(String(row[10])||'0') + parseInt(String(row[12])||'0'));
-         const rowPointsTL = getRowPointsTL(rIdx);
-         totalExamPoints += (tnkq * pointsTNKQ) + (tl * rowPointsTL);
+        const tnkq = (parseInt(String(row[5]) || '0') + parseInt(String(row[7]) || '0') + parseInt(String(row[9]) || '0') + parseInt(String(row[11]) || '0'));
+        const tl = (parseInt(String(row[6]) || '0') + parseInt(String(row[8]) || '0') + parseInt(String(row[10]) || '0') + parseInt(String(row[12]) || '0'));
+        const rowPointsTL = getRowPointsTL(rIdx);
+        totalExamPoints += (tnkq * pointsTNKQ) + (tl * rowPointsTL);
     });
 
     // Dynamic Weight Logic for Column Calculations (Target %)
@@ -1725,10 +1725,10 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
         if (isFinalExam) {
             if (finalCheckedRatio > MAX_CHECKED_RATIO) finalCheckedRatio = MAX_CHECKED_RATIO;
             if (finalCheckedRatio < MIN_CHECKED_RATIO) finalCheckedRatio = MIN_CHECKED_RATIO;
-        } 
-        
+        }
+
         const finalUncheckedRatio = 1 - finalCheckedRatio;
-        
+
         // Convert to multipliers relative to natural period count
         weightChecked = finalCheckedRatio;
         weightUnchecked = finalUncheckedRatio;
@@ -1737,35 +1737,35 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
     // ACTUAL Period Percentages
     const actualPercentChecked = totalSoTiet > 0 ? (sumSoTietChecked / totalSoTiet) * 100 : 0;
     const actualPercentUnchecked = totalSoTiet > 0 ? (sumSoTietUnchecked / totalSoTiet) * 100 : 0;
-    
+
     // NEW: Calculate REALIZED POINTS Percentages for the Note (Matches actual distribution)
     let realizedPointsOld = 0;
     data.matrix.rows.forEach((row, rIdx) => {
-         const st = parseFloat(String(row[4]) || '0');
-         const examined = parseFloat(String(row[14]) || '0');
-         const validExamined = Math.min(Math.max(examined, 0), st);
-         const validNew = Math.max(st - validExamined, 0);
-         
-         const tnkq = (parseInt(String(row[5])||'0') + parseInt(String(row[7])||'0') + parseInt(String(row[9])||'0') + parseInt(String(row[11])||'0'));
-         const tl = (parseInt(String(row[6])||'0') + parseInt(String(row[8])||'0') + parseInt(String(row[10])||'0') + parseInt(String(row[12])||'0'));
-         const rowPointsTL = getRowPointsTL(rIdx);
-         const rowPoints = (tnkq * pointsTNKQ) + (tl * rowPointsTL);
+        const st = parseFloat(String(row[4]) || '0');
+        const examined = parseFloat(String(row[14]) || '0');
+        const validExamined = Math.min(Math.max(examined, 0), st);
+        const validNew = Math.max(st - validExamined, 0);
 
-         // Determine if purely old lesson (Strict logic matching MatrixBuilder)
-         if (validExamined > 0 && validNew === 0) {
-             realizedPointsOld += rowPoints;
-         }
+        const tnkq = (parseInt(String(row[5]) || '0') + parseInt(String(row[7]) || '0') + parseInt(String(row[9]) || '0') + parseInt(String(row[11]) || '0'));
+        const tl = (parseInt(String(row[6]) || '0') + parseInt(String(row[8]) || '0') + parseInt(String(row[10]) || '0') + parseInt(String(row[12]) || '0'));
+        const rowPointsTL = getRowPointsTL(rIdx);
+        const rowPoints = (tnkq * pointsTNKQ) + (tl * rowPointsTL);
+
+        // Determine if purely old lesson (Strict logic matching MatrixBuilder)
+        if (validExamined > 0 && validNew === 0) {
+            realizedPointsOld += rowPoints;
+        }
     });
     const notePercentOld = totalExamPoints > 0 ? (realizedPointsOld / totalExamPoints * 100) : 0;
     const notePercentNew = 100 - notePercentOld;
 
     // Helper to calculate target percent for a row (For Columns)
     const getRowTargetPercent = (row: any) => {
-        const st = parseFloat(String(row[4])||'0');
-        const examined = parseFloat(String(row[14])||'0');
+        const st = parseFloat(String(row[4]) || '0');
+        const examined = parseFloat(String(row[14]) || '0');
         const validExamined = Math.min(Math.max(examined, 0), st);
         const validNew = Math.max(st - validExamined, 0);
-        
+
         if (sumSoTietChecked > 0 && sumSoTietUnchecked > 0) {
             const pctFromOld = (validExamined / sumSoTietChecked) * weightChecked * 100;
             const pctFromNew = (validNew / sumSoTietUnchecked) * weightUnchecked * 100;
@@ -1789,22 +1789,22 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
     });
 
     const groupedByMainTopic = data.matrix.rows.reduce((acc: any, row) => {
-        const main = row[1]; if(!acc[main]) acc[main] = [];
+        const main = row[1]; if (!acc[main]) acc[main] = [];
         acc[main].push(row);
         return acc;
     }, {});
 
     let matrixBodyHtml = '';
     let specBodyHtml = '';
-    
+
     const matrixTotals = { cau: Array(15).fill(0), diem: Array(15).fill(0) };
     let specTotals = { nb: 0, th: 0, vd: 0, vdc: 0 };
-    
+
     let stt = 1;
 
     Object.keys(groupedByMainTopic).forEach(mainTopic => {
         const rows = groupedByMainTopic[mainTopic];
-        
+
         // Calculate Main Topic Stats
         let mainTopicPoints = 0;
         let mainTopicSoTiet = 0;
@@ -1813,70 +1813,70 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
         rows.forEach((row: any) => {
             const originalIdx = data.matrix.rows.indexOf(row);
             const rowPointsTL = getRowPointsTL(originalIdx);
-            const tnkq = (parseInt(String(row[5])||'0') + parseInt(String(row[7])||'0') + parseInt(String(row[9])||'0') + parseInt(String(row[11])||'0'));
-            const tl = (parseInt(String(row[6])||'0') + parseInt(String(row[8])||'0') + parseInt(String(row[10])||'0') + parseInt(String(row[12])||'0'));
+            const tnkq = (parseInt(String(row[5]) || '0') + parseInt(String(row[7]) || '0') + parseInt(String(row[9]) || '0') + parseInt(String(row[11]) || '0'));
+            const tl = (parseInt(String(row[6]) || '0') + parseInt(String(row[8]) || '0') + parseInt(String(row[10]) || '0') + parseInt(String(row[12]) || '0'));
             mainTopicPoints += (tnkq * pointsTNKQ) + (tl * rowPointsTL);
-            
-            mainTopicSoTiet += parseFloat(String(row[4])||'0');
+
+            mainTopicSoTiet += parseFloat(String(row[4]) || '0');
             mainTopicWeightedPercent += getRowTargetPercent(row);
         });
 
         // Display string for Main Topic
         let mainTopicDisplay = `<b>${mainTopic}</b>`;
-        
+
         // Use actual points for the Total column, but weighted % for the label column
         const mainTopicRealizedPercent = totalExamPoints > 0 ? (mainTopicPoints / totalExamPoints * 100) : 0;
 
         // Group by SubTopic
         const groupedBySubTopic = rows.reduce((acc: any, row: any) => {
-             const sub = row[2]; if(!acc[sub]) acc[sub] = [];
-             acc[sub].push(row);
-             return acc;
+            const sub = row[2]; if (!acc[sub]) acc[sub] = [];
+            acc[sub].push(row);
+            return acc;
         }, {});
         const subTopics = Object.keys(groupedBySubTopic);
-        const mainRowspan = subTopics.length; 
+        const mainRowspan = subTopics.length;
 
         subTopics.forEach((subTopic, index) => {
             const subRows = groupedBySubTopic[subTopic];
-            
+
             // SubTopic Stats
             const subCounts = Array(15).fill(0);
             const subPoints = Array(15).fill(0);
             let subSoTiet = 0;
             let subWeightedPercent = 0;
-            
+
             const firstRow = subRows[0];
             const lessonName = firstRow[3]; // "Bài"
 
             const posGroups: Record<string, string[]> = { NB: [], TH: [], VD: [] };
 
             subRows.forEach((r: any) => {
-                 subSoTiet += parseFloat(String(r[4]) || '0');
-                 subWeightedPercent += getRowTargetPercent(r);
+                subSoTiet += parseFloat(String(r[4]) || '0');
+                subWeightedPercent += getRowTargetPercent(r);
 
-                 const originalIdx = data.matrix.rows.indexOf(r);
-                 const rowPointsTL = getRowPointsTL(originalIdx);
+                const originalIdx = data.matrix.rows.indexOf(r);
+                const rowPointsTL = getRowPointsTL(originalIdx);
 
-                 for (let k = 5; k <= 12; k++) { // NB, TH, VD, VDC
-                     const c = parseInt(String(r[k]) || '0');
-                     subCounts[k] += c;
-                     const isTNKQ = k % 2 !== 0;
-                     subPoints[k] += c * (isTNKQ ? pointsTNKQ : rowPointsTL);
-                 } 
-                 
-                 const posNB_TN = positionMap[`${originalIdx}-5`]; if(posNB_TN) posGroups.NB.push(posNB_TN.replace('Câu ', ''));
-                 const posNB_TL = positionMap[`${originalIdx}-6`]; if(posNB_TL) posGroups.NB.push(posNB_TL.replace('Câu ', ''));
-                 const posTH_TN = positionMap[`${originalIdx}-7`]; if(posTH_TN) posGroups.TH.push(posTH_TN.replace('Câu ', ''));
-                 const posTH_TL = positionMap[`${originalIdx}-8`]; if(posTH_TL) posGroups.TH.push(posTH_TL.replace('Câu ', ''));
-                 const posVD_TN = positionMap[`${originalIdx}-9`]; if(posVD_TN) posGroups.VD.push(posVD_TN.replace('Câu ', ''));
-                 const posVD_TL = positionMap[`${originalIdx}-10`]; if(posVD_TL) posGroups.VD.push(posVD_TL.replace('Câu ', ''));
+                for (let k = 5; k <= 12; k++) { // NB, TH, VD, VDC
+                    const c = parseInt(String(r[k]) || '0');
+                    subCounts[k] += c;
+                    const isTNKQ = k % 2 !== 0;
+                    subPoints[k] += c * (isTNKQ ? pointsTNKQ : rowPointsTL);
+                }
+
+                const posNB_TN = positionMap[`${originalIdx}-5`]; if (posNB_TN) posGroups.NB.push(posNB_TN.replace('Câu ', ''));
+                const posNB_TL = positionMap[`${originalIdx}-6`]; if (posNB_TL) posGroups.NB.push(posNB_TL.replace('Câu ', ''));
+                const posTH_TN = positionMap[`${originalIdx}-7`]; if (posTH_TN) posGroups.TH.push(posTH_TN.replace('Câu ', ''));
+                const posTH_TL = positionMap[`${originalIdx}-8`]; if (posTH_TL) posGroups.TH.push(posTH_TL.replace('Câu ', ''));
+                const posVD_TN = positionMap[`${originalIdx}-9`]; if (posVD_TN) posGroups.VD.push(posVD_TN.replace('Câu ', ''));
+                const posVD_TL = positionMap[`${originalIdx}-10`]; if (posVD_TL) posGroups.VD.push(posVD_TL.replace('Câu ', ''));
             });
-            
+
             const positionSummary: string[] = [];
             if (posGroups.NB.length > 0) positionSummary.push(`NB: Câu ${posGroups.NB.join(', ')}`);
             if (posGroups.TH.length > 0) positionSummary.push(`TH: Câu ${posGroups.TH.join(', ')}`);
             if (posGroups.VD.length > 0) positionSummary.push(`VD: Câu ${posGroups.VD.join(', ')}`);
-            
+
             let contentDisplay = `${subTopic} (${subSoTiet} tiết)`;
 
             // --- MATRIX ROW ---
@@ -1886,28 +1886,28 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 matrixBodyHtml += `<td class="text-left-top" style="text-align: left; vertical-align: top;" rowspan="${mainRowspan}">${mainTopicDisplay}</td>`;
             }
             matrixBodyHtml += `<td class="text-left" style="text-align: left;">${contentDisplay}</td>`;
-            
+
             // Counts & Points for 5-10
-            for(let k=5; k<=10; k++){
+            for (let k = 5; k <= 10; k++) {
                 const val = subCounts[k];
                 const isTNKQ = k % 2 !== 0;
                 const pt = subPoints[k];
-                
+
                 // Use Divs for Line Break
                 let cellContent = '';
                 if (val > 0) {
                     cellContent = `<div>${val} câu</div><div>${formatDiem(pt)}đ</div>`;
                 }
-                
+
                 matrixBodyHtml += `<td>${cellContent}</td>`;
-                
+
                 matrixTotals.cau[k] += val;
                 matrixTotals.diem[k] += pt;
             }
-            
+
             // Merged Main Topic Score Column (Showing ACTUAL Score Percent)
             if (index === 0) {
-                 matrixBodyHtml += `<td rowspan="${mainRowspan}"><b><div>${formatDiem(mainTopicPoints)}</div><div>${mainTopicRealizedPercent.toFixed(1).replace('.', ',')}%</div></b></td>`;
+                matrixBodyHtml += `<td rowspan="${mainRowspan}"><b><div>${formatDiem(mainTopicPoints)}</div><div>${mainTopicRealizedPercent.toFixed(1).replace('.', ',')}%</div></b></td>`;
             }
             matrixBodyHtml += '</tr>';
 
@@ -1973,7 +1973,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                 .replace(/<div class="pl-2"[^>]*>/g, '<p style="margin: 0 0 0 10px;">')
                 .replace(/<div[^>]*>/g, '<p style="margin: 0 0 0 10px;">')
                 .replace(/<\/div>/g, '</p>');
-            
+
             if (positionSummary.length > 0) {
                 formattedReq += `<div style="margin-top:8px; border-top:1px dashed #ccc; padding-top:4px;"><i>Vị trí: </i><span style="color:#0056b3;">${positionSummary.join('; ')}</span></div>`;
             }
@@ -1987,9 +1987,9 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             // REMOVED LESSON COLUMN FROM SPECIFICATION TABLE
             // specBodyHtml += `<td class="text-left align-top">${lessonName}</td>`;
             specBodyHtml += `<td class="text-left-top" style="text-align: left; vertical-align: top;">${formattedReq}</td>`;
-            
+
             const renderCountPoints = (count: number, pt: number) => {
-                 return `<div>${count}</div><div>/ ${formatDiem(pt)}đ</div>`;
+                return `<div>${count}</div><div>/ ${formatDiem(pt)}đ</div>`;
             };
 
             // NB(TN), TH(TN), VD(TL)
@@ -1998,7 +1998,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             specBodyHtml += `<td>${renderCountPoints(subCounts[5], subPoints[5])}</td>`;
             specBodyHtml += `<td>${renderCountPoints(subCounts[7], subPoints[7])}</td>`;
             specBodyHtml += `<td>${renderCountPoints(totalVdTlCount, totalVdTlPoints)}</td>`;
-            
+
             specBodyHtml += '</tr>';
 
             // Spec Totals (Matching the specific columns)
@@ -2006,7 +2006,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
             specTotals.th += subCounts[7];
             specTotals.vd += totalVdTlCount;
             specTotals.vdc += 0;
-            
+
             stt++;
         });
     });
@@ -2021,7 +2021,7 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
     const th_percent = totalExamPoints > 0 ? (th_diem / totalExamPoints * 100) : 0;
     const vd_percent = totalExamPoints > 0 ? (vd_diem / totalExamPoints * 100) : 0;
     const vdc_percent = totalExamPoints > 0 ? (vdc_diem / totalExamPoints * 100) : 0;
-    
+
     const nb_th_percent = nb_percent + th_percent;
 
     let matrixFooterHtml = `
@@ -2228,8 +2228,8 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
                     lower.startsWith('nhận biết') || lower.startsWith('biết') || lower.startsWith('- biết')
                         ? 'B'
                         : lower.startsWith('thông hiểu') || lower.startsWith('hiểu') || lower.startsWith('- hiểu')
-                        ? 'H'
-                        : 'VD';
+                            ? 'H'
+                            : 'VD';
 
                 const divRegex = /<div\b([^>]*)>([\s\S]*?)<\/div>/gi;
                 let dm;
@@ -2745,10 +2745,16 @@ export const generateAzotaKeyHtml = (questions: any[]) => {
     let answers = ``;
     questions.forEach((q, index) => {
         const num = index + 1;
-        if (q.category !== 'essay' && q.options && q.options.length > 0) {
+        const sub = getQuestionSubtype(q);
+        if (sub === 'true-false' && q.options && q.options.length > 0) {
+            const tfSummary = q.options.map((opt: any) => `${opt.id || 'a'}-${opt.isCorrect ? 'Đ' : 'S'}`).join(', ');
+            answers += `<p style="font-size: 13pt;">${num}. ${tfSummary}</p>`;
+        } else if (q.category !== 'essay' && q.options && q.options.length > 0) {
             const correctOpt = q.options.filter((opt: any) => opt.isCorrect).map((opt: any) => opt.id).join(', ');
             if (correctOpt) {
                 answers += `<p style="font-size: 13pt;">${num}. ${correctOpt}</p>`;
+            } else if (q.answer) {
+                answers += `<p style="font-size: 13pt;">${num}. ${q.answer}</p>`;
             }
         } else if (q.answer) {
             answers += `<p style="font-size: 13pt;">${num}. ${q.answer}</p>`;
@@ -2824,7 +2830,7 @@ export const generateExamVariants = (
         }
 
         const combined = [...currentP1, ...currentP2, ...currentP3, ...currentP4];
-        
+
         // Tạo bảng đáp án chi tiết cho mã đề này
         const answerKey = combined.map((q, idx) => {
             const num = idx + 1;
@@ -2898,7 +2904,7 @@ export const generateMultiCodeAnswerKeyMatrixHtml = (
         const rowBg = i % 2 === 0 ? '#ffffff' : '#fafafa';
         dataRows += `<tr style="background-color: ${rowBg};">
             <td style="border: 1px solid black; padding: 5px; text-align: center; font-weight: bold;">${qNum}</td>`;
-        
+
         variants.forEach(v => {
             const keyItem = v.answerKey[i];
             const displayAns = keyItem ? keyItem.answer : '-';
@@ -2968,13 +2974,13 @@ export const generateMultiCodeAnswerKeyMatrixHtml = (
 export const extractHtmlParts = (fullHtml: string) => {
     const headMatch = fullHtml.match(/<head[^>]*>([\s\S]*?)<\/head>/i);
     const bodyMatch = fullHtml.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-    
+
     let style = '';
     if (headMatch) {
         const styleMatch = headMatch[1].match(/<style[^>]*>([\s\S]*?)<\/style>/i);
         if (styleMatch) style = styleMatch[1];
     }
-    
+
     return {
         style,
         body: bodyMatch ? bodyMatch[1] : fullHtml
@@ -2988,7 +2994,7 @@ export const generateFullDossierHtml = (
     headerInfo: any
 ): string => {
     let combinedStyles = '';
-    
+
     let matrixHtml = '';
     if (matrixData) {
         const parts = extractHtmlParts(generatePrintHTML(matrixData, headerInfo.tenKyThi));
@@ -3006,7 +3012,7 @@ export const generateFullDossierHtml = (
         const vHeader = { ...headerInfo, maDe: v.code };
         const parts = extractHtmlParts(generateExamWordHtml(v.questions, vHeader));
         if (idx === 0) combinedStyles += parts.style; // Style is identical for all variants
-        
+
         let out = parts.body;
         if (idx < variants.length - 1) {
             out += `<br clear=all style='mso-special-character:line-break;page-break-before:always'>`;

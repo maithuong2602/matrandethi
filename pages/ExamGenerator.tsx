@@ -438,21 +438,32 @@ const ExamGenerator: React.FC = () => {
     }, [generatedTest, headerInfo, teacherName, importedMatrix, isFileNameManuallyEdited]);
 
     // --- EXAM BANK (NGÂN HÀNG ĐỀ THI) HANDLERS ---
-    const handleSaveToExamBank = () => {
-        if (generatedTest.length === 0) {
+    const handleSaveToExamBank = (customQuestions?: BankQuestion[]) => {
+        const questionsToSave = customQuestions || generatedTest;
+        if (!questionsToSave || questionsToSave.length === 0) {
             showNotice('Chưa có câu hỏi nào trong đề thi để lưu.');
             return;
         }
-        const gradeVal = detectGradeFromContext(generatedTest, headerInfo, importedMatrix);
-        const titleVal = (customFileName || buildDefaultFileName(generatedTest, headerInfo, teacherName, importedMatrix)).trim();
+        const gradeVal = detectGradeFromContext(questionsToSave, headerInfo, importedMatrix);
+        const titleVal = (customFileName || buildDefaultFileName(questionsToSave, headerInfo, teacherName, importedMatrix)).trim();
+
+        // Bảo đảm variants lưu kèm bám theo đúng danh sách câu hỏi và đáp án đang lưu
+        const availableCodes = ['101', '102', '103', '104', '105', '106', '107', '108'].slice(0, variantCount);
+        const isMatchingVariants = variants && variants.length > 0 &&
+            variants[0]?.questions?.length === questionsToSave.length &&
+            variants[0]?.questions[0]?.content === questionsToSave[0]?.content;
+
+        const variantsToSave = isMatchingVariants
+            ? variants
+            : generateExamVariants(questionsToSave, availableCodes, shuffleOptions);
 
         const saved = saveExamDossier({
             id: currentDossierId || undefined,
             title: titleVal,
             grade: gradeVal,
             status: 'approved',
-            questions: generatedTest,
-            variants: variants,
+            questions: questionsToSave,
+            variants: variantsToSave,
             matrixData: importedMatrix,
             headerInfo: headerInfo,
             teacherName: teacherName || 'Giáo viên',
@@ -461,29 +472,45 @@ const ExamGenerator: React.FC = () => {
         });
 
         setCurrentDossierId(saved.id);
+        setCurrentSimilarDossierId(null);
+        setGeneratedTest(questionsToSave);
+        setVariants(variantsToSave);
         showNotice(`Đã lưu đề "${saved.title}" vào Ngân hàng Đề thi!`);
     };
 
-    const handleSaveAsNewExam = () => {
-        if (generatedTest.length === 0) return;
-        const gradeVal = detectGradeFromContext(generatedTest, headerInfo, importedMatrix);
-        const titleVal = (customFileName || buildDefaultFileName(generatedTest, headerInfo, teacherName, importedMatrix)).trim();
+    const handleSaveAsNewExam = (customQuestions?: BankQuestion[]) => {
+        const questionsToSave = customQuestions || generatedTest;
+        if (!questionsToSave || questionsToSave.length === 0) return;
+        const gradeVal = detectGradeFromContext(questionsToSave, headerInfo, importedMatrix);
+        const titleVal = (customFileName || buildDefaultFileName(questionsToSave, headerInfo, teacherName, importedMatrix)).trim();
+
+        const availableCodes = ['101', '102', '103', '104', '105', '106', '107', '108'].slice(0, variantCount);
+        const isMatchingVariants = variants && variants.length > 0 &&
+            variants[0]?.questions?.length === questionsToSave.length &&
+            variants[0]?.questions[0]?.content === questionsToSave[0]?.content;
+
+        const variantsToSave = isMatchingVariants
+            ? variants
+            : generateExamVariants(questionsToSave, availableCodes, shuffleOptions);
 
         const saved = saveExamDossier({
             id: undefined,
             title: `${titleVal} (Bản mới)`,
             grade: gradeVal,
             status: 'approved',
-            questions: generatedTest,
-            variants: variants,
+            questions: questionsToSave,
+            variants: variantsToSave,
             matrixData: importedMatrix,
             headerInfo: headerInfo,
             teacherName: teacherName || 'Giáo viên'
         });
 
         setCurrentDossierId(saved.id);
+        setCurrentSimilarDossierId(null);
         setCustomFileName(saved.title);
         setIsFileNameManuallyEdited(true);
+        setGeneratedTest(questionsToSave);
+        setVariants(variantsToSave);
         showNotice(`Đã lưu bản đề mới "${saved.title}" vào Ngân hàng Đề thi!`);
     };
 
@@ -502,6 +529,7 @@ const ExamGenerator: React.FC = () => {
 
     const handleLoadDossier = (dossier: SavedExamDossier) => {
         setCurrentDossierId(dossier.id);
+        setCurrentSimilarDossierId(null);
         if (dossier.teacherName) setTeacherName(dossier.teacherName);
         if (dossier.headerInfo) setHeaderInfo(dossier.headerInfo);
         if (dossier.title) {
@@ -512,6 +540,21 @@ const ExamGenerator: React.FC = () => {
         if (Array.isArray(dossier.questions) && dossier.questions.length > 0) {
             const normalizedQs = normalizeExamQuestionPoints(dossier.questions);
             setGeneratedTest(normalizedQs);
+
+            // BẢO ĐẢM VARIANTS BÁM ĐÚNG VÀO ĐỀ ĐƯỢC MỞ
+            const availableCodes = ['101', '102', '103', '104', '105', '106', '107', '108'].slice(0, variantCount);
+            const isMatchingDossierVariants = Array.isArray(dossier.variants) &&
+                dossier.variants.length > 0 &&
+                dossier.variants[0]?.questions?.length === normalizedQs.length &&
+                dossier.variants[0]?.questions[0]?.content === normalizedQs[0]?.content;
+
+            const syncedVariants = isMatchingDossierVariants
+                ? dossier.variants!
+                : generateExamVariants(normalizedQs, availableCodes, shuffleOptions);
+
+            setVariants(syncedVariants);
+            setActiveVariantCode(syncedVariants[0]?.code || '101');
+            setReviewTab('regular');
             setHsktSelectedIds(getDefaultHsktQuestionIds(normalizedQs, dossier.headerInfo || headerInfo));
             setStep('review');
             showNotice(`Đã mở đề thi "${dossier.title}"`);
@@ -592,24 +635,35 @@ const ExamGenerator: React.FC = () => {
     };
 
     // --- SIMILAR EXAM BANK (KHO ĐỀ THI TƯƠNG TỰ RIÊNG BIỆT) HANDLERS ---
-    const handleSaveToSimilarBank = () => {
-        if (generatedTest.length === 0) {
+    const handleSaveToSimilarBank = (customQuestions?: BankQuestion[]) => {
+        const questionsToSave = customQuestions || generatedTest;
+        if (!questionsToSave || questionsToSave.length === 0) {
             showNotice('Chưa có câu hỏi nào trong đề thi để lưu.');
             return;
         }
-        const gradeVal = detectGradeFromContext(generatedTest, headerInfo, importedMatrix);
-        let titleVal = (customFileName || buildDefaultFileName(generatedTest, headerInfo, teacherName, importedMatrix)).trim();
+        const gradeVal = detectGradeFromContext(questionsToSave, headerInfo, importedMatrix);
+        let titleVal = (customFileName || buildDefaultFileName(questionsToSave, headerInfo, teacherName, importedMatrix)).trim();
         if (!titleVal.toLowerCase().includes('tương tự') && !titleVal.toLowerCase().includes('biến thể')) {
             titleVal = `${titleVal} (Đề tương tự)`;
         }
+
+        // Bảo đảm variants lưu kèm bám theo đúng danh sách câu hỏi và đáp án của đề tương tự
+        const availableCodes = ['101', '102', '103', '104', '105', '106', '107', '108'].slice(0, variantCount);
+        const isMatchingVariants = variants && variants.length > 0 &&
+            variants[0]?.questions?.length === questionsToSave.length &&
+            variants[0]?.questions[0]?.content === questionsToSave[0]?.content;
+
+        const variantsToSave = isMatchingVariants
+            ? variants
+            : generateExamVariants(questionsToSave, availableCodes, shuffleOptions);
 
         const saved = saveSimilarExamDossier({
             id: currentSimilarDossierId || undefined,
             title: titleVal,
             grade: gradeVal,
             status: 'approved',
-            questions: generatedTest,
-            variants: variants,
+            questions: questionsToSave,
+            variants: variantsToSave,
             matrixData: importedMatrix,
             headerInfo: headerInfo,
             teacherName: teacherName || 'Giáo viên',
@@ -618,8 +672,11 @@ const ExamGenerator: React.FC = () => {
         });
 
         setCurrentSimilarDossierId(saved.id);
+        setCurrentDossierId(null);
         setCustomFileName(saved.title);
         setIsFileNameManuallyEdited(true);
+        setGeneratedTest(questionsToSave);
+        setVariants(variantsToSave);
         showNotice(`Đã lưu thành công vào Kho Đề Tương Tự riêng biệt (không lẫn vào Đề Gốc)!`);
     };
 
@@ -636,6 +693,21 @@ const ExamGenerator: React.FC = () => {
         if (Array.isArray(dossier.questions) && dossier.questions.length > 0) {
             const normalizedQs = normalizeExamQuestionPoints(dossier.questions);
             setGeneratedTest(normalizedQs);
+
+            // BẢO ĐẢM VARIANTS BÁM CHÍNH XÁC THEO ĐỀ TƯƠNG TỰ VỪA MỞ
+            const availableCodes = ['101', '102', '103', '104', '105', '106', '107', '108'].slice(0, variantCount);
+            const isMatchingDossierVariants = Array.isArray(dossier.variants) &&
+                dossier.variants.length > 0 &&
+                dossier.variants[0]?.questions?.length === normalizedQs.length &&
+                dossier.variants[0]?.questions[0]?.content === normalizedQs[0]?.content;
+
+            const syncedVariants = isMatchingDossierVariants
+                ? dossier.variants!
+                : generateExamVariants(normalizedQs, availableCodes, shuffleOptions);
+
+            setVariants(syncedVariants);
+            setActiveVariantCode(syncedVariants[0]?.code || '101');
+            setReviewTab('regular');
             setHsktSelectedIds(getDefaultHsktQuestionIds(normalizedQs, dossier.headerInfo || headerInfo));
             setStep('review');
             showNotice(`Đã mở đề tương tự "${dossier.title}" từ Kho riêng!`);
@@ -2251,10 +2323,10 @@ const ExamGenerator: React.FC = () => {
         setTimeout(() => setCopiedBulkPrompt(false), 2500);
     };
 
-    const handleApplyBulkSimilar = () => {
+    const handleApplyBulkSimilar = (): BankQuestion[] | null => {
         if (!bulkSimilarPastedText.trim()) {
             alert('Vui lòng dán nội dung đề thi từ AI vào khung kết quả.');
-            return;
+            return null;
         }
 
         let targetIndices: number[] | undefined = undefined;
@@ -2273,12 +2345,21 @@ const ExamGenerator: React.FC = () => {
         const res = parseAndMapBulkSimilarQuestions(bulkSimilarPastedText, generatedTest, targetIndices);
         if (res.appliedCount === 0) {
             alert('Không thể nhận diện câu hỏi hợp lệ từ văn bản đã dán. Vui lòng kiểm tra lại định dạng câu hỏi.');
-            return;
+            return null;
         }
 
-        setGeneratedTest(res.updatedQuestions);
+        const updated = res.updatedQuestions;
+        setGeneratedTest(updated);
+
+        // Lập tức đồng bộ variants mới bám theo chính xác câu hỏi và đáp án vừa thay thế
+        const availableCodes = ['101', '102', '103', '104', '105', '106', '107', '108'].slice(0, variantCount);
+        const newVariants = generateExamVariants(updated, availableCodes, shuffleOptions);
+        setVariants(newVariants);
+        setActiveVariantCode(availableCodes[0] || '101');
+
         showNotice(`Đã phân tích và thay thế thành công ${res.appliedCount} câu hỏi vào đúng vị trí trong đề thi!`);
         setIsBulkSimilarModalOpen(false);
+        return updated;
     };
 
     const handleGenerateBulkSimilarAI = async () => {
@@ -2323,20 +2404,38 @@ const ExamGenerator: React.FC = () => {
     const handlePerformExport = () => {
         if (generatedTest.length === 0) return;
 
+        // BẢO ĐẢM 100% VARIANTS PHẢI BÁM THEO ĐÚNG generatedTest HIỆN ĐANG MỞ
+        const availableCodes = ['101', '102', '103', '104', '105', '106', '107', '108'].slice(0, variantCount);
+        const isOutOfSync = !variants || variants.length === 0 ||
+            variants[0]?.questions?.length !== generatedTest.length ||
+            variants[0]?.questions[0]?.content !== generatedTest[0]?.content;
+
+        const effectiveVariants = isOutOfSync
+            ? generateExamVariants(generatedTest, availableCodes, shuffleOptions)
+            : variants;
+
+        if (isOutOfSync) {
+            setVariants(effectiveVariants);
+        }
+
         if (exportType === 'azota_current' || exportType === 'azota_all') {
             const variantsToExport = exportType === 'azota_current'
-                ? [variants.find(v => v.code === activeVariantCode)].filter(Boolean)
-                : variants;
+                ? [effectiveVariants.find(v => v.code === activeVariantCode) || effectiveVariants[0]].filter(Boolean)
+                : effectiveVariants;
 
             variantsToExport.forEach(v => {
                 if (!v) return;
                 const keyHtml = generateAzotaKeyHtml(v.questions);
                 const questionsHtml = v.questions.map((q: any, idx: number) => {
-                    let html = `<p><strong>Câu ${idx + 1}:</strong> ${q.content}</p>`;
+                    const cleanStem = cleanQuestionContentForWord(q.content);
+                    let html = `<p><strong>Câu ${idx + 1}:</strong> ${cleanStem}</p>`;
+                    const sub = getQuestionSubtype(q);
                     if (q.category !== 'essay' && q.options) {
                         q.options.forEach((opt: any, i: number) => {
-                            const letter = String.fromCharCode(65 + i);
-                            html += `<p>${opt.isCorrect ? '*' : ''}${letter}. ${opt.text}</p>`;
+                            const isTf = sub === 'true-false';
+                            const letter = opt.id || (isTf ? String.fromCharCode(97 + i) : String.fromCharCode(65 + i));
+                            const suffix = isTf ? ')' : '.';
+                            html += `<p>${opt.isCorrect ? '*' : ''}${letter}${suffix} ${opt.text}</p>`;
                         });
                     }
                     return html;
@@ -2351,7 +2450,7 @@ const ExamGenerator: React.FC = () => {
                 a.click();
             });
         } else if (exportType === 'key_matrix') {
-            const html = generateMultiCodeAnswerKeyMatrixHtml(variants, headerInfo);
+            const html = generateMultiCodeAnswerKeyMatrixHtml(effectiveVariants, headerInfo);
             const blob = new Blob(['\ufeff', html], { type: 'application/msword' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -2360,7 +2459,7 @@ const ExamGenerator: React.FC = () => {
             a.download = `Bang_Dap_An_${baseName}.doc`;
             a.click();
         } else if (exportType === 'full_dossier') {
-            const html = generateFullDossierHtml(null, variants, headerInfo);
+            const html = generateFullDossierHtml(null, effectiveVariants, headerInfo);
             const blob = new Blob(['\ufeff', html], { type: 'application/msword' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -2370,7 +2469,7 @@ const ExamGenerator: React.FC = () => {
             a.click();
         } else if (exportType === 'all') {
             let combinedStyles = '';
-            const allHtmlBodies = variants.map((v, idx) => {
+            const allHtmlBodies = effectiveVariants.map((v, idx) => {
                 const vHeader = { ...headerInfo, maDe: v.code };
                 const parts = extractHtmlParts(generateExamWordHtml(v.questions, vHeader));
                 if (idx === 0) combinedStyles += parts.style;
@@ -2386,7 +2485,7 @@ const ExamGenerator: React.FC = () => {
                 <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
                 <head>
                     <meta charset="utf-8">
-                    <title>Bộ Đề ${variants.length} Mã - ${headerInfo.monHoc}</title>
+                    <title>Bộ Đề ${effectiveVariants.length} Mã - ${headerInfo.monHoc}</title>
                     <style>${combinedStyles}</style>
                     <xml>
                         <w:WordDocument>
@@ -2413,7 +2512,7 @@ const ExamGenerator: React.FC = () => {
             const section = exportType === 'hskt_exam' ? 'exam_only' : exportType === 'hskt_grading' ? 'grading_only' : 'both';
             handleDownloadHsktWord(section);
         } else {
-            const currentV = variants.find(v => v.code === activeVariantCode);
+            const currentV = effectiveVariants.find(v => v.code === activeVariantCode) || effectiveVariants[0];
             const vHeader = { ...headerInfo, maDe: activeVariantCode };
             const html = generateExamWordHtml(currentV ? currentV.questions : generatedTest, vHeader);
             const blob = new Blob(['\ufeff', html], { type: 'application/msword' });
@@ -3023,7 +3122,17 @@ const ExamGenerator: React.FC = () => {
                                     <button
                                         type="button"
                                         onClick={() => {
-                                            const currentV = variants.find(v => v.code === activeVariantCode);
+                                            const availableCodes = ['101', '102', '103', '104', '105', '106', '107', '108'].slice(0, variantCount);
+                                            const isOutOfSync = !variants || variants.length === 0 ||
+                                                variants[0]?.questions?.length !== generatedTest.length ||
+                                                variants[0]?.questions[0]?.content !== generatedTest[0]?.content;
+                                            const effectiveVariants = isOutOfSync
+                                                ? generateExamVariants(generatedTest, availableCodes, shuffleOptions)
+                                                : variants;
+                                            if (isOutOfSync) {
+                                                setVariants(effectiveVariants);
+                                            }
+                                            const currentV = effectiveVariants.find(v => v.code === activeVariantCode) || effectiveVariants[0];
                                             const vHeader = { ...headerInfo, maDe: activeVariantCode };
                                             const html = generateExamWordHtml(currentV ? currentV.questions : generatedTest, vHeader);
                                             const blob = new Blob(['\ufeff', html], { type: 'application/msword' });
@@ -4421,8 +4530,10 @@ const ExamGenerator: React.FC = () => {
                                 <button
                                     type="button"
                                     onClick={() => {
-                                        handleApplyBulkSimilar();
-                                        setTimeout(() => handleSaveToSimilarBank(), 300);
+                                        const updated = handleApplyBulkSimilar();
+                                        if (updated && updated.length > 0) {
+                                            handleSaveToSimilarBank(updated);
+                                        }
                                     }}
                                     className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
                                     title="Thay thế và lưu ngay vào Kho Đề Tương Tự riêng biệt (không lẫn đề gốc)"
