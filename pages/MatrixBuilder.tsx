@@ -434,6 +434,36 @@ const MatrixBuilder: React.FC = () => {
                         syncRowFromNf(donMeta.idx);
                         syncRowFromNf(recMeta.idx);
                     }
+
+                    // Đề cuối kỳ: BẮT BUỘC lấy Vận dụng từ bài mới.
+                    // Nếu bài cũ (isOld) đang có câu Vận dụng (Tự luận) trong khi bài mới (isNew) CÓ YCCĐ Vận dụng (hasVD),
+                    // tự động chuyển câu Vận dụng từ bài cũ sang bài mới có Vận dụng!
+                    const newRowsWithVDMeta = rowHasLevel.filter((m: any) => m.isNew && m.soTiet > 0 && m.hasVD);
+                    if (newRowsWithVDMeta.length > 0) {
+                        oldRowsMeta.forEach((oldM: any) => {
+                            const oldCfg = nfRows[oldM.idx];
+                            if (!oldCfg) return;
+                            let essayVD = oldCfg.essay?.VD?.count || 0;
+                            if (essayVD > 0) {
+                                oldCfg.essay.VD.count = 0;
+                                while (essayVD > 0) {
+                                    newRowsWithVDMeta.sort((a: any, b: any) => {
+                                        const ca = nfRows[a.idx]?.essay?.VD?.count || 0;
+                                        const cb = nfRows[b.idx]?.essay?.VD?.count || 0;
+                                        if (ca !== cb) return ca - cb;
+                                        return b.soTiet - a.soTiet;
+                                    });
+                                    const targetM = newRowsWithVDMeta[0];
+                                    if (nfRows[targetM.idx]?.essay?.VD) {
+                                        nfRows[targetM.idx].essay.VD.count = (nfRows[targetM.idx].essay.VD.count || 0) + 1;
+                                    }
+                                    essayVD--;
+                                }
+                                syncRowFromNf(oldM.idx);
+                                newRowsWithVDMeta.forEach((m: any) => syncRowFromNf(m.idx));
+                            }
+                        });
+                    }
                 }
             }
         };
@@ -568,8 +598,8 @@ const MatrixBuilder: React.FC = () => {
                 });
             }
 
-            const isMidTerm = currentFolderName.includes('giữa kì') || currentFolderName.includes('giua ki');
-            const isFinal = currentFolderName.includes('cuối kì') || currentFolderName.includes('cuoi ki');
+            const isMidTerm = /giữa\s*k[ỳì]|giua\s*k[yi]|\bgk\s*(i{1,2}|1|2)\b/i.test(currentFolderName);
+            const isFinal = /cuối\s*k[ỳì]|cuoi\s*k[yi]|học\s*k[ỳì]|hoc\s*k[yi]|\bhk\s*(i{1,2}|1|2)\b/i.test(currentFolderName);
             
             if (isMidTerm) {
                 // Chuẩn CV 7991: Mặc định tỷ lệ nhận thức luôn ưu tiên 4-3-3 (40% NB - 30% TH - 30% VD)
@@ -808,7 +838,9 @@ const MatrixBuilder: React.FC = () => {
         
         const data = currentDir.matrixData;
         const examName = currentDir.name.toLowerCase();
-        const isFinalExam = examName.includes('cuối kì') || examName.includes('cuoi ki');
+        const isFinalExam = /cuối\s*k[ỳì]|cuoi\s*k[yi]|học\s*k[ỳì]|hoc\s*k[yi]|\bhk\s*(i{1,2}|1|2)\b/i.test(
+            examName + ' ' + (currentDir.name || '')
+        );
 
         // --- 1. CONFIGURATIONS ---
         const SCORE_TL = 1.0;
@@ -1027,15 +1059,24 @@ const MatrixBuilder: React.FC = () => {
         for(let i=0; i<targetVDC_TL; i++) tasksTL.push('VDC');
         for(let i=0; i<targetVD_TL; i++) tasksTL.push('VD');
 
-        // Đối với đề Cuối kỳ: ưu tiên tối đa các bài mới (chưa ra kiểm tra) nếu bài mới đó có YCCĐ Vận dụng.
-        // Tự động bật hasVDSpec cho bài mới có YCCĐ Vận dụng (currHasVD).
-        const newRowsWithVD = rows.filter((r: any) => r.soTiet > 0 && r.isNewLesson && r.currHasVD);
+        // Đối với đề Cuối kỳ: BẮT BUỘC lấy Vận dụng từ bài mới; khi nào bài mới HOÀN TOÀN KHÔNG CÓ Vận dụng mới lấy bài cũ.
+        const rowHasVD = (r: any) => Boolean(
+            r.currHasVD ||
+            r.hasVDSpec ||
+            (r.avail?.VD?.TL || 0) > 0 ||
+            (r.avail?.VD?.TN || 0) > 0 ||
+            (r.avail?.VDC?.TL || 0) > 0 ||
+            (r.avail?.VDC?.TN || 0) > 0
+        );
+        const newRowsWithVD = rows.filter((r: any) => r.soTiet > 0 && r.isNewLesson && rowHasVD(r));
+        const hasNewLessonWithVD = newRowsWithVD.length > 0;
+
         if (isFinalExam || hasExaminedReduction) {
             newRowsWithVD.forEach((r: any) => {
                 r.hasVDSpec = true;
             });
-            const newVDCapacity = newRowsWithVD.reduce((sum: number, r: any) => sum + (r.soTiet >= 4 ? 2 : 1), 0);
-            if (newVDCapacity < tasksTL.length) {
+            // CHỈ KHI NÀO các bài mới HOÀN TOÀN KHÔNG CÓ VẬN DỤNG mới bật hasVDSpec cho bài cũ
+            if (!hasNewLessonWithVD) {
                 rows.forEach((r: any) => {
                     if (r.soTiet > 0 && !r.hasVDSpec && r.currHasVD) {
                         r.hasVDSpec = true;
@@ -1054,32 +1095,55 @@ const MatrixBuilder: React.FC = () => {
         }
 
         for (const type of tasksTL) {
-            // Giới hạn số câu TL/Vận dụng cho 1 bài: bài từ 4 tiết trở lên (như bài Lập trình 6 tiết) có thể nhận tối đa 2 câu TL, bài khác 1 câu
-            const getMaxTLForRow = (r: any) => ((isFinalExam || hasExaminedReduction) && r.isNewLesson && r.soTiet >= 4) ? 2 : 1;
+            // Giới hạn số câu TL/Vận dụng cho 1 bài:
+            // Đề cuối kỳ: bài mới có số tiết lớn (ví dụ >= 6 tiết) có thể nhận 2 câu (hoặc 3 nếu chỉ có 1 bài mới có VD), bài >= 4 tiết nhận 2 câu, bài khác 1 câu
+            const getMaxTLForRow = (r: any) => {
+                if ((isFinalExam || hasExaminedReduction) && r.isNewLesson) {
+                    if (newRowsWithVD.length === 1) return tasksTL.length;
+                    return Math.max(1, Math.ceil(r.soTiet / 3));
+                }
+                return 1;
+            };
 
-            // Ưu tiên bài học mới (chưa thi), có YCCĐ Vận dụng và còn hạn mức điểm
-            let candidates = rows.filter((r: any) => {
-                if (r.soTiet <= 0 || (!r.hasVDSpec && !r.currHasVD)) return false;
-                if ((isFinalExam || hasExaminedReduction) && r.isOldLesson) return false;
-                if ((r.allocVD + r.allocVDC) >= getMaxTLForRow(r)) return false;
-                const avail = type === 'VD' ? r.avail.VD.TL : r.avail.VDC.TL;
-                const allocated = type === 'VD' ? r.allocVD : r.allocVDC;
-                return avail > allocated && (r.targetScore - r.currentScore) >= 0.5;
-            });
-            // Fallback 1: Bài mới bất kỳ có YCCĐ Vận dụng còn chỗ nhận câu tự luận
-            if (candidates.length === 0) {
+            let candidates: any[] = [];
+
+            // QUY ĐỊNH BẮT BUỘC: Đề cuối kỳ PHẢI lấy Vận dụng từ bài mới,
+            // KHI NÀO bài mới HOÀN TOÀN KHÔNG CÓ Vận dụng thì mới được lấy bài cũ.
+            if ((isFinalExam || hasExaminedReduction) && hasNewLessonWithVD) {
+                // Tier 1A: Bài mới có Vận dụng, còn chỗ và kho câu hỏi có câu TL Vận dụng
                 candidates = rows.filter((r: any) => {
-                    if (r.soTiet <= 0 || (!r.hasVDSpec && !r.currHasVD)) return false;
-                    if ((isFinalExam || hasExaminedReduction) && r.isOldLesson) return false;
-                    return (r.allocVD + r.allocVDC) < getMaxTLForRow(r);
+                    if (r.soTiet <= 0 || !r.isNewLesson || !rowHasVD(r)) return false;
+                    if ((r.allocVD + r.allocVDC) >= getMaxTLForRow(r)) return false;
+                    const avail = type === 'VD' ? r.avail.VD.TL : r.avail.VDC.TL;
+                    const allocated = type === 'VD' ? r.allocVD : r.allocVDC;
+                    return avail > allocated && (r.targetScore - r.currentScore) >= 0.5;
                 });
+
+                // Tier 1B: Bài mới có Vận dụng còn chỗ (kể cả khi kho câu hỏi chưa có sẵn TL, vẫn phân bổ ma trận vào bài mới)
+                if (candidates.length === 0) {
+                    candidates = rows.filter((r: any) =>
+                        r.soTiet > 0 && r.isNewLesson && rowHasVD(r) && (r.allocVD + r.allocVDC) < getMaxTLForRow(r)
+                    );
+                }
+
+                // Tier 1C: Nếu tất cả bài mới có Vận dụng đều đã chạm max nhưng vẫn chưa đủ số câu TL,
+                // cho phép bài mới có số tiết lớn nhất nhận thêm câu Vận dụng để TUYỆT ĐỐI KHÔNG lấy sang bài cũ
+                if (candidates.length === 0) {
+                    candidates = rows.filter((r: any) =>
+                        r.soTiet > 0 && r.isNewLesson && rowHasVD(r)
+                    );
+                }
             }
-            // Fallback 2: Nếu bài mới không đủ hoặc không có Vận dụng, mới mở rộng sang bài cũ có Vận dụng
+
+            // CHỈ KHI NÀO BÀI MỚI HOÀN TOÀN KHÔNG CÓ VẬN DỤNG (!hasNewLessonWithVD hoặc candidates rỗng):
+            // MỚI ĐƯỢC PHÉP LẤY BÀI CŨ
             if (candidates.length === 0) {
-                candidates = rows.filter((r: any) => r.soTiet > 0 && (r.hasVDSpec || r.currHasVD) && (r.allocVD + r.allocVDC) < getMaxTLForRow(r));
+                candidates = rows.filter((r: any) =>
+                    r.soTiet > 0 && rowHasVD(r) && (r.allocVD + r.allocVDC) < 1
+                );
             }
             if (candidates.length === 0) {
-                candidates = rows.filter((r: any) => r.soTiet > 0 && (r.hasVDSpec || r.currHasVD));
+                candidates = rows.filter((r: any) => r.soTiet > 0 && rowHasVD(r));
             }
             if (candidates.length === 0) {
                 candidates = rows.filter((r: any) => r.soTiet > 0);
@@ -1092,12 +1156,12 @@ const MatrixBuilder: React.FC = () => {
                     if (!a.isNewLesson && b.isNewLesson) return 1;
 
                     // 2. Ưu tiên bài có YCCĐ Vận dụng
-                    const aHasVD = (a.hasVDSpec || a.currHasVD) ? 1 : 0;
-                    const bHasVD = (b.hasVDSpec || b.currHasVD) ? 1 : 0;
+                    const aHasVD = rowHasVD(a) ? 1 : 0;
+                    const bHasVD = rowHasVD(b) ? 1 : 0;
                     if (aHasVD !== bHasVD) return bHasVD - aHasVD;
 
                     // 3. Ưu tiên bài có nhiều tiết hơn (ví dụ bài 6 tiết nhận trước bài 2 tiết)
-                    if (Math.abs(a.soTiet - b.soTiet) >= 2) return b.soTiet - a.soTiet;
+                    if (Math.abs(a.soTiet - b.soTiet) >= 1) return b.soTiet - a.soTiet;
                 }
                 // Ưu tiên bài có khoảng trống điểm mục tiêu lớn nhất
                 const aGap = a.targetScore - a.currentScore;

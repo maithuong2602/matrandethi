@@ -576,6 +576,16 @@ const ExamGenerator: React.FC = () => {
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, [isSwapMenuOpen]);
 
+    // Active question bank for current exam context
+    const activeBank = useMemo(() => {
+        const targetGrade = detectGradeFromContext(generatedTest, headerInfo, importedMatrix);
+        const byGrade = bank.filter(q => !q.grade || String(q.grade) === targetGrade);
+        const criteriaFiltered = filterQuestionsByActiveCriteria(byGrade, targetGrade).valid;
+        if (criteriaFiltered.length > 0) return criteriaFiltered;
+        if (byGrade.length > 0) return byGrade;
+        return bank;
+    }, [bank, generatedTest, headerInfo, importedMatrix]);
+
     // Active questions based on selected variant tab
     const activeQuestions = useMemo(() => {
         if (variants.length === 0) return generatedTest;
@@ -991,22 +1001,25 @@ const ExamGenerator: React.FC = () => {
         const targetGrade = detectGradeFromContext([], headerInfo, importedMatrix);
 
         // Lấy câu hỏi từ kho câu hỏi nội bộ cho đúng khối targetGrade
-        let activeBank: BankQuestion[] = filterQuestionsByActiveCriteria(
+        let currentActiveBank: BankQuestion[] = filterQuestionsByActiveCriteria(
             bank.filter(q => String(q.grade) === targetGrade),
             targetGrade
         ).valid;
-        if (activeBank.length === 0) {
+        if (currentActiveBank.length === 0) {
             const res = loadQuestionBank();
             if (res.data && res.data.length > 0) {
                 const tagged = splitLegacyTrueFalseQuestions(res.data.map(autoTagQuestion));
                 const byGrade = tagged.filter(q => String(q.grade) === targetGrade);
                 const validByCriteria = filterQuestionsByActiveCriteria(byGrade, targetGrade).valid;
-                activeBank = validByCriteria.map(q => ({
+                currentActiveBank = validByCriteria.map(q => ({
                     ...q,
                     level: normalizeLevel(q.level),
                     lesson: q.lesson || 'Bài chung',
                     uniqueId: Math.random()
                 }));
+            }
+            if (currentActiveBank.length === 0) {
+                currentActiveBank = activeBank;
             }
         }
 
@@ -1195,7 +1208,7 @@ const ExamGenerator: React.FC = () => {
                 preferredQuestionType || (category === 'essay' ? 'essay' : 'multiple-choice');
 
             // Các câu hỏi chưa dùng thuộc đúng bài học / đơn vị kiến thức của dòng ma trận
-            const rowPool = activeBank.filter(q => {
+            const rowPool = currentActiveBank.filter(q => {
                 if (usedIds.has(q.id)) return false;
                 return doesQuestionMatchRow(q, effectiveLabel, subTopicName, mainTopicName);
             });
@@ -1243,7 +1256,7 @@ const ExamGenerator: React.FC = () => {
             const totalInRowTiers = tier1.length + tier2.length + tier3.length + tier4.length;
             if (totalInRowTiers < count && mainTopicName) {
                 const candidateIds = new Set([...tier1, ...tier2, ...tier3, ...tier4].map(q => q.id));
-                const topicPool = activeBank.filter(q => {
+                const topicPool = currentActiveBank.filter(q => {
                     if (usedIds.has(q.id) || candidateIds.has(q.id)) return false;
                     return doesQuestionMatchRow(q, mainTopicName, mainTopicName, mainTopicName) && q.category === category;
                 });
@@ -1436,7 +1449,7 @@ const ExamGenerator: React.FC = () => {
             if (activeTasks.length === 0) return;
 
             const effectiveLabel = lessonName || subTopicName || mainTopicName || 'Bài chung';
-            const rowPool = activeBank.filter(q => {
+            const rowPool = currentActiveBank.filter(q => {
                 if (usedIds.has(q.id)) return false;
                 return doesQuestionMatchRow(q, effectiveLabel, subTopicName, mainTopicName);
             });
@@ -1645,7 +1658,7 @@ const ExamGenerator: React.FC = () => {
 
         setCurrentDossierId(null);
         setGeneratedTest(selected);
-        const builtHskt = buildHsktExamQuestions(selected, activeBank, headerInfo, 28);
+        const builtHskt = buildHsktExamQuestions(selected, currentActiveBank, headerInfo, 28);
         setHsktTest(builtHskt);
         setHsktSelectedIds(builtHskt.map(q => String(q.id)));
         setHsktPointMap({});

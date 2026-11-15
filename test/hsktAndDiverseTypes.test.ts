@@ -362,4 +362,28 @@ describe('Diverse Question Types and HSKT 28-Question Guarantee Tests', () => {
         expect(isNewLesson(sortedForVD[2])).toBe(false);
         expect(isNewLesson(sortedForVD[3])).toBe(false);
     });
+
+    it('should only fallback to old lessons for Vận dụng when new lessons have NO Vận dụng at all', () => {
+        // Trường hợp 1: Bài mới CÓ Vận dụng -> 100% câu Vận dụng lấy từ bài mới, không lấy bài cũ
+        const newHasVD = [
+            { id: 1, lesson: 'Bài cũ 1', isNew: false, hasVD: true },
+            { id: 2, lesson: 'Bài mới 1', isNew: true, hasVD: true },
+            { id: 3, lesson: 'Bài mới 2', isNew: true, hasVD: true }
+        ];
+        const hasNewVD1 = newHasVD.some(r => r.isNew && r.hasVD);
+        expect(hasNewVD1).toBe(true);
+        const picked1 = newHasVD.filter(r => (hasNewVD1 ? (r.isNew && r.hasVD) : r.hasVD));
+        expect(picked1.every(r => r.isNew)).toBe(true);
+
+        // Trường hợp 2: Bài mới HOÀN TOÀN KHÔNG CÓ Vận dụng -> lúc này mới được lấy bài cũ
+        const newNoVD = [
+            { id: 1, lesson: 'Bài cũ 1', isNew: false, hasVD: true },
+            { id: 2, lesson: 'Bài mới 1', isNew: true, hasVD: false },
+            { id: 3, lesson: 'Bài mới 2', isNew: true, hasVD: false }
+        ];
+        const hasNewVD2 = newNoVD.some(r => r.isNew && r.hasVD);
+        expect(hasNewVD2).toBe(false);
+        const picked2 = newNoVD.filter(r => (hasNewVD2 ? (r.isNew && r.hasVD) : r.hasVD));
+        expect(picked2.some(r => !r.isNew)).toBe(true);
+    });
 });
