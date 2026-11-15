@@ -18,7 +18,14 @@ import {
     extractHtmlParts,
     parseParts
 } from '../utils';
-import { reviewExamWithAI, autoFillMissingQuestions, autoFixExamWithAI } from '../services/geminiService';
+import { reviewExamWithAI, autoFillMissingQuestions, autoFixExamWithAI, parseStructuredTextQuestions } from '../services/geminiService';
+import {
+    buildSimilarQuestionPrompt,
+    buildBulkSimilarExamPrompt,
+    parseAndMapBulkSimilarQuestions,
+    generateSimilarQuestionDirectAI,
+    formatQuestionOptionsAndAnswer
+} from '../services/similarPromptService';
 import { splitLegacyTrueFalseQuestions, autoTagQuestion } from './QuestionManager';
 import { CURRICULUM } from '../data/curriculum';
 import { CANONICAL_REQUIREMENTS, KNTT_LESSON_MAPPINGS } from '../data/curriculum/index';
@@ -215,6 +222,23 @@ const ExamGenerator: React.FC = () => {
     const [showDossierRepoModal, setShowDossierRepoModal] = useState<boolean>(false);
     const [examGradeFilter, setExamGradeFilter] = useState<string>('all');
     const [examSearchQuery, setExamSearchQuery] = useState<string>('');
+
+    // Similar Question Modal (Single)
+    const [similarModalQuestion, setSimilarModalQuestion] = useState<{ q: BankQuestion; index: number } | null>(null);
+    const [similarContextInput, setSimilarContextInput] = useState<string>('');
+    const [similarGeneratedPrompt, setSimilarGeneratedPrompt] = useState<string>('');
+    const [similarPastedText, setSimilarPastedText] = useState<string>('');
+    const [isGeneratingSimilarAI, setIsGeneratingSimilarAI] = useState<boolean>(false);
+    const [copiedSimilarPrompt, setCopiedSimilarPrompt] = useState<boolean>(false);
+
+    // Bulk Similar Exam Modal
+    const [isBulkSimilarModalOpen, setIsBulkSimilarModalOpen] = useState<boolean>(false);
+    const [bulkSimilarScope, setBulkSimilarScope] = useState<'all' | 'NB' | 'TH' | 'VD' | 'VDC' | 'mc' | 'essay'>('all');
+    const [bulkSimilarContextInput, setBulkSimilarContextInput] = useState<string>('');
+    const [bulkSimilarGeneratedPrompt, setBulkSimilarGeneratedPrompt] = useState<string>('');
+    const [bulkSimilarPastedText, setBulkSimilarPastedText] = useState<string>('');
+    const [isGeneratingBulkSimilarAI, setIsGeneratingBulkSimilarAI] = useState<boolean>(false);
+    const [copiedBulkPrompt, setCopiedBulkPrompt] = useState<boolean>(false);
 
     const showNotice = (msg: string) => {
         setToastMsg(msg);
@@ -1967,6 +1991,198 @@ const ExamGenerator: React.FC = () => {
         setGeneratedTest(prev => prev.map(q => q.uniqueId === uniqueId ? { ...q, points: val } : q));
     };
 
+    // --- SIMILAR QUESTION HANDLERS ---
+    const handleOpenSimilarQuestionModal = (q: BankQuestion, index: number) => {
+        const grade = detectGradeFromContext(generatedTest, headerInfo, importedMatrix);
+        const prompt = buildSimilarQuestionPrompt(q, index, '', grade);
+        setSimilarModalQuestion({ q, index });
+        setSimilarContextInput('');
+        setSimilarGeneratedPrompt(prompt);
+        setSimilarPastedText('');
+        setCopiedSimilarPrompt(false);
+    };
+
+    const handleContextInputChange = (ctx: string) => {
+        setSimilarContextInput(ctx);
+        if (similarModalQuestion) {
+            const grade = detectGradeFromContext(generatedTest, headerInfo, importedMatrix);
+            const prompt = buildSimilarQuestionPrompt(similarModalQuestion.q, similarModalQuestion.index, ctx, grade);
+            setSimilarGeneratedPrompt(prompt);
+        }
+    };
+
+    const handleCopySimilarPrompt = () => {
+        if (!similarGeneratedPrompt) return;
+        navigator.clipboard.writeText(similarGeneratedPrompt);
+        setCopiedSimilarPrompt(true);
+        showNotice('Đã sao chép Prompt câu hỏi tương tự vào bộ nhớ tạm!');
+        setTimeout(() => setCopiedSimilarPrompt(false), 2500);
+    };
+
+    const handleGenerateSingleSimilarAI = async () => {
+        if (!similarModalQuestion) return;
+        setIsGeneratingSimilarAI(true);
+        try {
+            const grade = detectGradeFromContext(generatedTest, headerInfo, importedMatrix);
+            const generatedQ = await generateSimilarQuestionDirectAI(
+                similarModalQuestion.q,
+                similarModalQuestion.index,
+                similarContextInput,
+                grade
+            );
+            const formatted = `Câu ${similarModalQuestion.index + 1}: [${getQuestionSubtypeLabel(getQuestionSubtype(generatedQ))}] [${generatedQ.level}] ${generatedQ.content}\n${formatQuestionOptionsAndAnswer(generatedQ)}`;
+            setSimilarPastedText(formatted);
+            showNotice('AI đã tạo thành công câu hỏi tương tự!');
+        } catch (err: any) {
+            alert('Lỗi tạo câu hỏi bằng AI: ' + (err?.message || err));
+        } finally {
+            setIsGeneratingSimilarAI(false);
+        }
+    };
+
+    const handleApplySingleSimilar = () => {
+        if (!similarModalQuestion) return;
+        if (!similarPastedText.trim()) {
+            alert('Vui lòng dán câu hỏi từ AI vào ô kết quả trước khi áp dụng.');
+            return;
+        }
+
+        const parsedList = parseStructuredTextQuestions(similarPastedText);
+        if (parsedList.length === 0) {
+            alert('Không thể nhận diện nội dung câu hỏi từ văn bản đã dán. Vui lòng kiểm tra lại cấu trúc.');
+            return;
+        }
+
+        const parsedQ = parsedList[0];
+        const oldQ = similarModalQuestion.q;
+        const targetIdx = similarModalQuestion.index;
+
+        const mergedQ: BankQuestion = {
+            ...oldQ,
+            content: parsedQ.content || oldQ.content,
+            options: parsedQ.options && parsedQ.options.length > 0 ? parsedQ.options : oldQ.options,
+            answer: parsedQ.answer || oldQ.answer,
+            level: parsedQ.level || oldQ.level,
+            criteria: parsedQ.criteria || oldQ.criteria,
+            lesson: parsedQ.lesson || oldQ.lesson,
+            category: parsedQ.category || oldQ.category,
+            questionType: parsedQ.questionType || oldQ.questionType,
+            mcType: parsedQ.mcType || oldQ.mcType,
+            points: oldQ.points, // Giữ nguyên 100% thang điểm
+            uniqueId: Math.random() // Unique ID mới
+        };
+
+        setGeneratedTest(prev => {
+            const next = [...prev];
+            next[targetIdx] = mergedQ;
+            return next;
+        });
+
+        showNotice(`Đã thay thế câu hỏi tương tự vào Câu ${targetIdx + 1} thành công (giữ nguyên vị trí và điểm)!`);
+        setSimilarModalQuestion(null);
+    };
+
+    // --- BULK SIMILAR EXAM HANDLERS ---
+    const handleOpenBulkSimilarModal = () => {
+        const grade = detectGradeFromContext(generatedTest, headerInfo, importedMatrix);
+        const prompt = buildBulkSimilarExamPrompt(generatedTest, '', bulkSimilarScope, grade);
+        setBulkSimilarContextInput('');
+        setBulkSimilarGeneratedPrompt(prompt);
+        setBulkSimilarPastedText('');
+        setCopiedBulkPrompt(false);
+        setIsBulkSimilarModalOpen(true);
+    };
+
+    const handleBulkScopeChange = (newScope: 'all' | 'NB' | 'TH' | 'VD' | 'VDC' | 'mc' | 'essay') => {
+        setBulkSimilarScope(newScope);
+        const grade = detectGradeFromContext(generatedTest, headerInfo, importedMatrix);
+        const prompt = buildBulkSimilarExamPrompt(generatedTest, bulkSimilarContextInput, newScope, grade);
+        setBulkSimilarGeneratedPrompt(prompt);
+    };
+
+    const handleBulkContextChange = (ctx: string) => {
+        setBulkSimilarContextInput(ctx);
+        const grade = detectGradeFromContext(generatedTest, headerInfo, importedMatrix);
+        const prompt = buildBulkSimilarExamPrompt(generatedTest, ctx, bulkSimilarScope, grade);
+        setBulkSimilarGeneratedPrompt(prompt);
+    };
+
+    const handleCopyBulkPrompt = () => {
+        if (!bulkSimilarGeneratedPrompt) return;
+        navigator.clipboard.writeText(bulkSimilarGeneratedPrompt);
+        setCopiedBulkPrompt(true);
+        showNotice('Đã sao chép Prompt Đề thi tương tự vào bộ nhớ tạm!');
+        setTimeout(() => setCopiedBulkPrompt(false), 2500);
+    };
+
+    const handleApplyBulkSimilar = () => {
+        if (!bulkSimilarPastedText.trim()) {
+            alert('Vui lòng dán nội dung đề thi từ AI vào khung kết quả.');
+            return;
+        }
+
+        let targetIndices: number[] | undefined = undefined;
+        if (bulkSimilarScope !== 'all') {
+            targetIndices = generatedTest
+                .map((q, idx) => ({ q, idx }))
+                .filter(({ q }) => {
+                    if (['NB', 'TH', 'VD', 'VDC'].includes(bulkSimilarScope)) return q.level === bulkSimilarScope;
+                    if (bulkSimilarScope === 'mc') return q.category !== 'essay';
+                    if (bulkSimilarScope === 'essay') return q.category === 'essay';
+                    return true;
+                })
+                .map(({ idx }) => idx);
+        }
+
+        const res = parseAndMapBulkSimilarQuestions(bulkSimilarPastedText, generatedTest, targetIndices);
+        if (res.appliedCount === 0) {
+            alert('Không thể nhận diện câu hỏi hợp lệ từ văn bản đã dán. Vui lòng kiểm tra lại định dạng câu hỏi.');
+            return;
+        }
+
+        setGeneratedTest(res.updatedQuestions);
+        showNotice(`Đã phân tích và thay thế thành công ${res.appliedCount} câu hỏi vào đúng vị trí trong đề thi!`);
+        setIsBulkSimilarModalOpen(false);
+    };
+
+    const handleGenerateBulkSimilarAI = async () => {
+        setIsGeneratingBulkSimilarAI(true);
+        try {
+            const grade = detectGradeFromContext(generatedTest, headerInfo, importedMatrix);
+            const targetEntries = generatedTest.map((q, idx) => ({ q, idx })).filter(({ q }) => {
+                if (bulkSimilarScope === 'all') return true;
+                if (['NB', 'TH', 'VD', 'VDC'].includes(bulkSimilarScope)) return q.level === bulkSimilarScope;
+                if (bulkSimilarScope === 'mc') return q.category !== 'essay';
+                if (bulkSimilarScope === 'essay') return q.category === 'essay';
+                return true;
+            });
+
+            const updated = [...generatedTest];
+            let successCount = 0;
+            const previewLines: string[] = [];
+
+            for (let i = 0; i < targetEntries.length; i++) {
+                const { q, idx } = targetEntries[i];
+                try {
+                    const newQ = await generateSimilarQuestionDirectAI(q, idx, bulkSimilarContextInput, grade);
+                    updated[idx] = newQ;
+                    successCount++;
+                    previewLines.push(`Câu ${idx + 1}: [${getQuestionSubtypeLabel(getQuestionSubtype(newQ))}] [${newQ.level}] ${newQ.content}\n${formatQuestionOptionsAndAnswer(newQ)}\n`);
+                } catch {
+                    // Tiếp tục các câu còn lại
+                }
+            }
+
+            setBulkSimilarPastedText(previewLines.join('\n'));
+            setGeneratedTest(updated);
+            showNotice(`Đã tạo tự động bằng AI và thay thế thành công ${successCount}/${targetEntries.length} câu vào đúng vị trí!`);
+        } catch (err: any) {
+            alert('Lỗi tạo hàng loạt bằng AI: ' + (err?.message || err));
+        } finally {
+            setIsGeneratingBulkSimilarAI(false);
+        }
+    };
+
     // --- EXPORT HANDLERS ---
     const handlePerformExport = () => {
         if (generatedTest.length === 0) return;
@@ -2618,9 +2834,28 @@ const ExamGenerator: React.FC = () => {
                                                 <button onClick={() => triggerBulkSwap('VDC')} className="w-full text-left px-3.5 py-1.5 hover:bg-rose-50 text-rose-700 font-semibold flex items-center gap-2 transition-colors cursor-pointer">
                                                     <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0"></span> Mức Vận dụng cao
                                                 </button>
+                                                <div className="border-t border-gray-100 my-1"></div>
+                                                <button
+                                                    onClick={() => {
+                                                        setIsSwapMenuOpen(false);
+                                                        handleOpenBulkSimilarModal();
+                                                    }}
+                                                    className="w-full text-left px-3.5 py-2 hover:bg-purple-50 text-purple-700 font-bold flex items-center gap-2 transition-colors cursor-pointer"
+                                                >
+                                                    <Sparkles size={13} className="shrink-0 text-purple-600" /> Tạo đề tương tự (Prompt AI)
+                                                </button>
                                             </div>
                                         )}
                                     </div>
+
+                                    <button
+                                        type="button"
+                                        onClick={handleOpenBulkSimilarModal}
+                                        className="px-3 py-1.5 bg-gradient-to-r from-purple-50 to-indigo-50 hover:from-purple-100 hover:to-indigo-100 text-purple-700 border border-purple-200 rounded-xl flex items-center gap-1.5 text-xs font-bold transition-all shadow-2xs cursor-pointer"
+                                        title="Sinh Prompt AI để tạo đề tương tự hàng loạt (giữ nguyên vị trí 100%)"
+                                    >
+                                        <Sparkles size={13} className="text-purple-600" /> Tạo Đề Tương Tự
+                                    </button>
 
                                     <button
                                         type="button"
@@ -3052,13 +3287,23 @@ const ExamGenerator: React.FC = () => {
                                                         <X size={13} /> Loại khỏi đề HSKT
                                                     </button>
                                                 ) : (
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => swapQuestion(q)}
-                                                        className="text-xs flex items-center gap-1 text-primary hover:bg-blue-50 px-2 py-1 rounded font-semibold transition-colors cursor-pointer"
-                                                    >
-                                                        <RefreshCw size={13} /> Đổi câu khác
-                                                    </button>
+                                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => swapQuestion(q)}
+                                                            className="text-xs flex items-center gap-1 text-primary hover:bg-blue-50 px-2 py-1 rounded font-semibold transition-colors cursor-pointer"
+                                                        >
+                                                            <RefreshCw size={13} /> Đổi câu khác
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleOpenSimilarQuestionModal(q, idx)}
+                                                            className="text-xs flex items-center gap-1 text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer shadow-2xs"
+                                                            title="Tạo câu hỏi tương tự bằng AI: sinh prompt cho AI khác chỉ đổi ngữ cảnh với nguồn tài liệu cung cấp"
+                                                        >
+                                                            <Sparkles size={13} className="text-purple-600" /> Tạo câu tương tự
+                                                        </button>
+                                                    </div>
                                                 )}
                                             </div>
                                         </div>
@@ -3572,6 +3817,305 @@ const ExamGenerator: React.FC = () => {
                             >
                                 Đóng
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* SIMILAR QUESTION MODAL (SINGLE QUESTION) */}
+            {similarModalQuestion && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl flex flex-col max-h-[92vh] overflow-hidden border border-gray-100">
+                        {/* Modal Header */}
+                        <div className="p-4 sm:p-5 border-b flex justify-between items-center bg-gradient-to-r from-purple-50 via-indigo-50/40 to-white shrink-0">
+                            <div>
+                                <h3 className="text-base sm:text-lg font-bold text-gray-900 flex items-center gap-2">
+                                    <Sparkles size={20} className="text-purple-600" />
+                                    Tạo Câu Hỏi Tương Tự – Câu {similarModalQuestion.index + 1}
+                                </h3>
+                                <div className="flex items-center gap-2 mt-1 flex-wrap text-xs">
+                                    <span className="font-bold text-blue-900 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded">
+                                        {getQuestionSubtypeLabel(getQuestionSubtype(similarModalQuestion.q))}
+                                    </span>
+                                    <span className="font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
+                                        Mức {similarModalQuestion.q.level}
+                                    </span>
+                                    <span className="font-semibold text-gray-700 bg-gray-100 px-2 py-0.5 rounded">
+                                        Điểm: {(similarModalQuestion.q.points ?? 0.25).toFixed(2).replace('.', ',')}đ
+                                    </span>
+                                    <span className="text-gray-500 italic">
+                                        ({similarModalQuestion.q.lesson})
+                                    </span>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => setSimilarModalQuestion(null)}
+                                className="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
+                            >
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        {/* Modal Scrollable Body */}
+                        <div className="overflow-y-auto p-4 sm:p-6 space-y-4 flex-1 text-xs sm:text-sm">
+                            {/* 1. Câu hỏi gốc tham chiếu */}
+                            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2">
+                                <div className="flex items-center justify-between">
+                                    <span className="font-bold text-slate-800 uppercase tracking-wide text-xs">
+                                        📖 Câu hỏi gốc đang chọn:
+                                    </span>
+                                    <span className="text-[11px] text-slate-500 font-medium">
+                                        {similarModalQuestion.q.criteria ? `YCCĐ: ${similarModalQuestion.q.criteria}` : ''}
+                                    </span>
+                                </div>
+                                <div className="text-gray-900 font-medium whitespace-pre-wrap text-xs sm:text-sm">
+                                    {similarModalQuestion.q.content}
+                                </div>
+                                <div className="text-xs text-gray-600 bg-white p-2.5 rounded-lg border border-slate-100 whitespace-pre-wrap font-mono">
+                                    {formatQuestionOptionsAndAnswer(similarModalQuestion.q)}
+                                </div>
+                            </div>
+
+                            {/* 2. Ô nhập nguồn tài liệu / ngữ cảnh mới */}
+                            <div className="space-y-1.5">
+                                <label className="block text-xs font-bold text-indigo-950 uppercase tracking-wide">
+                                    📥 Nguồn tài liệu / Ngữ cảnh mới (tùy chọn):
+                                </label>
+                                <textarea
+                                    rows={3}
+                                    value={similarContextInput}
+                                    onChange={(e) => handleContextInputChange(e.target.value)}
+                                    placeholder="Dán đoạn văn bản, tài liệu, bài toán thực tế mới hoặc ghi chú yêu cầu... Ví dụ: 'Đổi ngữ cảnh sang phần mềm Scratch vẽ hình tròn và tính chu vi', hoặc dán đoạn bài đọc mới. AI sẽ bám sát nguồn này để chỉ đổi ngữ cảnh mà vẫn giữ nguyên 100% dạng câu, mức độ và YCCĐ."
+                                    className="w-full p-3 border border-indigo-200 rounded-xl text-xs sm:text-sm bg-indigo-50/20 focus:bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all"
+                                />
+                                <div className="text-[11px] text-gray-500 flex items-center gap-1 italic">
+                                    <span>💡 Lưu ý: Prompt bên dưới sẽ tự động cập nhật ngay khi bạn nhập nguồn tài liệu mới vào đây.</span>
+                                </div>
+                            </div>
+
+                            {/* 3. Khung Prompt chuẩn hóa */}
+                            <div className="space-y-1.5">
+                                <div className="flex items-center justify-between flex-wrap gap-2">
+                                    <label className="text-xs font-bold text-purple-950 uppercase tracking-wide flex items-center gap-1.5">
+                                        <Sparkles size={14} className="text-purple-600" />
+                                        Prompt Chuẩn Hóa Sinh Ra (Dành cho AI khác hoặc Gemini):
+                                    </label>
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={handleCopySimilarPrompt}
+                                            className={`px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                                                copiedSimilarPrompt
+                                                    ? 'bg-emerald-600 text-white'
+                                                    : 'bg-purple-100 text-purple-800 hover:bg-purple-200'
+                                            }`}
+                                        >
+                                            {copiedSimilarPrompt ? <Check size={13} /> : <Copy size={13} />}
+                                            {copiedSimilarPrompt ? '✓ Đã chép Prompt!' : '📋 Sao chép Prompt'}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={handleGenerateSingleSimilarAI}
+                                            disabled={isGeneratingSimilarAI}
+                                            className="px-3 py-1 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all disabled:opacity-50 cursor-pointer"
+                                        >
+                                            {isGeneratingSimilarAI ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                                            ⚡ Tạo nhanh bằng AI
+                                        </button>
+                                    </div>
+                                </div>
+                                <textarea
+                                    readOnly
+                                    rows={7}
+                                    value={similarGeneratedPrompt}
+                                    className="w-full p-3 border border-gray-200 rounded-xl text-[11px] sm:text-xs font-mono bg-gray-50 text-gray-800 outline-none select-all resize-y"
+                                />
+                            </div>
+
+                            {/* 4. Khung dán kết quả từ AI */}
+                            <div className="space-y-1.5">
+                                <label className="block text-xs font-bold text-emerald-950 uppercase tracking-wide">
+                                    📝 Kết quả từ AI (Dán câu trả lời từ ChatGPT / Claude / DeepSeek vào đây):
+                                </label>
+                                <textarea
+                                    rows={4}
+                                    value={similarPastedText}
+                                    onChange={(e) => setSimilarPastedText(e.target.value)}
+                                    placeholder="Dán câu hỏi mới do AI tạo ra vào đây (hoặc dùng nút 'Tạo nhanh bằng AI' ở trên)... Hệ thống sẽ tự động bóc tách nội dung, phương án và đáp án chuẩn xác."
+                                    className="w-full p-3 border border-emerald-300 bg-emerald-50/20 focus:bg-white focus:border-emerald-500 rounded-xl text-xs sm:text-sm font-mono outline-none transition-all"
+                                />
+                            </div>
+                        </div>
+
+                        {/* Modal Footer */}
+                        <div className="p-4 bg-gray-50 border-t flex items-center justify-between gap-3 shrink-0">
+                            <span className="text-[11px] text-gray-500">
+                                * Thang điểm ({(similarModalQuestion.q.points ?? 0.25).toFixed(2).replace('.', ',')}đ) và vị trí Câu {similarModalQuestion.index + 1} được bảo toàn 100%.
+                            </span>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setSimilarModalQuestion(null)}
+                                    className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                                >
+                                    Hủy
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleApplySingleSimilar}
+                                    className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
+                                >
+                                    <Check size={14} /> Áp dụng thay thế vào Câu {similarModalQuestion.index + 1}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* BULK SIMILAR EXAM MODAL */}
+            {isBulkSimilarModalOpen && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl flex flex-col max-h-[92vh] overflow-hidden border border-gray-100">
+                        {/* Modal Header */}
+                        <div className="p-4 sm:p-5 border-b flex justify-between items-center bg-gradient-to-r from-purple-50 via-indigo-50/40 to-white shrink-0">
+                            <div>
+                                <h3 className="text-base sm:text-lg font-bold text-gray-900 flex items-center gap-2">
+                                    <Sparkles size={20} className="text-purple-600" />
+                                    Tạo Đề Thi Tương Tự Hàng Loạt (Prompt AI & Giữ Nguyên Vị Trí)
+                                </h3>
+                                <p className="text-xs text-gray-500 mt-0.5">
+                                    Sinh Prompt chuẩn sư phạm cho toàn đề thi để gửi cho AI (ChatGPT, Claude, Gemini, DeepSeek...). Khi dán kết quả về, hệ thống tự động phân tích và thay thế từng câu vào đúng vị trí 100% mà không làm đảo lộn cấu trúc ma trận.
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => setIsBulkSimilarModalOpen(false)}
+                                className="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
+                            >
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        {/* Scope Selector */}
+                        <div className="px-5 py-2.5 bg-gray-50/80 border-b flex flex-wrap items-center justify-between gap-2 text-xs shrink-0">
+                            <span className="font-bold text-gray-700">Phạm vi tạo tương tự:</span>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                                {[
+                                    { id: 'all', label: `Tất cả (${generatedTest.length} câu)` },
+                                    { id: 'NB', label: 'Mức Nhận biết' },
+                                    { id: 'TH', label: 'Mức Thông hiểu' },
+                                    { id: 'VD', label: 'Mức Vận dụng' },
+                                    { id: 'VDC', label: 'Mức VDC' },
+                                    { id: 'mc', label: 'Chỉ Trắc nghiệm' },
+                                    { id: 'essay', label: 'Chỉ Tự luận' }
+                                ].map(scope => (
+                                    <button
+                                        key={scope.id}
+                                        type="button"
+                                        onClick={() => handleBulkScopeChange(scope.id as any)}
+                                        className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                                            bulkSimilarScope === scope.id
+                                                ? 'bg-purple-600 text-white shadow-2xs'
+                                                : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-100'
+                                        }`}
+                                    >
+                                        {scope.label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Scrollable Body */}
+                        <div className="overflow-y-auto p-4 sm:p-6 space-y-4 flex-1 text-xs sm:text-sm">
+                            {/* 1. Nguồn tài liệu chung cho toàn đề */}
+                            <div className="space-y-1.5">
+                                <label className="block text-xs font-bold text-indigo-950 uppercase tracking-wide">
+                                    📥 Nguồn tài liệu / Chủ đề / Ngữ cảnh mới cho toàn bộ đề (tùy chọn):
+                                </label>
+                                <textarea
+                                    rows={3}
+                                    value={bulkSimilarContextInput}
+                                    onChange={(e) => handleBulkContextChange(e.target.value)}
+                                    placeholder="Dán toàn bộ văn bản tài liệu nguồn, bài đọc mới, chủ đề mới hoặc ghi chú yêu cầu đổi ngữ cảnh chung cho đề thi... AI sẽ chỉ đổi ngữ cảnh bám theo nguồn này cho tất cả các câu hỏi."
+                                    className="w-full p-3 border border-indigo-200 rounded-xl text-xs sm:text-sm bg-indigo-50/20 focus:bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all"
+                                />
+                            </div>
+
+                            {/* 2. Khung Prompt Toàn Đề */}
+                            <div className="space-y-1.5">
+                                <div className="flex items-center justify-between flex-wrap gap-2">
+                                    <label className="text-xs font-bold text-purple-950 uppercase tracking-wide flex items-center gap-1.5">
+                                        <Sparkles size={14} className="text-purple-600" />
+                                        Prompt Toàn Đề Chuẩn Hóa Sinh Ra:
+                                    </label>
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={handleCopyBulkPrompt}
+                                            className={`px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                                                copiedBulkPrompt
+                                                    ? 'bg-emerald-600 text-white'
+                                                    : 'bg-purple-100 text-purple-800 hover:bg-purple-200'
+                                            }`}
+                                        >
+                                            {copiedBulkPrompt ? <Check size={13} /> : <Copy size={13} />}
+                                            {copiedBulkPrompt ? '✓ Đã chép Prompt!' : '📋 Sao chép Prompt Toàn Đề'}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={handleGenerateBulkSimilarAI}
+                                            disabled={isGeneratingBulkSimilarAI}
+                                            className="px-3 py-1 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all disabled:opacity-50 cursor-pointer"
+                                        >
+                                            {isGeneratingBulkSimilarAI ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                                            ⚡ Tự động tạo hàng loạt bằng AI
+                                        </button>
+                                    </div>
+                                </div>
+                                <textarea
+                                    readOnly
+                                    rows={8}
+                                    value={bulkSimilarGeneratedPrompt}
+                                    className="w-full p-3 border border-gray-200 rounded-xl text-[11px] sm:text-xs font-mono bg-gray-50 text-gray-800 outline-none select-all resize-y"
+                                />
+                            </div>
+
+                            {/* 3. Dán toàn bộ kết quả đề thi */}
+                            <div className="space-y-1.5">
+                                <label className="block text-xs font-bold text-emerald-950 uppercase tracking-wide">
+                                    📝 Dán toàn bộ kết quả từ AI (ChatGPT, Claude, DeepSeek...) vào đây:
+                                </label>
+                                <textarea
+                                    rows={6}
+                                    value={bulkSimilarPastedText}
+                                    onChange={(e) => setBulkSimilarPastedText(e.target.value)}
+                                    placeholder="Dán toàn bộ danh sách câu hỏi do AI tạo ra (Câu 1:, Câu 2:, ...) vào đây... Hệ thống sẽ tự động phân tích và khớp vào đúng vị trí từng câu tương ứng trong đề thi!"
+                                    className="w-full p-3 border border-emerald-300 bg-emerald-50/20 focus:bg-white focus:border-emerald-500 rounded-xl text-xs sm:text-sm font-mono outline-none transition-all"
+                                />
+                            </div>
+                        </div>
+
+                        {/* Modal Footer */}
+                        <div className="p-4 bg-gray-50 border-t flex items-center justify-between gap-3 shrink-0">
+                            <span className="text-[11px] text-gray-500">
+                                * 100% thứ tự câu hỏi, vị trí trong đề và thang điểm ma trận được bảo toàn tuyệt đối.
+                            </span>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setIsBulkSimilarModalOpen(false)}
+                                    className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                                >
+                                    Hủy
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleApplyBulkSimilar}
+                                    className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
+                                >
+                                    <Check size={14} /> 📥 Phân tích & Thay thế hàng loạt (Giữ nguyên vị trí)
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>

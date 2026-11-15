@@ -108,7 +108,7 @@ function safeParseJsonArray(rawText: string | undefined): any[] {
     return [];
 }
 
-function safeParseJsonObject(rawText: string | undefined): any {
+export function safeParseJsonObject(rawText: string | undefined): any {
     if (!rawText) return {};
     const cleaned = rawText
         .replace(/^```(?:json)?\s*/i, '')
@@ -135,7 +135,7 @@ const getGenAIClientWithKey = (explicitKey?: string) => {
  * 3. Nếu toàn bộ key lỗi, hết hạn ngạch hoặc không có Internet: Tự động kích hoạt bộ sinh ngoại tuyến (Offline Engine).
  * => KHÔNG BAO GIỜ LÀM GIÁN ĐOẠN HOẶC BÁO LỖI KHÔNG TẠO ĐƯỢC CÂU HỎI.
  */
-async function callGeminiWithFailover<T>(
+export async function callGeminiWithFailover<T>(
     operation: (ai: GoogleGenAI, model: string) => Promise<T>,
     fallbackAction: () => T
 ): Promise<T> {
