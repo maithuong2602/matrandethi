@@ -154,26 +154,56 @@ export const detectGradeFromLessonOrContext = (lessonOrSubTopic: string, context
     const strippedTarget = normalizeLessonString((lessonOrSubTopic || '').replace(/^\d+\.\s*/, ''));
     const targetNum = extractLessonNumber(lessonOrSubTopic);
 
-    for (const g of ['6', '7', '8', '9']) {
-        const lessons = CURRICULUM.lessonData[g] || [];
-        for (const l of lessons) {
-            if (normalizeLessonString(l) === normTarget) return g;
-            if (targetNum && extractLessonNumber(l) === targetNum) return g;
+    // Pass 1: So khớp chính xác tên bài học đầy đủ trong CURRICULUM.lessonData qua cả 4 khối
+    if (normTarget) {
+        for (const g of ['6', '7', '8', '9']) {
+            const lessons = CURRICULUM.lessonData[g] || [];
+            for (const l of lessons) {
+                if (normalizeLessonString(l) === normTarget) return g;
+            }
         }
     }
 
-    for (const g of ['6', '7', '8', '9']) {
-        const gradeReqs = REQUIREMENTS_DATA[`Lớp ${g}`];
-        if (gradeReqs && normTarget) {
-            for (const [mainTopic, subTopics] of Object.entries(gradeReqs)) {
-                if (normalizeLessonString(mainTopic) === normTarget) return g;
-                for (const subKey of Object.keys(subTopics as object)) {
-                    const normSub = normalizeLessonString(subKey);
-                    const strippedSub = normalizeLessonString(subKey.replace(/^\d+\.\s*/, ''));
-                    if (normSub === normTarget || (strippedTarget && strippedSub === strippedTarget)) {
-                        return g;
+    // Pass 2: So khớp theo chủ đề / bài học trong REQUIREMENTS_DATA
+    if (normTarget) {
+        for (const g of ['6', '7', '8', '9']) {
+            const gradeReqs = REQUIREMENTS_DATA[`Lớp ${g}`];
+            if (gradeReqs) {
+                for (const [mainTopic, subTopics] of Object.entries(gradeReqs)) {
+                    if (normalizeLessonString(mainTopic) === normTarget) return g;
+                    for (const subKey of Object.keys(subTopics as object)) {
+                        const normSub = normalizeLessonString(subKey);
+                        const strippedSub = normalizeLessonString(subKey.replace(/^\d+\.\s*/, ''));
+                        if (normSub === normTarget || (strippedTarget && strippedSub === strippedTarget)) {
+                            return g;
+                        }
                     }
                 }
+            }
+        }
+    }
+
+    // Pass 3: So khớp tên bài học chứa chuỗi con (nếu tên bài có ý nghĩa > 5 kí tự)
+    if (normTarget && normTarget.length > 5) {
+        for (const g of ['6', '7', '8', '9']) {
+            const lessons = CURRICULUM.lessonData[g] || [];
+            for (const l of lessons) {
+                const normL = normalizeLessonString(l);
+                const pureL = normL.replace(/^bài\s*\d+[ab]?\s*[:\.]?\s*/i, '').trim();
+                const pureTarget = normTarget.replace(/^bài\s*\d+[ab]?\s*[:\.]?\s*/i, '').trim();
+                if (pureL.length > 6 && pureTarget.length > 6) {
+                    if (pureL.includes(pureTarget) || pureTarget.includes(pureL)) return g;
+                }
+            }
+        }
+    }
+
+    // Pass 4: Fallback chỉ khi số hiệu bài là duy nhất hoặc không có tên cụ thể
+    if (targetNum) {
+        for (const g of ['6', '7', '8', '9']) {
+            const lessons = CURRICULUM.lessonData[g] || [];
+            for (const l of lessons) {
+                if (extractLessonNumber(l) === targetNum) return g;
             }
         }
     }

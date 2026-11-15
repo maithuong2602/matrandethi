@@ -180,6 +180,29 @@ describe('Dynamic Exam File Name Generation Tests', () => {
     expect(detectGradeFromContext([], { monHoc: 'MÔN: TIN HỌC – LỚP 9' })).toBe('9');
   });
 
+  it('detectGradeFromContext prioritizes importedMatrix over mismatched question bank or default headerInfo', () => {
+    // Giả lập bank chứa câu hỏi Lớp 7 và headerInfo mặc định là Lớp 7
+    const bank7 = [{ grade: '7', lesson: 'Bài 1: Thiết bị vào - ra' }, { grade: '7', lesson: 'Bài 2' }];
+    const headerDefault7 = { monHoc: 'MÔN: TIN HỌC – LỚP 7' };
+
+    // Ma trận Lớp 8 với tên đề "Lớp 8 - Cuối kì I"
+    const matrix8 = {
+      thongTinChung: { tenDe: 'Lớp 8 - Cuối kì I' },
+      chiTiet: []
+    };
+    expect(detectGradeFromContext(bank7, headerDefault7, matrix8)).toBe('8');
+
+    // Ma trận Lớp 8 không có chữ "Lớp 8" trong tên đề nhưng chi tiết chứa các bài học Lớp 8
+    const matrix8ByLessons = {
+      thongTinChung: { tenDe: 'ĐỀ KIỂM TRA ĐỊNH KÌ CUỐI HỌC KÌ I' },
+      chiTiet: [
+        { thongTinChung: { chuong: 'Chủ đề A. Máy tính và cộng đồng', noiDung: 'Sơ lược về lịch sử phát triển máy tính', bai: 'Bài 1: Lược sử công cụ tính toán' } },
+        { thongTinChung: { chuong: 'Chủ đề F. Giải quyết vấn đề với sự trợ giúp của máy tính', noiDung: 'Lập trình trực quan', bai: 'Bài 12: Từ thuật toán đến chương trình' } }
+      ]
+    };
+    expect(detectGradeFromContext(bank7, headerDefault7, matrix8ByLessons)).toBe('8');
+  });
+
   it('buildDefaultFileName should adapt to grade and not force THUONG if not provided', () => {
     const q8 = [{ grade: '8', lesson: 'Bài 1' }];
     const header8 = {
@@ -207,5 +230,16 @@ describe('Dynamic Exam File Name Generation Tests', () => {
       monHoc: 'MÔN: TIN HỌC – LỚP 6'
     };
     expect(buildDefaultFileName(q6, headerCK1, '')).toBe('CK1 TIN 6-26-27');
+  });
+
+  it('buildDefaultFileName respects importedMatrix for Grade 8 even if question array is initially empty', () => {
+    const matrix8 = {
+      thongTinChung: { tenDe: 'Lớp 8 - Cuối kì I' },
+      chiTiet: []
+    };
+    const header = { tenKyThi: 'Lớp 8 - Cuối kì I', monHoc: 'MÔN: TIN HỌC – LỚP 8' };
+    const name = buildDefaultFileName([], header, '', matrix8);
+    expect(name).toContain('TIN 8');
+    expect(name).not.toContain('TIN 7');
   });
 });

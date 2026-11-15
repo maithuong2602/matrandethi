@@ -26,7 +26,8 @@ import {
     filterQuestionsByActiveCriteria,
     purgeInvalidQuestionsAndResync,
     getQuestionTypeKey,
-    getCanonicalCriterionKeyForQuestion
+    getCanonicalCriterionKeyForQuestion,
+    detectGradeFromLessonOrContext
 } from '../services/criteriaService';
 import {
     getSavedExams,
@@ -41,35 +42,87 @@ import {
 } from '../services/examApprovalService';
 import { getCurrentUser, canApproveExam } from '../services/authService';
 
-export const detectGradeFromContext = (questions: any[], headerInfo?: any, importedMatrix?: any): string => {
-    if (Array.isArray(questions)) {
-        for (const q of questions) {
-            if (q.grade && ['6', '7', '8', '9', '10', '11', '12'].includes(String(q.grade))) {
-                return String(q.grade);
-            }
+export const detectGradeFromContext = (questions?: any[], headerInfo?: any, importedMatrix?: any): string => {
+    // 1. Ma trận được chọn (importedMatrix) luôn có độ ưu tiên cao nhất khi tạo/cấu hình đề từ Ma trận
+    if (importedMatrix) {
+        // 1.1. Từ trường thông tin cấu hình rõ khối/lớp trong thongTinChung
+        const explicitGrade = importedMatrix.thongTinChung?.lop || importedMatrix.thongTinChung?.khoi || importedMatrix.thongTinChung?.grade;
+        if (explicitGrade && ['6', '7', '8', '9', '10', '11', '12'].includes(String(explicitGrade))) {
+            return String(explicitGrade);
         }
-        for (const q of questions) {
-            if (q.lesson) {
-                for (const [g, lessons] of Object.entries(CURRICULUM.criteriaData)) {
-                    if (lessons[q.lesson]) return g;
+
+        // 1.2. Từ tên đề / tên ma trận (ví dụ: "Lớp 8 - Cuối kì I", "Khối 8", "Tin học 8"...)
+        const matrixName = importedMatrix.thongTinChung?.tenDe || '';
+        const matrixMatch = matrixName.match(/L[ớo]p\s*(\d+)|Kh[ốo]i\s*(\d+)|Tin\s*(\d+)|\b(6|7|8|9|10|11|12)\b/i);
+        if (matrixMatch) {
+            const g = matrixMatch[1] || matrixMatch[2] || matrixMatch[3] || matrixMatch[4];
+            if (g && ['6', '7', '8', '9', '10', '11', '12'].includes(g)) return g;
+        }
+
+        // 1.3. Từ các đơn vị kiến thức / bài học trong chi tiết ma trận (chiTiet)
+        if (Array.isArray(importedMatrix.chiTiet) && importedMatrix.chiTiet.length > 0) {
+            const votes: Record<string, number> = { '6': 0, '7': 0, '8': 0, '9': 0 };
+            for (const row of importedMatrix.chiTiet) {
+                const bai = String(row.thongTinChung?.bai || '').trim();
+                const noiDung = String(row.thongTinChung?.noiDung || '').trim();
+                const chuong = String(row.thongTinChung?.chuong || '').trim();
+                const g = detectGradeFromLessonOrContext(bai || noiDung, `${chuong} ${noiDung} ${bai}`);
+                if (g && votes[g] !== undefined) {
+                    votes[g]++;
                 }
             }
+            let bestG = '';
+            let maxVotes = 0;
+            for (const [g, count] of Object.entries(votes)) {
+                if (count > maxVotes) {
+                    maxVotes = count;
+                    bestG = g;
+                }
+            }
+            if (bestG && maxVotes > 0) return bestG;
         }
     }
-    const matrixName = importedMatrix?.thongTinChung?.tenDe || '';
-    const matrixMatch = matrixName.match(/L[ớo]p\s*(\d+)|Kh[ốo]i\s*(\d+)|\b(6|7|8|9|10|11|12)\b/i);
-    if (matrixMatch) {
-        const g = matrixMatch[1] || matrixMatch[2] || matrixMatch[3];
+
+    // 2. Từ thông tin header (Môn học / Tên kỳ thi)
+    if (headerInfo?.monHoc) {
+        const m = headerInfo.monHoc.match(/L[ỚO]P\s*(\d+)|KH[ỐO]I\s*(\d+)|\b(6|7|8|9|10|11|12)\b/i);
+        const g = m ? (m[1] || m[2] || m[3]) : null;
         if (g && ['6', '7', '8', '9', '10', '11', '12'].includes(g)) return g;
     }
-    if (headerInfo?.monHoc) {
-        const m = headerInfo.monHoc.match(/L[ỚO]P\s*(\d+)/i);
-        if (m && m[1]) return m[1];
-    }
     if (headerInfo?.tenKyThi) {
-        const m = headerInfo.tenKyThi.match(/L[ỚO]P\s*(\d+)/i);
-        if (m && m[1]) return m[1];
+        const m = headerInfo.tenKyThi.match(/L[ỚO]P\s*(\d+)|KH[ỐO]I\s*(\d+)|\b(6|7|8|9|10|11|12)\b/i);
+        const g = m ? (m[1] || m[2] || m[3]) : null;
+        if (g && ['6', '7', '8', '9', '10', '11', '12'].includes(g)) return g;
     }
+
+    // 3. Từ danh sách câu hỏi đã được chọn trong đề (questions) - dùng biểu quyết đa số
+    if (Array.isArray(questions) && questions.length > 0) {
+        const votes: Record<string, number> = {};
+        for (const q of questions) {
+            let g = q.grade ? String(q.grade) : '';
+            if (!g && q.lesson) {
+                for (const [gradeKey, lessons] of Object.entries(CURRICULUM.criteriaData)) {
+                    if (lessons[q.lesson]) {
+                        g = gradeKey;
+                        break;
+                    }
+                }
+            }
+            if (g && ['6', '7', '8', '9', '10', '11', '12'].includes(g)) {
+                votes[g] = (votes[g] || 0) + 1;
+            }
+        }
+        let bestG = '';
+        let maxVotes = 0;
+        for (const [g, count] of Object.entries(votes)) {
+            if (count > maxVotes) {
+                maxVotes = count;
+                bestG = g;
+            }
+        }
+        if (bestG) return bestG;
+    }
+
     return '7';
 };
 
@@ -245,53 +298,66 @@ const ExamGenerator: React.FC = () => {
             const raw = localStorage.getItem('matrixFileSystem');
             if (!raw) return list;
             const fs = JSON.parse(raw);
-            if (Array.isArray(fs?.children)) {
-                fs.children.forEach((folder: any) => {
-                    if (folder.type === 'folder' && folder.matrixData?.matrix?.rows) {
-                        const mRows = folder.matrixData.matrix.rows;
-                        const sRows = folder.matrixData.specifications?.rows || [];
-                        const newRows = folder.matrixData.newFormatRows || {};
-                        const converted: ImportedMatrixData = {
+
+            const collectFoldersWithMatrix = (node: any) => {
+                if (!node) return;
+                if (node.type === 'folder' && node.matrixData?.matrix?.rows && node.matrixData.matrix.rows.length > 0) {
+                    const mRows = node.matrixData.matrix.rows;
+                    const sRows = node.matrixData.specifications?.rows || [];
+                    const newRows = node.matrixData.newFormatRows || {};
+                    const gradeMatch = String(node.name || '').match(/L[ớo]p\s*(\d+)|Kh[ốo]i\s*(\d+)|\b([6-9])\b/i);
+                    const lopDetected = gradeMatch ? (gradeMatch[1] || gradeMatch[2] || gradeMatch[3]) : undefined;
+                    const converted: ImportedMatrixData = {
+                        thongTinChung: {
+                            tenDe: node.name,
+                            ngayTao: new Date().toISOString(),
+                            matrixFormat: node.matrixData.matrixFormat || 'classic',
+                            useShortAnswer: node.matrixData.newPointsConfig?.useShortAnswer !== false,
+                            lop: lopDetected,
+                            khoi: lopDetected
+                        },
+                        chiTiet: mRows.map((row: any[], idx: number) => ({
                             thongTinChung: {
-                                tenDe: folder.name,
-                                ngayTao: new Date().toISOString(),
-                                matrixFormat: folder.matrixData.matrixFormat || 'classic',
-                                useShortAnswer: folder.matrixData.newPointsConfig?.useShortAnswer !== false
+                                stt: row[0],
+                                chuong: row[1],
+                                noiDung: row[2],
+                                bai: row[3] || row[2],
+                                soTiet: parseFloat(row[4]) || 0,
+                                daThi: row[14] === '1'
                             },
-                            chiTiet: mRows.map((row: any[], idx: number) => ({
-                                thongTinChung: {
-                                    stt: row[0],
-                                    chuong: row[1],
-                                    noiDung: row[2],
-                                    bai: row[3] || row[2],
-                                    soTiet: parseFloat(row[4]) || 0,
-                                    daThi: row[14] === '1'
-                                },
-                                yeuCauCanDat: sRows[idx] ? sRows[idx][4] : '',
-                                tracNghiem: {
-                                    NB: parseInt(row[5]) || 0,
-                                    TH: parseInt(row[7]) || 0,
-                                    VD: parseInt(row[9]) || 0,
-                                    VDC: parseInt(row[11]) || 0
-                                },
-                                tuLuan: {
-                                    NB: parseInt(row[6]) || 0,
-                                    TH: parseInt(row[8]) || 0,
-                                    VD: parseInt(row[10]) || 0,
-                                    VDC: parseInt(row[12]) || 0
-                                },
-                                chiTiet4Phan: newRows[idx] ? {
-                                    nhieuLuaChon: newRows[idx].mc,
-                                    dungSai: newRows[idx].tf,
-                                    traLoiNgan: newRows[idx].sa,
-                                    tuLuan: newRows[idx].essay
-                                } : undefined,
-                                tiLeDiem: parseFloat(row[13]) || 0
-                            }))
-                        };
-                        list.push({ name: folder.name, data: converted });
-                    }
-                });
+                            yeuCauCanDat: sRows[idx] ? sRows[idx][4] : '',
+                            tracNghiem: {
+                                NB: parseInt(row[5]) || 0,
+                                TH: parseInt(row[7]) || 0,
+                                VD: parseInt(row[9]) || 0,
+                                VDC: parseInt(row[11]) || 0
+                            },
+                            tuLuan: {
+                                NB: parseInt(row[6]) || 0,
+                                TH: parseInt(row[8]) || 0,
+                                VD: parseInt(row[10]) || 0,
+                                VDC: parseInt(row[12]) || 0
+                            },
+                            chiTiet4Phan: newRows[idx] ? {
+                                nhieuLuaChon: newRows[idx].mc,
+                                dungSai: newRows[idx].tf,
+                                traLoiNgan: newRows[idx].sa,
+                                tuLuan: newRows[idx].essay
+                            } : undefined,
+                            tiLeDiem: parseFloat(row[13]) || 0
+                        }))
+                    };
+                    list.push({ name: node.name, data: converted });
+                }
+                if (Array.isArray(node.children)) {
+                    node.children.forEach((c: any) => collectFoldersWithMatrix(c));
+                }
+            };
+
+            if (Array.isArray(fs?.children)) {
+                fs.children.forEach((c: any) => collectFoldersWithMatrix(c));
+            } else if (fs) {
+                collectFoldersWithMatrix(fs);
             }
         } catch {
             // ignore
@@ -784,19 +850,14 @@ const ExamGenerator: React.FC = () => {
 
     const applyMatrixData = (data: ImportedMatrixData) => {
         setImportedMatrix(data);
-        if (data.thongTinChung?.tenDe) {
-            const detectedG = detectGradeFromContext([], null, data);
-            setHeaderInfo(prev => ({
-                ...prev,
-                tenKyThi: data.thongTinChung.tenDe,
-                monHoc: `MÔN: TIN HỌC – LỚP ${detectedG}`
-            }));
-            // Đảm bảo nạp đầy đủ câu hỏi của khối tương ứng với Ma trận nếu bộ lọc trước đó đang ở khối khác
-            if (selectedGradeFilter !== 'all' && selectedGradeFilter !== detectedG) {
-                setSelectedGradeFilter(detectedG);
-                loadInternalQuestionBank(detectedG, false);
-            }
-        }
+        const detectedG = detectGradeFromContext([], null, data);
+        setHeaderInfo(prev => ({
+            ...prev,
+            tenKyThi: data.thongTinChung?.tenDe || prev.tenKyThi,
+            monHoc: `MÔN: TIN HỌC – LỚP ${detectedG}`
+        }));
+        setSelectedGradeFilter(detectedG);
+        loadInternalQuestionBank(detectedG, false);
     };
 
     const handleMatrixUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -860,27 +921,25 @@ const ExamGenerator: React.FC = () => {
             return m ? m[1].toLowerCase() : null;
         };
 
-        const targetGrade = detectGradeFromContext(bank, headerInfo, importedMatrix);
+        const targetGrade = detectGradeFromContext([], headerInfo, importedMatrix);
 
-        // Nếu state `bank` đang thiếu câu hỏi của khối mục tiêu (do lọc khối khác), lấy trực tiếp từ kho lưu trữ
+        // Lấy câu hỏi từ kho câu hỏi nội bộ cho đúng khối targetGrade
         let activeBank: BankQuestion[] = filterQuestionsByActiveCriteria(
-            bank.filter(q => !q.grade || String(q.grade) === targetGrade),
+            bank.filter(q => String(q.grade) === targetGrade),
             targetGrade
         ).valid;
         if (activeBank.length === 0) {
             const res = loadQuestionBank();
             if (res.data && res.data.length > 0) {
                 const tagged = splitLegacyTrueFalseQuestions(res.data.map(autoTagQuestion));
-                const byGrade = tagged.filter(q => !q.grade || String(q.grade) === targetGrade);
-                const validByCriteria = filterQuestionsByActiveCriteria(byGrade.length > 0 ? byGrade : tagged, targetGrade).valid;
+                const byGrade = tagged.filter(q => String(q.grade) === targetGrade);
+                const validByCriteria = filterQuestionsByActiveCriteria(byGrade, targetGrade).valid;
                 activeBank = validByCriteria.map(q => ({
                     ...q,
                     level: normalizeLevel(q.level),
                     lesson: q.lesson || 'Bài chung',
                     uniqueId: Math.random()
                 }));
-            } else {
-                activeBank = filterQuestionsByActiveCriteria(bank, targetGrade).valid;
             }
         }
 
@@ -958,6 +1017,11 @@ const ExamGenerator: React.FC = () => {
             subTopicName?: string,
             mainTopicName?: string
         ): boolean => {
+            // Ràng buộc nghiêm ngặt: Tuyệt đối không lấy câu hỏi của khối khác (ví dụ: đề khối 8 không bao giờ lấy câu hỏi khối 7)
+            if (q.grade && String(q.grade) !== String(targetGrade)) {
+                return false;
+            }
+
             const qLessonRaw = (q.lesson || '').trim();
             const qLessonNorm = normalizeTextKey(qLessonRaw);
             const qLessonCode = extractLessonCode(qLessonRaw);
@@ -1519,7 +1583,7 @@ const ExamGenerator: React.FC = () => {
         });
 
         let swappedCount = 0;
-        const targetG = detectGradeFromContext(bank, headerInfo, importedMatrix);
+        const targetG = detectGradeFromContext(generatedTest, headerInfo, importedMatrix);
         newTest.forEach((q, index) => {
             if (targetLevel && q.level !== targetLevel) return;
 
@@ -1590,7 +1654,7 @@ const ExamGenerator: React.FC = () => {
     };
 
     const swapQuestion = (q: BankQuestion) => {
-        const targetG = detectGradeFromContext(bank, headerInfo, importedMatrix);
+        const targetG = detectGradeFromContext(generatedTest, headerInfo, importedMatrix);
         const qLesson = q.lesson.toLowerCase().trim();
         const qType = getQuestionTypeKey(q);
         const qCKey = getCanonicalCriterionKeyForQuestion(q, targetG, q.lesson);
