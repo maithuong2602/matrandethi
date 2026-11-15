@@ -384,6 +384,18 @@ export const generateHsktExamWordHtml = (
     return generateExamWordHtml(hsktQuestions, headerWithHskt);
 };
 
+export const cleanQuestionContentForWord = (content: string): string => {
+    if (!content) return '';
+    let s = content.trim();
+    let prev = '';
+    while (s !== prev) {
+        prev = s;
+        s = s.replace(/^(?:Câu\s*\d+|Bài\s*\d+|\d+)\s*[.):\-]?\s*/i, '').trim();
+        s = s.replace(/^(?:\[\s*(?:Trắc\s*nghiệm[^\]]*|Đúng\s*[-–/]\s*Sai|Nhiều\s*đáp\s*án|Tự\s*luận|Trả\s*lời\s*ngắn|Điền\s*khuyết|TL|TN|TF_SCENARIO|NB|TH|VD|VDC|Nhận\s*biết|Thông\s*hiểu|Vận\s*dụng(?:\s*cao)?|\d+\.\d+)[^\]]*\]|\(\s*(?:Trắc\s*nghiệm[^)]*|Đúng\s*[-–/]\s*Sai|Nhiều\s*đáp\s*án|Tự\s*luận|Trả\s*lời\s*ngắn|Điền\s*khuyết|TL|TN|NB|TH|VD|VDC|Nhận\s*biết|Thông\s*hiểu|Vận\s*dụng(?:\s*cao)?|\d+\.\d+)[^)]*\))\s*/i, '').trim();
+    }
+    return s;
+};
+
 export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
     const isHsktExam = Boolean(headerInfo?.isHsktExam);
     const exportSection: 'both' | 'exam_only' | 'grading_only' = headerInfo?.exportSection || 'both';
@@ -746,7 +758,8 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
             const essayHtml = sec.questions.map((q) => {
                 const qNum = questionIndexMap.get(q) || 1;
                 const pointsStr = (q.points || 1.0).toFixed(1).replace('.', ',');
-                const lines = (q.content || '').split('\n');
+                const cleanText = cleanQuestionContentForWord(q.content || '');
+                const lines = cleanText.split('\n');
                 const firstLine = lines[0] || '';
                 const remainingLines = lines.slice(1);
 
@@ -779,11 +792,11 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                     const isScenario = /tình\s*huống/i.test(q.content || '') || /xác định tính đúng/i.test(q.content || '');
                     if (isScenario) {
                         tfScenarioCounter++;
-                        const cleanScenario = (q.content || '')
-                            .replace(/^Tình\s*huống\s*\d*\s*[:.]\s*/i, '')
-                            .replace(/\s*(?:Câu\s*\d+\s*[.):\-]?\s*)?Xác\s*định\s*tính\s*đúng\s*hoặc\s*sai\s*của\s*các\s*phát\s*biểu\s*sau\s*[:.]?\s*$/i, '')
-                            .trim()
-                            .replace(/\n/g, '<br/>');
+                        const cleanScenario = cleanQuestionContentForWord(
+                            (q.content || '')
+                                .replace(/^Tình\s*huống\s*\d*\s*[:.]\s*/i, '')
+                                .replace(/\s*(?:Câu\s*\d+\s*[.):\-]?\s*)?Xác\s*định\s*tính\s*đúng\s*hoặc\s*sai\s*của\s*các\s*phát\s*biểu\s*sau\s*[:.]?\s*$/i, '')
+                        ).trim().replace(/\n/g, '<br/>');
                         const subStatementsHtml = '<div style="margin-left: 0.5cm;">' + q.options.map((opt: any, sIdx: number) => {
                             const subLabel = ['a', 'b', 'c', 'd'][sIdx] || opt.id || String.fromCharCode(97 + sIdx);
                             return `<p style="padding: 2pt 0; font-size: 13pt; margin: 0; text-align: justify;">${String(subLabel).toLowerCase()}) ${opt.text}</p>`;
@@ -795,8 +808,7 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                         `;
                     } else {
                         // Câu hỏi Đúng/Sai trực tiếp hoặc Trắc nghiệm nhiều đáp án (cùng thuộc dạng Đúng - Sai)
-                        const cleanContent = (q.content || '')
-                            .replace(/^Câu\s*\d+\s*[.:]\s*/i, '')
+                        const cleanContent = cleanQuestionContentForWord(q.content || '')
                             .trim()
                             .replace(/\n/g, '<br/>');
                         const subStatementsHtml = '<div style="margin-left: 0.5cm;">' + q.options.map((opt: any, sIdx: number) => {
@@ -809,7 +821,7 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                         `;
                     }
                 }
-                const displayContent = (q.content || '').replace(/\n/g, '<br/>');
+                const displayContent = cleanQuestionContentForWord(q.content || '').replace(/\n/g, '<br/>');
                 return `<p style="margin-top: 6pt; margin-bottom: 0; font-size: 13pt; text-align: justify;"><strong>Câu ${qNum}.</strong> ${displayContent}</p>`;
             }).join('');
             examBodyHtml += tfHtml;
@@ -817,7 +829,7 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
             // single-choice, multiple-answer, short-answer
             const mcHtml = sec.questions.map((q) => {
                 const qNum = questionIndexMap.get(q) || 1;
-                const displayContent = (q.content || '').replace(/\n/g, '<br/>');
+                const displayContent = cleanQuestionContentForWord(q.content || '').replace(/\n/g, '<br/>');
                 const multiNote = sec.type === 'multiple-answer' ? ' <em style="font-weight: normal; font-size: 12pt; color: #333;">(Chọn các đáp án đúng)</em>' : '';
                 let questionHtml = `<p style="margin-top: 6pt; margin-bottom: 0; font-size: 13pt; text-align: justify;"><strong>Câu ${qNum}.</strong> ${displayContent}${multiNote}</p>`;
 

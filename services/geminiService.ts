@@ -206,6 +206,14 @@ export function cleanTextbookReferences(text: string): string {
     if (!text || typeof text !== 'string') return text || '';
     let s = text.trim();
 
+    // 0. Bóc sạch các nhãn tag dạng [Trắc nghiệm...], [Đúng/Sai], [NB], [TH], etc. ở đầu câu
+    let prevTag = '';
+    while (s !== prevTag) {
+        prevTag = s;
+        s = s.replace(/^(?:Câu\s*\d+|Bài\s*\d+|\d+)\s*[.):\-]?\s*/i, '').trim();
+        s = s.replace(/^(?:\[\s*(?:Trắc\s*nghiệm[^\]]*|Đúng\s*[-–/]\s*Sai|Nhiều\s*đáp\s*án|Tự\s*luận|Trả\s*lời\s*ngắn|TL|TN|TF_SCENARIO|NB|TH|VD|VDC|Nhận\s*biết|Thông\s*hiểu|Vận\s*dụng(?:\s*cao)?|\d+\.\d+)[^\]]*\]|\(\s*(?:Trắc\s*nghiệm[^)]*|Đúng\s*[-–/]\s*Sai|Nhiều\s*đáp\s*án|Tự\s*luận|Trả\s*lời\s*ngắn|TL|TN|NB|TH|VD|VDC|Nhận\s*biết|Thông\s*hiểu|Vận\s*dụng(?:\s*cao)?|\d+\.\d+)[^)]*\))\s*/i, '').trim();
+    }
+
     // 1. "Khi quan sát Hình X.Y" / "Quan sát Hình X.Y [và cho biết]"
     s = s.replace(/(?:Khi\s+)?quan\s+sát\s+Hình\s+\d+(?:\.\d+)?\s*(?:và\s+cho\s+biết\s*)?[:,-]?\s*/gi, '');
 
@@ -389,6 +397,14 @@ export const parseStructuredTextQuestions = (rawText: string): any[] => {
                 if (s.startsWith('[TF_SCENARIO]')) {
                     isScenarioTF = true;
                     s = s.replace(/^\[TF_SCENARIO\]\s*/, '').trim();
+                    matched = true;
+                }
+                const typeTagMatch = s.match(/^(?:\[\s*(?:Trắc\s*nghiệm(?:\s*1\s*đáp\s*án|\s*nhiều\s*đáp\s*án|\s*khách\s*quan)?|Đúng\s*[-–/]\s*Sai|Nhiều\s*đáp\s*án|Tự\s*luận|Trả\s*lời\s*ngắn|Điền\s*khuyết|TN|TL)\s*\]|\(\s*(?:Trắc\s*nghiệm(?:\s*1\s*đáp\s*án|\s*nhiều\s*đáp\s*án|\s*khách\s*quan)?|Đúng\s*[-–/]\s*Sai|Nhiều\s*đáp\s*án|Tự\s*luận|Trả\s*lời\s*ngắn|Điền\s*khuyết|TN|TL)\s*\))\s*/i);
+                if (typeTagMatch) {
+                    const rawType = typeTagMatch[0].toLowerCase();
+                    if (rawType.includes('tự luận') || rawType.includes('tl')) isExplicitEssay = true;
+                    if (rawType.includes('đúng') && rawType.includes('sai')) isScenarioTF = true;
+                    s = s.slice(typeTagMatch[0].length).trim();
                     matched = true;
                 }
                 const essayTag = s.match(/^(?:\[\s*(?:TL|Tự\s*luận)\s*\]|\(\s*(?:TL|Tự\s*luận)\s*\))\s*/i);

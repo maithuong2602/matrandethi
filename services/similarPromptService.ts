@@ -1,6 +1,7 @@
 import { ExerciseQuestion, QuestionSubtype, getQuestionSubtype, getQuestionSubtypeLabel } from '../types';
 import { parseStructuredTextQuestions, callGeminiWithFailover, cleanTextbookReferences } from './geminiService';
 import { generateOfflineQuestions } from './offlineQuestionGenerator';
+import { cleanQuestionContentForWord } from '../utils';
 
 export interface BankQuestion extends ExerciseQuestion {
     lesson: string;
@@ -79,12 +80,12 @@ export const buildSimilarQuestionPrompt = (
   + PHÂN BỐ ĐÚNG/SAI LINH HOẠT, TUYỆT ĐỐI KHÔNG RẬP KHUÔN 2 ĐÚNG 2 SAI:
     Có thể thiết kế: 3 phát biểu Sai - 1 phát biểu Đúng (3S - 1Đ); hoặc 3 phát biểu Đúng - 1 phát biểu Sai (3Đ - 1S); hoặc 2 Đúng - 2 Sai với vị trí đảo ngẫu nhiên.
     Luôn đảm bảo có cả phát biểu Đúng và phát biểu Sai (tối thiểu 1 Đúng, tối thiểu 1 Sai).`;
-            sampleFormat = `Câu ${index + 1}: [Đúng/Sai] [${q.level}] Tình huống: <Mô tả tình huống thực tế mới ngắn gọn>
+            sampleFormat = `Câu ${index + 1}: Tình huống: <Mô tả tình huống thực tế mới ngắn gọn, KHÔNG kèm nhãn tag trong ngoặc>
 Xác định tính đúng hoặc sai của các phát biểu sau:
-a) <Phát biểu a mới> [Đúng hoặc Sai]
-b) <Phát biểu b mới> [Đúng hoặc Sai]
-c) <Phát biểu c mới> [Đúng hoặc Sai]
-d) <Phát biểu d mới> [Đúng hoặc Sai]
+a) <Phát biểu a mới> [Đúng]
+b) <Phát biểu b mới> [Sai]
+c) <Phát biểu c mới> [Đúng]
+d) <Phát biểu d mới> [Sai]
 Đáp án: a-Đ, b-S, c-Đ, d-S (hoặc tỷ lệ 3Đ-1S, 3S-1Đ, 2Đ-2S tương ứng)`;
             break;
 
@@ -94,7 +95,7 @@ d) <Phát biểu d mới> [Đúng hoặc Sai]
   + ĐÚNG 4 lựa chọn A, B, C, D. Mọi lựa chọn phải kết thúc bằng dấu chấm (.).
   + PHÂN BỐ SỐ ĐÁP ÁN ĐÚNG: Thiết kế ĐÚNG 2 hoặc ĐÚNG 3 đáp án đúng trong 4 phương án A, B, C, D (ví dụ: A và C đúng; hoặc B, C, D đúng).
   + Đánh dấu dấu sao (*) trước chữ cái của các đáp án đúng (ví dụ: *A. ... và *C. ...).`;
-            sampleFormat = `Câu ${index + 1}: [Nhiều đáp án] [${q.level}] <Nội dung câu hỏi mới>
+            sampleFormat = `Câu ${index + 1}: <Nội dung câu hỏi trực tiếp, KHÔNG kèm nhãn tag trong ngoặc vuông>
 *A. <Lựa chọn A đúng>.
 B. <Lựa chọn B sai>.
 *C. <Lựa chọn C đúng>.
@@ -107,7 +108,7 @@ D. <Lựa chọn D sai>.
   + Dòng đầu tiên: Nêu bối cảnh / đề bài bài toán tự luận thực tế ngắn gọn.
   + ĐÚNG 4 ý hỏi đánh dấu: a) ..., b) ..., c) ..., d) ...
   + Hướng dẫn chấm: BẮT BUỘC gồm ĐÚNG 4 dòng tương ứng a), b), c), d) kèm biểu điểm chi tiết (mỗi ý 0,25 điểm, tổng 1,0 điểm).`;
-            sampleFormat = `Câu ${index + 1}: [Tự luận] [${q.level}] <Bối cảnh đề bài mới>
+            sampleFormat = `Câu ${index + 1}: <Bối cảnh đề bài mới, KHÔNG kèm nhãn tag trong ngoặc vuông>
 a) <Yêu cầu ý a>
 b) <Yêu cầu ý b>
 c) <Yêu cầu ý c>
@@ -123,7 +124,7 @@ d) <Đáp án chuẩn ý d> - 0,25 điểm.`;
             typeSpecificRule = `- BẮT BUỘC DẠNG TRẢ LỜI NGẮN:
   + Câu hỏi ngắn gọn, yêu cầu tính toán, xác định giá trị, đếm số lượng hoặc nêu thuật ngữ then chốt.
   + Đáp án là một số hoặc cụm từ ngắn gọn chính xác.`;
-            sampleFormat = `Câu ${index + 1}: [Trả lời ngắn] [${q.level}] <Nội dung câu hỏi mới>
+            sampleFormat = `Câu ${index + 1}: <Nội dung câu hỏi mới, KHÔNG kèm nhãn tag trong ngoặc vuông>
 Đáp án: <Giá trị số hoặc từ khóa ngắn gọn>`;
             break;
 
@@ -132,7 +133,7 @@ d) <Đáp án chuẩn ý d> - 0,25 điểm.`;
   + Câu hỏi ngắn gọn, trực diện, không dài dòng nhiều chữ.
   + ĐÚNG 4 lựa chọn A, B, C, D - DUY NHẤT 1 đáp án đúng. Mọi lựa chọn kết thúc bằng dấu chấm (.).
   + Đánh dấu dấu sao (*) trước phương án đúng duy nhất.`;
-            sampleFormat = `Câu ${index + 1}: [Trắc nghiệm 1 đáp án] [${q.level}] <Nội dung câu hỏi mới>
+            sampleFormat = `Câu ${index + 1}: <Nội dung câu hỏi trực tiếp, KHÔNG kèm nhãn tag trong ngoặc vuông>
 A. <Phương án A>.
 *B. <Phương án B đúng>.
 C. <Phương án C>.
@@ -180,6 +181,9 @@ QUY TẮC SƯ PHẠM CỐT LÕI (BẮT BUỘC TUÂN THỦ 100%):
 3. TUYỆT ĐỐI KHÔNG THAM CHIẾU VỊ TRÍ SGK:
    - CẤM các cụm từ: "Trong bảng...", "Ở Hình X.Y...", "Trong SGK...", "Theo bài học...".
    - Câu hỏi phải hoàn toàn độc lập (self-contained), học sinh làm bài không có sách giáo khoa trước mặt.
+4. ĐẶC BIỆT LƯU Ý KHI XUẤT CÂU HỎI (KHI XUẤT WORD CHỈ HIỂN THỊ CÂU HỎI):
+   - Sau "Câu X:" chỉ viết TRỰC TIẾP nội dung câu hỏi.
+   - TUYỆT ĐỐI KHÔNG gắn các nhãn tag trong ngoặc vuông như "[Trắc nghiệm 1 đáp án]", "[Đúng/Sai]", "[Nhiều đáp án]", "[Tự luận]", "[NB]", "[TH]", "[VD]", "[VDC]" vào nội dung câu hỏi. Khi xuất ra file Word làm đề kiểm tra, chỉ hiển thị duy nhất nội dung câu hỏi và các phương án.
 ${typeSpecificRule}
 
 ĐỊNH DẠNG ĐẦU RA YÊU CẦU (BẮT BUỘC TRẢ VỀ THEO CÚ PHÁP CHUẨN DƯỚI ĐÂY ĐỂ PHẦN MỀM TỰ ĐỘNG PHÂN TÍCH VÀ THAY THẾ VÀO ĐỀ):
@@ -252,20 +256,23 @@ QUY TẮC CỐT LÕI (BẮT BUỘC TUÂN THỦ 100%):
 3. CHỈ ĐỔI NGỮ CẢNH:
    - Thay đổi số liệu, tên biến, đối tượng, bối cảnh thực tế theo nguồn tài liệu cung cấp.
    - Câu hỏi ngắn gọn, trực diện, không dài dòng. Không tham chiếu SGK ("Trong SGK...", "Ở Hình X.Y...").
+4. ĐẶC BIỆT LƯU Ý KHI XUẤT CÂU HỎI (KHI XUẤT WORD CHỈ HIỂN THỊ CÂU HỎI):
+   - Sau "Câu X:" chỉ viết TRỰC TIẾP nội dung câu hỏi.
+   - TUYỆT ĐỐI KHÔNG gắn các nhãn tag trong ngoặc vuông như "[Trắc nghiệm 1 đáp án]", "[Đúng/Sai]", "[Nhiều đáp án]", "[Tự luận]", "[NB]", "[TH]", "[VD]", "[VDC]" vào nội dung câu hỏi. Đề thi xuất Word chỉ hiển thị thuần túy câu hỏi để học sinh làm bài.
 
 DANH SÁCH ${filteredIndexedQuestions.length} CÂU HỎI GỐC CẦN TẠO TƯƠNG TỰ:
 ${questionsListText}
 
 ĐỊNH DẠNG ĐẦU RA YÊU CẦU (BẮT BUỘC TRẢ VỀ ĐỦ TỪNG CÂU THEO CÚ PHÁP CHUẨN SAU ĐỂ HỆ THỐNG PARSE VÀ THAY THẾ TỰ ĐỘNG VÀO ĐÚNG VỊ TRÍ ĐỀ THI):
 
-Câu 1: [Trắc nghiệm 1 đáp án] [NB] <Nội dung câu 1...>
+Câu 1: <Nội dung câu 1 trực tiếp, không gắn nhãn trong ngoặc>
 A. <Phương án A>.
 *B. <Phương án B đúng>.
 C. <Phương án C>.
 D. <Phương án D>.
 Đáp án: B
 
-Câu 2: [Đúng/Sai] [TH] Tình huống: <Mô tả tình huống câu 2...>
+Câu 2: Tình huống: <Mô tả tình huống câu 2, không gắn nhãn trong ngoặc>
 Xác định tính đúng hoặc sai của các phát biểu sau:
 a) <Phát biểu a> [Đúng]
 b) <Phát biểu b> [Sai]
@@ -329,7 +336,7 @@ export const parseAndMapBulkSimilarQuestions = (
 
                 const mergedQ: BankQuestion = {
                     ...oldQ,
-                    content: parsedQ.content || oldQ.content,
+                    content: cleanQuestionContentForWord(parsedQ.content || oldQ.content),
                     options: parsedQ.options && parsedQ.options.length > 0 ? parsedQ.options : oldQ.options,
                     answer: parsedQ.answer || oldQ.answer,
                     level: parsedQ.level || oldQ.level,
@@ -351,7 +358,7 @@ export const parseAndMapBulkSimilarQuestions = (
                     const oldQ = updatedQuestions[targetIdx];
                     const mergedQ: BankQuestion = {
                         ...oldQ,
-                        content: parsedQ.content || oldQ.content,
+                        content: cleanQuestionContentForWord(parsedQ.content || oldQ.content),
                         options: parsedQ.options && parsedQ.options.length > 0 ? parsedQ.options : oldQ.options,
                         answer: parsedQ.answer || oldQ.answer,
                         level: parsedQ.level || oldQ.level,
@@ -382,7 +389,7 @@ export const parseAndMapBulkSimilarQuestions = (
 
                 const mergedQ: BankQuestion = {
                     ...oldQ,
-                    content: parsedQ.content || oldQ.content,
+                    content: cleanQuestionContentForWord(parsedQ.content || oldQ.content),
                     options: parsedQ.options && parsedQ.options.length > 0 ? parsedQ.options : oldQ.options,
                     answer: parsedQ.answer || oldQ.answer,
                     level: parsedQ.level || oldQ.level,
@@ -435,7 +442,7 @@ export const generateSimilarQuestionDirectAI = async (
                 const item = parsedList[0];
                 return {
                     ...q,
-                    content: cleanTextbookReferences(item.content),
+                    content: cleanQuestionContentForWord(cleanTextbookReferences(item.content)),
                     options: Array.isArray(item.options) ? item.options.map((o: any) => ({ ...o, text: cleanTextbookReferences(o.text) })) : q.options,
                     answer: item.answer || q.answer,
                     points: q.points,
@@ -450,7 +457,7 @@ export const generateSimilarQuestionDirectAI = async (
             const fallbackQ = qs[0] || {};
             return {
                 ...q,
-                content: cleanTextbookReferences(fallbackQ.content || q.content),
+                content: cleanQuestionContentForWord(cleanTextbookReferences(fallbackQ.content || q.content)),
                 options: Array.isArray(fallbackQ.options) ? fallbackQ.options.map((o: any) => ({ ...o, text: cleanTextbookReferences(o.text) })) : q.options,
                 answer: fallbackQ.answer || q.answer,
                 points: q.points,

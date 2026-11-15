@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
     buildSimilarQuestionPrompt,
     buildBulkSimilarExamPrompt,
@@ -6,6 +6,16 @@ import {
     formatQuestionOptionsAndAnswer
 } from '../services/similarPromptService';
 import { BankQuestion } from '../pages/ExamGenerator';
+import { cleanQuestionContentForWord, generateExamWordHtml } from '../utils';
+import {
+    getSavedSimilarExams,
+    saveSimilarExamDossier,
+    deleteSimilarExamDossier,
+    duplicateSimilarExamDossier,
+    exportSimilarExamBankJson,
+    importSimilarExamBankJson,
+    SIMILAR_EXAM_STORAGE_KEY
+} from '../services/similarExamService';
 
 describe('similarPromptService: Single and Bulk Similar Question Generation', () => {
     const mockQuestionSingle: BankQuestion = {
@@ -142,19 +152,134 @@ d) Biến đếm điều khiển số lần lặp chính xác - 0,25 điểm.
         expect(res.appliedCount).toBe(3);
         expect(res.updatedQuestions).toHaveLength(3);
 
-        // Check Câu 1 replaced in slot 0, keeping points = 0.25
-        expect(res.updatedQuestions[0].content).toContain('IBM PC ra đời năm 1981');
+        // Check Câu 1 replaced in slot 0, keeping points = 0.25 and NO tags in content
+        expect(res.updatedQuestions[0].content).toContain('Máy tính cá nhân IBM PC ra đời năm 1981');
+        expect(res.updatedQuestions[0].content).not.toContain('[Trắc nghiệm 1 đáp án]');
+        expect(res.updatedQuestions[0].content).not.toContain('[NB]');
         expect(res.updatedQuestions[0].points).toBe(0.25);
         expect(res.updatedQuestions[0].lesson).toBe('Bài 1: Lược sử công cụ tính toán');
 
-        // Check Câu 2 replaced in slot 1, keeping points = 0.25
-        expect(res.updatedQuestions[1].content).toContain('lưu trữ dữ liệu trên đám mây');
+        // Check Câu 2 replaced in slot 1, keeping points = 0.25 and NO tags in content
+        expect(res.updatedQuestions[1].content).toContain('Một doanh nghiệp triển khai');
+        expect(res.updatedQuestions[1].content).not.toContain('[Đúng/Sai]');
+        expect(res.updatedQuestions[1].content).not.toContain('[TH]');
         expect(res.updatedQuestions[1].points).toBe(0.25);
         expect(res.updatedQuestions[1].questionType).toBe('true-false');
 
-        // Check Câu 3 replaced in slot 2, keeping points = 1.0
-        expect(res.updatedQuestions[2].content).toContain('tổng các số chẵn từ 1 đến N');
+        // Check Câu 3 replaced in slot 2, keeping points = 1.0 and NO tags in content
+        expect(res.updatedQuestions[2].content).toContain('Em hãy viết thuật toán tính tổng các số chẵn từ 1 đến N');
+        expect(res.updatedQuestions[2].content).not.toContain('[Tự luận]');
+        expect(res.updatedQuestions[2].content).not.toContain('[VD]');
         expect(res.updatedQuestions[2].points).toBe(1.0);
         expect(res.updatedQuestions[2].category).toBe('essay');
+    });
+
+    it('6. cleanQuestionContentForWord removes all bracketed metadata and leading tags leaving pure question text', () => {
+        const rawContentWithTags = '[Trắc nghiệm 1 đáp án] [NB] Trong giới thiệu chiếc máy tính cơ khí Pascaline năm 1642...';
+        const cleaned = cleanQuestionContentForWord(rawContentWithTags);
+        expect(cleaned).toBe('Trong giới thiệu chiếc máy tính cơ khí Pascaline năm 1642...');
+        expect(cleaned).not.toContain('[Trắc nghiệm 1 đáp án]');
+        expect(cleaned).not.toContain('[NB]');
+
+        const rawTF = '[Đúng/Sai] [TH] Cho tình huống về an toàn thông tin mạng.';
+        expect(cleanQuestionContentForWord(rawTF)).toBe('Cho tình huống về an toàn thông tin mạng.');
+
+        const rawMultipleAns = '[Trắc nghiệm nhiều đáp án] [VD] Những phương án nào sau đây đúng?';
+        expect(cleanQuestionContentForWord(rawMultipleAns)).toBe('Những phương án nào sau đây đúng?');
+
+        const rawWithPrefix = 'Câu 1: [Nhận biết] Khái niệm hệ điều hành là:';
+        expect(cleanQuestionContentForWord(rawWithPrefix)).toBe('Khái niệm hệ điều hành là:');
+    });
+
+    it('7. generateExamWordHtml produces clean question text without [Trắc nghiệm 1 đáp án] tags in Word document', () => {
+        const dirtyQuestion: BankQuestion = {
+            ...mockQuestionSingle,
+            content: '[Trắc nghiệm 1 đáp án] [NB] Trong giới thiệu chiếc máy tính cơ khí Pascaline năm 1642, nhà khoa học Pascal đã chế tạo nhằm mục đích gì?'
+        };
+
+        const wordHtml = generateExamWordHtml(
+            [dirtyQuestion],
+            [],
+            'Trường THCS A',
+            'ĐỀ KIỂM TRA CUỐI HỌC KỲ I',
+            'Tin học',
+            '8',
+            '45 phút',
+            '2024-2025',
+            '101'
+        );
+
+        // Word output must NOT contain [Trắc nghiệm 1 đáp án] or [NB] in question body
+        expect(wordHtml).not.toContain('[Trắc nghiệm 1 đáp án]');
+        expect(wordHtml).not.toContain('[NB]');
+        expect(wordHtml).toContain('Trong giới thiệu chiếc máy tính cơ khí Pascaline năm 1642');
+    });
+
+    describe('Separate Similar Exam Repository (Kho Đề Tương Tự)', () => {
+        beforeEach(() => {
+            localStorage.clear();
+        });
+
+        it('8. saves to separate similar exam storage key and isolates from main exam bank', () => {
+            const similarDossier = {
+                id: 'similar-exam-001',
+                title: 'ĐỀ THI TƯƠNG TỰ SỐ 1 - TIN HỌC 8 CUỐI KỲ I',
+                grade: '8',
+                term: 'CK1',
+                questions: [mockQuestionSingle, mockQuestionTF],
+                createdAt: new Date().toISOString()
+            };
+
+            // Save to Similar repository
+            saveSimilarExamDossier(similarDossier as any);
+
+            // Verify it is present in similar exam storage
+            const similarList = getSavedSimilarExams();
+            expect(similarList).toHaveLength(1);
+            expect(similarList[0].id).toBe('similar-exam-001');
+
+            // Verify it does NOT touch the main exam bank key
+            const mainBankRaw = localStorage.getItem('matrandethi_saved_exams');
+            expect(mainBankRaw).toBeNull();
+        });
+
+        it('9. supports duplicate, delete, and JSON export/import on similar exam repository', () => {
+            const original = {
+                id: 'sim-1',
+                title: 'Đề Tương Tự Lớp 8',
+                grade: '8',
+                term: 'CK1',
+                questions: [mockQuestionSingle],
+                createdAt: new Date().toISOString()
+            };
+            saveSimilarExamDossier(original as any);
+
+            // Duplicate
+            const dup = duplicateSimilarExamDossier('sim-1');
+            expect(dup).not.toBeNull();
+            expect(dup?.title).toContain('Bản sao');
+
+            let all = getSavedSimilarExams();
+            expect(all).toHaveLength(2);
+
+            // Delete original
+            deleteSimilarExamDossier('sim-1');
+            all = getSavedSimilarExams();
+            expect(all).toHaveLength(1);
+            expect(all[0].id).toBe(dup?.id);
+
+            // Export to JSON string
+            const jsonStr = exportSimilarExamBankJson();
+            expect(jsonStr).toContain('Bản sao');
+
+            // Clear and re-import
+            localStorage.clear();
+            expect(getSavedSimilarExams()).toHaveLength(0);
+
+            const importResult = importSimilarExamBankJson(jsonStr);
+            expect(importResult.success).toBe(true);
+            expect(importResult.addedCount).toBe(1);
+            expect(getSavedSimilarExams()).toHaveLength(1);
+        });
     });
 });

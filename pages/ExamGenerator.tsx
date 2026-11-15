@@ -9,6 +9,7 @@ import { ExerciseQuestion, ImportedMatrixData, ExamVariant, ExamReviewResult, Sa
 import {
     generateExamWordHtml,
     generateHsktExamWordHtml,
+    cleanQuestionContentForWord,
     buildHsktExamQuestions,
     getDefaultHsktQuestionIds,
     generateAzotaKeyHtml,
@@ -49,6 +50,15 @@ import {
     approveExam
 } from '../services/examApprovalService';
 import { getCurrentUser, canApproveExam } from '../services/authService';
+import {
+    getSavedSimilarExams,
+    saveSimilarExamDossier,
+    deleteSimilarExamDossier,
+    duplicateSimilarExamDossier,
+    exportSimilarExamBankJson,
+    importSimilarExamBankJson,
+    subscribeSimilarExamChange
+} from '../services/similarExamService';
 
 export const detectGradeFromContext = (questions?: any[], headerInfo?: any, importedMatrix?: any): string => {
     // 1. Ma trận được chọn (importedMatrix) luôn có độ ưu tiên cao nhất khi tạo/cấu hình đề từ Ma trận
@@ -216,12 +226,19 @@ const ExamGenerator: React.FC = () => {
     const swapMenuRef = useRef<HTMLDivElement>(null);
     const [toastMsg, setToastMsg] = useState<string | null>(null);
 
-    // Exam Bank (Ngân hàng Đề thi) State
+    // Exam Bank (Ngân hàng Đề thi Gốc) State
     const [currentDossierId, setCurrentDossierId] = useState<string | null>(null);
     const [allSavedExams, setAllSavedExams] = useState<SavedExamDossier[]>(getSavedExams());
     const [showDossierRepoModal, setShowDossierRepoModal] = useState<boolean>(false);
     const [examGradeFilter, setExamGradeFilter] = useState<string>('all');
     const [examSearchQuery, setExamSearchQuery] = useState<string>('');
+
+    // Similar Exam Bank (Kho Đề Thi Tương Tự Riêng Biệt - AI Generated) State
+    const [currentSimilarDossierId, setCurrentSimilarDossierId] = useState<string | null>(null);
+    const [allSavedSimilarExams, setAllSavedSimilarExams] = useState<SavedExamDossier[]>(getSavedSimilarExams());
+    const [showSimilarRepoModal, setShowSimilarRepoModal] = useState<boolean>(false);
+    const [similarGradeFilter, setSimilarGradeFilter] = useState<string>('all');
+    const [similarSearchQuery, setSimilarSearchQuery] = useState<string>('');
 
     // Similar Question Modal (Single)
     const [similarModalQuestion, setSimilarModalQuestion] = useState<{ q: BankQuestion; index: number } | null>(null);
@@ -313,8 +330,10 @@ const ExamGenerator: React.FC = () => {
     useEffect(() => {
         loadInternalQuestionBank('all', false);
         const unsubExam = subscribeExamChange(() => setAllSavedExams(getSavedExams()));
+        const unsubSimilar = subscribeSimilarExamChange(() => setAllSavedSimilarExams(getSavedSimilarExams()));
         return () => {
             unsubExam();
+            unsubSimilar();
         };
     }, []);
 
@@ -572,6 +591,113 @@ const ExamGenerator: React.FC = () => {
         e.target.value = '';
     };
 
+    // --- SIMILAR EXAM BANK (KHO ĐỀ THI TƯƠNG TỰ RIÊNG BIỆT) HANDLERS ---
+    const handleSaveToSimilarBank = () => {
+        if (generatedTest.length === 0) {
+            showNotice('Chưa có câu hỏi nào trong đề thi để lưu.');
+            return;
+        }
+        const gradeVal = detectGradeFromContext(generatedTest, headerInfo, importedMatrix);
+        let titleVal = (customFileName || buildDefaultFileName(generatedTest, headerInfo, teacherName, importedMatrix)).trim();
+        if (!titleVal.toLowerCase().includes('tương tự') && !titleVal.toLowerCase().includes('biến thể')) {
+            titleVal = `${titleVal} (Đề tương tự)`;
+        }
+
+        const saved = saveSimilarExamDossier({
+            id: currentSimilarDossierId || undefined,
+            title: titleVal,
+            grade: gradeVal,
+            status: 'approved',
+            questions: generatedTest,
+            variants: variants,
+            matrixData: importedMatrix,
+            headerInfo: headerInfo,
+            teacherName: teacherName || 'Giáo viên',
+            aiReviewScore: reviewResult?.overallScore,
+            aiReviewSummary: reviewResult?.verdict
+        });
+
+        setCurrentSimilarDossierId(saved.id);
+        setCustomFileName(saved.title);
+        setIsFileNameManuallyEdited(true);
+        showNotice(`Đã lưu thành công vào Kho Đề Tương Tự riêng biệt (không lẫn vào Đề Gốc)!`);
+    };
+
+    const handleLoadSimilarDossier = (dossier: SavedExamDossier) => {
+        setCurrentSimilarDossierId(dossier.id);
+        setCurrentDossierId(null);
+        if (dossier.teacherName) setTeacherName(dossier.teacherName);
+        if (dossier.headerInfo) setHeaderInfo(dossier.headerInfo);
+        if (dossier.title) {
+            setCustomFileName(dossier.title);
+            setIsFileNameManuallyEdited(true);
+        }
+        if (dossier.matrixData) setImportedMatrix(dossier.matrixData);
+        if (Array.isArray(dossier.questions) && dossier.questions.length > 0) {
+            const normalizedQs = normalizeExamQuestionPoints(dossier.questions);
+            setGeneratedTest(normalizedQs);
+            setHsktSelectedIds(getDefaultHsktQuestionIds(normalizedQs, dossier.headerInfo || headerInfo));
+            setStep('review');
+            showNotice(`Đã mở đề tương tự "${dossier.title}" từ Kho riêng!`);
+        } else {
+            showNotice('Đề thi này chưa có danh sách câu hỏi.');
+        }
+        setShowSimilarRepoModal(false);
+    };
+
+    const handleDeleteSimilarDossier = (id: string, e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (window.confirm('Bạn có chắc muốn xóa đề thi này khỏi Kho Đề Tương Tự?')) {
+            deleteSimilarExamDossier(id);
+            if (currentSimilarDossierId === id) {
+                setCurrentSimilarDossierId(null);
+            }
+            showNotice('Đã xóa đề thi khỏi Kho Đề Tương Tự.');
+        }
+    };
+
+    const handleDuplicateSimilarDossier = (id: string, e: React.MouseEvent) => {
+        e.stopPropagation();
+        const cloned = duplicateSimilarExamDossier(id);
+        if (cloned) {
+            showNotice(`Đã nhân bản đề tương tự thành "${cloned.title}"`);
+        }
+    };
+
+    const handleExportSimilarBank = (singleId?: string, e?: React.MouseEvent) => {
+        if (e) e.stopPropagation();
+        const jsonStr = exportSimilarExamBankJson(singleId);
+        const blob = new Blob([jsonStr], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const dateStr = new Date().toISOString().slice(0, 10);
+        a.href = url;
+        a.download = singleId ? `DeTuongTu_${singleId}.json` : `Kho_DeThi_TuongTu_${dateStr}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showNotice('Đã xuất Kho Đề Tương Tự (.json) thành công!');
+    };
+
+    const handleImportSimilarBankFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            const content = ev.target?.result as string;
+            if (!content) return;
+            const res = importSimilarExamBankJson(content);
+            if (res.success) {
+                showNotice(`Đã nhập Kho Đề Tương Tự (Thêm mới: ${res.addedCount}, Cập nhật: ${res.updatedCount})!`);
+            } else {
+                alert(res.error || 'Lỗi nhập tệp Kho Đề Tương Tự.');
+            }
+        };
+        reader.readAsText(file);
+        e.target.value = '';
+    };
+
     const [bulkPoints, setBulkPoints] = useState(0.25);
     const [bulkPointsTL, setBulkPointsTL] = useState(1.0);
 
@@ -751,6 +877,16 @@ const ExamGenerator: React.FC = () => {
             return matchGrade && matchQuery;
         });
     }, [allSavedExams, examGradeFilter, examSearchQuery]);
+
+    // Filtered Saved Similar Exams
+    const filteredSavedSimilarExams = useMemo(() => {
+        return allSavedSimilarExams.filter(exam => {
+            const matchGrade = similarGradeFilter === 'all' || String(exam.grade) === similarGradeFilter;
+            const q = similarSearchQuery.trim().toLowerCase();
+            const matchQuery = !q || exam.title.toLowerCase().includes(q) || (exam.headerInfo?.tenKyThi || '').toLowerCase().includes(q);
+            return matchGrade && matchQuery;
+        });
+    }, [allSavedSimilarExams, similarGradeFilter, similarSearchQuery]);
 
     // --- STEP 1: UPLOAD OR LOAD QUESTION BANK ---
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2335,7 +2471,16 @@ const ExamGenerator: React.FC = () => {
                         className="px-3.5 py-2 bg-blue-50 hover:bg-blue-100 text-primary border border-blue-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
                     >
                         <FileBox size={15} />
-                        Kho Đề Đã Lưu ({allSavedExams.length})
+                        Kho Đề Gốc ({allSavedExams.length})
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setShowSimilarRepoModal(true)}
+                        className="px-3.5 py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
+                        title="Mở Kho lưu trữ Đề thi tương tự riêng biệt (không lẫn đề gốc)"
+                    >
+                        <Sparkles size={15} className="text-purple-600" />
+                        Kho Đề Tương Tự ({allSavedSimilarExams.length})
                     </button>
                 </div>
             </header>
@@ -2723,9 +2868,17 @@ const ExamGenerator: React.FC = () => {
                                         type="button"
                                         onClick={handleSaveToExamBank}
                                         className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-primary border border-blue-200 rounded-xl text-xs font-bold flex items-center gap-1 shrink-0 cursor-pointer"
-                                        title="Lưu đề thi này vào Kho Đề"
+                                        title="Lưu đề thi này vào Kho Đề Gốc"
                                     >
-                                        <FolderCheck size={14} /> {currentDossierId ? 'Cập nhật Kho' : 'Lưu Kho Đề'}
+                                        <FolderCheck size={14} /> {currentDossierId ? 'Cập nhật Kho Gốc' : 'Lưu Kho Đề Gốc'}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={handleSaveToSimilarBank}
+                                        className="px-3 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 rounded-xl text-xs font-bold flex items-center gap-1 shrink-0 cursor-pointer shadow-2xs"
+                                        title="Lưu đề thi này vào Kho Đề Tương Tự riêng biệt (không lẫn đề gốc)"
+                                    >
+                                        <Sparkles size={14} className="text-purple-600" /> {currentSimilarDossierId ? 'Cập nhật Kho Đề Tương Tự' : 'Lưu Kho Đề Tương Tự'}
                                     </button>
                                 </div>
                             </div>
@@ -3132,17 +3285,19 @@ const ExamGenerator: React.FC = () => {
                                                             <strong className="text-indigo-950">
                                                                 Tình huống {arr.slice(0, idx + 1).filter(item => item.questionType === 'true-false').length}:
                                                             </strong>{' '}
-                                                            {(q.content || '')
-                                                                .replace(/^Tình\s*huống\s*\d*\s*[:.]\s*/i, '')
-                                                                .replace(/\s*(?:Câu\s*\d+\s*[.):\-]?\s*)?Xác\s*định\s*tính\s*đúng\s*hoặc\s*sai\s*của\s*các\s*phát\s*biểu\s*sau\s*[:.]?\s*$/i, '')
-                                                                .trim()}
+                                                            {cleanQuestionContentForWord(
+                                                                (q.content || '')
+                                                                    .replace(/^Tình\s*huống\s*\d*\s*[:.]\s*/i, '')
+                                                                    .replace(/\s*(?:Câu\s*\d+\s*[.):\-]?\s*)?Xác\s*định\s*tính\s*đúng\s*hoặc\s*sai\s*của\s*các\s*phát\s*biểu\s*sau\s*[:.]?\s*$/i, '')
+                                                                    .trim()
+                                                            )}
                                                         </p>
                                                         <p className="font-bold text-gray-900">
                                                             Câu {idx + 1}. Xác định tính đúng hoặc sai của các phát biểu sau:
                                                         </p>
                                                     </div>
                                                 ) : (
-                                                    <p className="text-gray-800 text-sm font-medium whitespace-pre-wrap">{q.content}</p>
+                                                    <p className="text-gray-800 text-sm font-medium whitespace-pre-wrap">{cleanQuestionContentForWord(q.content)}</p>
                                                 )}
 
                                                 {q.image && (
@@ -3822,6 +3977,153 @@ const ExamGenerator: React.FC = () => {
                 </div>
             )}
 
+            {/* SIMILAR EXAM BANK MODAL (KHO ĐỀ THI TƯƠNG TỰ RIÊNG BIỆT - AI GENERATED) */}
+            {showSimilarRepoModal && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-purple-100">
+                        <div className="p-5 border-b flex justify-between items-center bg-gradient-to-r from-purple-50 via-indigo-50/40 to-white">
+                            <div>
+                                <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                                    <Sparkles className="text-purple-600" size={22} /> Kho Đề Thi Tương Tự (Biến Thể AI) ({allSavedSimilarExams.length})
+                                </h3>
+                                <p className="text-xs text-purple-700 mt-0.5 font-medium">
+                                    Kho lưu trữ độc lập dành riêng cho các đề thi tương tự/song song được tạo từ AI, tách biệt hoàn toàn với Ngân hàng Đề thi Gốc.
+                                </p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => handleExportSimilarBank()}
+                                    className="px-3 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                                >
+                                    <Download size={13} className="text-purple-600" /> Xuất Kho Đề (.json)
+                                </button>
+                                <label className="px-3 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer">
+                                    <Upload size={13} className="text-indigo-600" /> Nhập Đề (.json)
+                                    <input type="file" accept=".json" onChange={handleImportSimilarBankFile} className="hidden" />
+                                </label>
+                                <button onClick={() => setShowSimilarRepoModal(false)} className="text-gray-400 hover:text-gray-600 ml-2 cursor-pointer">
+                                    <X size={20} />
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Filter by Grade & Search */}
+                        <div className="px-5 py-3 border-b bg-white flex flex-wrap items-center justify-between gap-3">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                                {[
+                                    { id: 'all', label: 'Tất cả' },
+                                    { id: '6', label: 'Khối 6' },
+                                    { id: '7', label: 'Khối 7' },
+                                    { id: '8', label: 'Khối 8' },
+                                    { id: '9', label: 'Khối 9' },
+                                ].map(tab => (
+                                    <button
+                                        key={tab.id}
+                                        onClick={() => setSimilarGradeFilter(tab.id)}
+                                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                                            similarGradeFilter === tab.id
+                                                ? 'bg-purple-600 text-white shadow-2xs'
+                                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                        }`}
+                                    >
+                                        {tab.label}
+                                    </button>
+                                ))}
+                            </div>
+                            <div className="relative w-full sm:w-64">
+                                <Search size={14} className="absolute left-3 top-2.5 text-gray-400" />
+                                <input
+                                    type="text"
+                                    placeholder="Tìm tên đề tương tự..."
+                                    value={similarSearchQuery}
+                                    onChange={(e) => setSimilarSearchQuery(e.target.value)}
+                                    className="w-full pl-8 pr-3 py-1.5 border border-purple-200 rounded-xl text-xs outline-none focus:border-purple-600"
+                                />
+                            </div>
+                        </div>
+
+                        {/* Content List */}
+                        <div className="flex-1 overflow-y-auto p-5 space-y-3">
+                            {filteredSavedSimilarExams.map(dossier => (
+                                <div
+                                    key={dossier.id}
+                                    className="p-4 bg-white border border-purple-100 rounded-xl hover:border-purple-300 hover:shadow-xs transition-all flex flex-wrap items-center justify-between gap-4"
+                                >
+                                    <div className="flex-1 min-w-[260px]">
+                                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                            <span className="text-xs bg-purple-50 text-purple-700 px-2.5 py-0.5 rounded-md font-bold border border-purple-200">
+                                                Khối {dossier.grade || '7'}
+                                            </span>
+                                            <span className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-md font-semibold">
+                                                {dossier.questions?.length || 0} câu hỏi
+                                            </span>
+                                            <span className="text-[11px] bg-gradient-to-r from-purple-100 to-indigo-100 text-purple-800 border border-purple-200 px-2 py-0.5 rounded-md font-bold">
+                                                ✨ Kho Đề Tương Tự
+                                            </span>
+                                            <span className="text-xs text-gray-400">
+                                                Lưu ngày: {new Date(dossier.updatedAt || dossier.createdAt).toLocaleDateString('vi-VN')}
+                                            </span>
+                                        </div>
+                                        <h4 className="text-sm font-bold text-gray-900">{dossier.title}</h4>
+                                        <p className="text-xs text-gray-500 mt-0.5">
+                                            {dossier.headerInfo?.tenKyThi} • {dossier.headerInfo?.tenTruong}
+                                        </p>
+                                    </div>
+
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <button
+                                            onClick={() => handleLoadSimilarDossier(dossier)}
+                                            className="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs"
+                                        >
+                                            Mở Đề Này
+                                        </button>
+                                        <button
+                                            onClick={(e) => handleQuickWordDownloadFromBank(dossier, e)}
+                                            className="px-3 py-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-xl text-xs font-bold flex items-center gap-1 transition-all cursor-pointer"
+                                        >
+                                            <Download size={13} /> Word
+                                        </button>
+                                        <button
+                                            onClick={(e) => handleDuplicateSimilarDossier(dossier.id, e)}
+                                            className="p-1.5 text-gray-500 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-colors cursor-pointer"
+                                            title="Nhân bản"
+                                        >
+                                            <Copy size={15} />
+                                        </button>
+                                        <button
+                                            onClick={(e) => handleDeleteSimilarDossier(dossier.id, e)}
+                                            className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                            title="Xóa khỏi kho đề tương tự"
+                                        >
+                                            <Trash2 size={15} />
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+
+                            {filteredSavedSimilarExams.length === 0 && (
+                                <div className="text-center py-12 text-gray-400 text-sm">
+                                    Chưa có đề thi tương tự nào được lưu trong Kho riêng này.
+                                    <div className="text-xs text-gray-500 mt-1">
+                                        Sau khi tạo đề tương tự, bấm nút <strong>"Lưu Kho Đề Tương Tự"</strong> trên thanh công cụ để lưu vào đây.
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="p-4 bg-gray-50 border-t flex justify-end">
+                            <button
+                                onClick={() => setShowSimilarRepoModal(false)}
+                                className="px-5 py-2 bg-gray-200 text-gray-700 font-bold rounded-xl text-xs hover:bg-gray-300 cursor-pointer"
+                            >
+                                Đóng
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* SIMILAR QUESTION MODAL (SINGLE QUESTION) */}
             {similarModalQuestion && (
                 <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
@@ -4111,9 +4413,21 @@ const ExamGenerator: React.FC = () => {
                                 <button
                                     type="button"
                                     onClick={handleApplyBulkSimilar}
-                                    className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
+                                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
+                                    title="Thay thế vào đúng vị trí từng câu trong đề đang xem"
                                 >
-                                    <Check size={14} /> 📥 Phân tích & Thay thế hàng loạt (Giữ nguyên vị trí)
+                                    <Check size={14} /> 📥 Phân tích & Thay thế
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        handleApplyBulkSimilar();
+                                        setTimeout(() => handleSaveToSimilarBank(), 300);
+                                    }}
+                                    className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
+                                    title="Thay thế và lưu ngay vào Kho Đề Tương Tự riêng biệt (không lẫn đề gốc)"
+                                >
+                                    <Sparkles size={14} /> 💾 Thay thế & Lưu Kho Đề Tương Tự
                                 </button>
                             </div>
                         </div>
