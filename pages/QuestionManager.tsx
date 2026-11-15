@@ -1172,7 +1172,7 @@ const QuestionManager: React.FC = () => {
       };
       const typeNames: Record<string, string> = {
           'multiple-choice': 'Trắc nghiệm nhiều lựa chọn (4 phương án A, B, C, D - chỉ 1 phương án đúng)',
-          'multiple-answer': 'Trắc nghiệm nhiều đáp án (4 phương án A, B, C, D - có từ 2 phương án đúng trở lên)',
+          'multiple-answer': 'Trắc nghiệm Đúng - Sai (Nhiều đáp án đúng - đánh giá tính đúng sai của từng phương án)',
           'true-false': 'Trắc nghiệm Đúng / Sai theo Tình huống (Mỗi câu gồm 1 Tình huống cụ thể và 4 phát biểu a, b, c, d)',
           'short-answer': 'Trắc nghiệm Trả lời ngắn',
           'fill-blank': 'Trắc nghiệm Điền khuyết / Trả lời ngắn',
@@ -2004,11 +2004,17 @@ ${formatExample}`;
                                         }
                                     }}
                                 >
-                                    <option value="multiple-choice">Trắc nghiệm 4 chọn 1 (Phần I)</option>
-                                    <option value="multiple-answer">Trắc nghiệm nhiều đáp án</option>
-                                    <option value="true-false">Trắc nghiệm Đúng / Sai (Tình huống + 4 ý a, b, c, d)</option>
-                                    <option value="short-answer">Trắc nghiệm Trả lời ngắn (Phần III - 2025)</option>
-                                    <option value="fill-blank">Điền khuyết từ</option>
+                                    <optgroup label="Phần I: Trắc nghiệm 1 đáp án">
+                                        <option value="multiple-choice">Trắc nghiệm 4 chọn 1 (Phần I)</option>
+                                    </optgroup>
+                                    <optgroup label="Phần II: Trắc nghiệm Đúng / Sai (1 dạng chung)">
+                                        <option value="true-false">Trắc nghiệm Đúng / Sai (Tình huống + 4 ý a, b, c, d)</option>
+                                        <option value="multiple-answer">Trắc nghiệm Đúng / Sai (Nhiều đáp án đúng)</option>
+                                    </optgroup>
+                                    <optgroup label="Phần III: Trả lời ngắn / Điền khuyết">
+                                        <option value="short-answer">Trắc nghiệm Trả lời ngắn (Phần III - 2025)</option>
+                                        <option value="fill-blank">Điền khuyết từ</option>
+                                    </optgroup>
                                 </select>
                             </div>
 
@@ -2792,11 +2798,17 @@ ${formatExample}`;
                         >
                             {activeSection === 'mc' ? (
                                 <>
-                                    <option value="multiple-choice">Trắc nghiệm nhiều lựa chọn (Phần I - 4 chọn 1)</option>
-                                    <option value="multiple-answer">Trắc nghiệm nhiều đáp án (Chọn từ 2 đáp án đúng trở lên)</option>
-                                    <option value="true-false">Trắc nghiệm Đúng / Sai (Tình huống + 4 ý a, b, c, d)</option>
-                                    <option value="short-answer">Trắc nghiệm Trả lời ngắn (Phần III - Chuẩn 2025)</option>
-                                    <option value="fill-blank">Điền khuyết / Khuyết từ</option>
+                                    <optgroup label="Phần I: Trắc nghiệm 1 đáp án (Nhiều lựa chọn)">
+                                        <option value="multiple-choice">Trắc nghiệm nhiều lựa chọn (Phần I - 4 chọn 1)</option>
+                                    </optgroup>
+                                    <optgroup label="Phần II: Trắc nghiệm Đúng / Sai (1 dạng chung)">
+                                        <option value="true-false">Trắc nghiệm Đúng / Sai (Tình huống + 4 ý a, b, c, d)</option>
+                                        <option value="multiple-answer">Trắc nghiệm Đúng / Sai (Nhiều đáp án đúng)</option>
+                                    </optgroup>
+                                    <optgroup label="Phần III: Trả lời ngắn / Khuyết từ">
+                                        <option value="short-answer">Trắc nghiệm Trả lời ngắn (Phần III - Chuẩn 2025)</option>
+                                        <option value="fill-blank">Điền khuyết / Khuyết từ</option>
+                                    </optgroup>
                                 </>
                             ) : (
                                 <option value="essay">Tự luận (Kèm barem chấm chi tiết)</option>

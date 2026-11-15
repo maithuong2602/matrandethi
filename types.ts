@@ -95,8 +95,8 @@ export const getQuestionSubtype = (q: any): QuestionSubtype => {
 export const getQuestionSubtypeLabel = (subtype: QuestionSubtype): string => {
   switch (subtype) {
     case 'single-choice': return 'Trắc nghiệm 1 đáp án';
-    case 'multiple-answer': return 'Trắc nghiệm nhiều đáp án';
-    case 'true-false': return 'Trắc nghiệm Đúng - Sai';
+    case 'multiple-answer': return 'Trắc nghiệm Đúng - Sai (Nhiều đáp án)';
+    case 'true-false': return 'Trắc nghiệm Đúng - Sai (Tình huống)';
     case 'short-answer': return 'Trả lời ngắn';
     case 'essay': return 'Tự luận';
   }

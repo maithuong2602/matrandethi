@@ -302,10 +302,10 @@ export const buildHsktExamQuestions = (
         const sub = getQuestionSubtype(q);
         switch (sub) {
             case 'single-choice': return 1;
-            case 'multiple-answer': return 2;
-            case 'true-false': return 3;
-            case 'short-answer': return 4;
-            default: return 5;
+            case 'multiple-answer': return 2; // Cùng thuộc dạng Đúng - Sai (Phần II)
+            case 'true-false': return 2; // Dạng Đúng - Sai (Phần II)
+            case 'short-answer': return 3;
+            default: return 4;
         }
     };
 
@@ -598,21 +598,15 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
         });
     }
 
-    if (multipleAnswerQuestions.length > 0) {
-        sections.push({
-            type: 'multiple-answer',
-            questions: multipleAnswerQuestions,
-            points: totalMultipleAnswerPoints,
-            title: `PHẦN ${romanNumerals[currentRomanIdx++]}. CÂU HỎI TRẮC NGHIỆM NHIỀU ĐÁP ÁN`,
-            instruction: 'Thí sinh chọn tất cả các phương án đúng (có thể có nhiều hơn 01 đáp án đúng) và điền vào bảng trả lời bên dưới:'
-        });
-    }
+    // Gộp câu hỏi nhiều đáp án đúng vào dạng Đúng - Sai (Phần II) theo quy định Bộ GD&ĐT
+    const combinedTfQuestions = [...multipleAnswerQuestions, ...trueFalseQuestions];
+    const totalTfPoints = totalMultipleAnswerPoints + totalTrueFalsePoints;
 
-    if (trueFalseQuestions.length > 0) {
+    if (combinedTfQuestions.length > 0) {
         sections.push({
             type: 'true-false',
-            questions: trueFalseQuestions,
-            points: totalTrueFalsePoints,
+            questions: combinedTfQuestions,
+            points: totalTfPoints,
             title: `PHẦN ${romanNumerals[currentRomanIdx++]}. CÂU HỎI TRẮC NGHIỆM ĐÚNG - SAI`,
             instruction: 'Trong mỗi ý a), b), c), d) ở mỗi câu, thí sinh chọn Đúng (Đ) hoặc Sai (S) và điền vào bảng trả lời bên dưới:'
         });
@@ -770,23 +764,40 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
         } else if (sec.type === 'true-false') {
             const tfHtml = sec.questions.map((q) => {
                 const qNum = questionIndexMap.get(q) || 1;
-                const hasFourStatements = Array.isArray(q.options) && q.options.some((o: any) => ['a', 'b', 'c', 'd'].includes(String(o.id || '').toLowerCase()));
+                const hasFourStatements = Array.isArray(q.options) && q.options.length >= 2;
                 if (hasFourStatements) {
-                    tfScenarioCounter++;
-                    const cleanScenario = (q.content || '')
-                        .replace(/^Tình\s*huống\s*\d*\s*[:.]\s*/i, '')
-                        .replace(/\s*(?:Câu\s*\d+\s*[.):\-]?\s*)?Xác\s*định\s*tính\s*đúng\s*hoặc\s*sai\s*của\s*các\s*phát\s*biểu\s*sau\s*[:.]?\s*$/i, '')
-                        .trim()
-                        .replace(/\n/g, '<br/>');
-                    const subStatementsHtml = '<div style="margin-left: 0.5cm;">' + q.options.map((opt: any, sIdx: number) => {
-                        const subLabel = opt.id || ['a', 'b', 'c', 'd'][sIdx] || String.fromCharCode(97 + sIdx);
-                        return `<p style="padding: 2pt 0; font-size: 13pt; margin: 0; text-align: justify;">${subLabel}) ${opt.text}</p>`;
-                    }).join('') + '</div>';
-                    return `
-                        <p style="margin-top: 8pt; margin-bottom: 3pt; font-size: 13pt; text-align: justify;"><strong>Tình huống ${tfScenarioCounter}:</strong> ${cleanScenario}</p>
-                        <p style="margin-top: 3pt; margin-bottom: 3pt; font-size: 13pt; text-align: justify;"><strong>Câu ${qNum}.</strong> Xác định tính đúng hoặc sai của các phát biểu sau:</p>
-                        ${subStatementsHtml}
-                    `;
+                    const isScenario = /tình\s*huống/i.test(q.content || '') || /xác định tính đúng/i.test(q.content || '');
+                    if (isScenario) {
+                        tfScenarioCounter++;
+                        const cleanScenario = (q.content || '')
+                            .replace(/^Tình\s*huống\s*\d*\s*[:.]\s*/i, '')
+                            .replace(/\s*(?:Câu\s*\d+\s*[.):\-]?\s*)?Xác\s*định\s*tính\s*đúng\s*hoặc\s*sai\s*của\s*các\s*phát\s*biểu\s*sau\s*[:.]?\s*$/i, '')
+                            .trim()
+                            .replace(/\n/g, '<br/>');
+                        const subStatementsHtml = '<div style="margin-left: 0.5cm;">' + q.options.map((opt: any, sIdx: number) => {
+                            const subLabel = ['a', 'b', 'c', 'd'][sIdx] || opt.id || String.fromCharCode(97 + sIdx);
+                            return `<p style="padding: 2pt 0; font-size: 13pt; margin: 0; text-align: justify;">${String(subLabel).toLowerCase()}) ${opt.text}</p>`;
+                        }).join('') + '</div>';
+                        return `
+                            <p style="margin-top: 8pt; margin-bottom: 3pt; font-size: 13pt; text-align: justify;"><strong>Tình huống ${tfScenarioCounter}:</strong> ${cleanScenario}</p>
+                            <p style="margin-top: 3pt; margin-bottom: 3pt; font-size: 13pt; text-align: justify;"><strong>Câu ${qNum}.</strong> Xác định tính đúng hoặc sai của các phát biểu sau:</p>
+                            ${subStatementsHtml}
+                        `;
+                    } else {
+                        // Câu hỏi Đúng/Sai trực tiếp hoặc Trắc nghiệm nhiều đáp án (cùng thuộc dạng Đúng - Sai)
+                        const cleanContent = (q.content || '')
+                            .replace(/^Câu\s*\d+\s*[.:]\s*/i, '')
+                            .trim()
+                            .replace(/\n/g, '<br/>');
+                        const subStatementsHtml = '<div style="margin-left: 0.5cm;">' + q.options.map((opt: any, sIdx: number) => {
+                            const subLabel = ['a', 'b', 'c', 'd'][sIdx] || opt.id || String.fromCharCode(97 + sIdx);
+                            return `<p style="padding: 2pt 0; font-size: 13pt; margin: 0; text-align: justify;"><strong>${String(subLabel).toLowerCase()})</strong> ${opt.text}</p>`;
+                        }).join('') + '</div>';
+                        return `
+                            <p style="margin-top: 6pt; margin-bottom: 3pt; font-size: 13pt; text-align: justify;"><strong>Câu ${qNum}.</strong> ${cleanContent}</p>
+                            ${subStatementsHtml}
+                        `;
+                    }
                 }
                 const displayContent = (q.content || '').replace(/\n/g, '<br/>');
                 return `<p style="margin-top: 6pt; margin-bottom: 0; font-size: 13pt; text-align: justify;"><strong>Câu ${qNum}.</strong> ${displayContent}</p>`;
@@ -2678,17 +2689,16 @@ export const generateExamVariants = (
 ): any[] => {
     // Phân loại câu hỏi theo các phần theo quy định của Bộ GD&ĐT
     const part1 = baseQuestions.filter(q => getQuestionSubtype(q) === 'single-choice');
-    const part2 = baseQuestions.filter(q => getQuestionSubtype(q) === 'multiple-answer');
-    const part3 = baseQuestions.filter(q => getQuestionSubtype(q) === 'true-false');
-    const part4 = baseQuestions.filter(q => getQuestionSubtype(q) === 'short-answer');
-    const part5 = baseQuestions.filter(q => getQuestionSubtype(q) === 'essay');
+    // Gộp cả câu hỏi Đúng/Sai tình huống và câu hỏi nhiều đáp án đúng vào Phần II: Đúng - Sai (1 dạng chung)
+    const part2 = baseQuestions.filter(q => getQuestionSubtype(q) === 'multiple-answer' || getQuestionSubtype(q) === 'true-false');
+    const part3 = baseQuestions.filter(q => getQuestionSubtype(q) === 'short-answer');
+    const part4 = baseQuestions.filter(q => getQuestionSubtype(q) === 'essay');
 
     return variantCodes.map((code, codeIdx) => {
         let currentP1 = [...part1];
         let currentP2 = [...part2];
         let currentP3 = [...part3];
         let currentP4 = [...part4];
-        let currentP5 = [...part5];
 
         // Hoán vị các phương án A, B, C, D của câu trắc nghiệm 1 đáp án
         if (shuffleOptions && codeIdx > 0) {
@@ -2708,11 +2718,12 @@ export const generateExamVariants = (
                 };
             });
 
-            // Hoán vị các phương án A, B, C, D của câu trắc nghiệm nhiều đáp án (bảo toàn tất cả đáp án đúng)
+            // Hoán vị các phương án của câu trắc nghiệm Đúng - Sai (bảo toàn tính đúng sai của từng ý)
             currentP2 = currentP2.map(q => {
                 if (!q.options || q.options.length < 2) return q;
                 const shuffledOpts = shuffleArray(q.options);
-                const standardIds = ['A', 'B', 'C', 'D', 'E', 'F'];
+                const isLower = q.options.some((o: any) => ['a', 'b', 'c', 'd'].includes(String(o.id || '')));
+                const standardIds = isLower ? ['a', 'b', 'c', 'd', 'e', 'f'] : ['A', 'B', 'C', 'D', 'E', 'F'];
                 const remappedOpts = shuffledOpts.map((opt, idx) => ({
                     ...opt,
                     id: standardIds[idx] || opt.id
@@ -2726,7 +2737,7 @@ export const generateExamVariants = (
             });
         }
 
-        const combined = [...currentP1, ...currentP2, ...currentP3, ...currentP4, ...currentP5];
+        const combined = [...currentP1, ...currentP2, ...currentP3, ...currentP4];
         
         // Tạo bảng đáp án chi tiết cho mã đề này
         const answerKey = combined.map((q, idx) => {
@@ -2735,22 +2746,17 @@ export const generateExamVariants = (
             const sub = getQuestionSubtype(q);
             let qType: 'multiple-choice' | 'true-false' | 'short-answer' | 'essay' = 'multiple-choice';
 
-            if (sub === 'true-false') {
+            if (sub === 'true-false' || sub === 'multiple-answer') {
                 qType = 'true-false';
-                if (q.options && q.options.length > 2) {
-                    ansStr = q.options.map((o: any, sIdx: number) => `${o.id || ['a', 'b', 'c', 'd'][sIdx]}-${o.isCorrect ? 'Đ' : 'S'}`).join('; ');
+                if (q.options && q.options.length > 0) {
+                    ansStr = q.options.map((o: any, sIdx: number) => {
+                        const lbl = (o.id || ['a', 'b', 'c', 'd'][sIdx] || '').toLowerCase();
+                        return `${lbl}-${o.isCorrect ? 'Đ' : 'S'}`;
+                    }).join('; ');
                 } else if (q.answer === 'Sai' || q.options?.find((o: any) => o.isCorrect)?.id === 'Sai') {
                     ansStr = 'Sai';
                 } else {
                     ansStr = q.answer || 'Đúng';
-                }
-            } else if (sub === 'multiple-answer') {
-                qType = 'multiple-choice';
-                const corrects = q.options?.filter((o: any) => o.isCorrect);
-                if (corrects && corrects.length > 0) {
-                    ansStr = corrects.map((o: any) => o.id).sort().join(', ');
-                } else {
-                    ansStr = q.answer || '';
                 }
             } else if (sub === 'short-answer') {
                 qType = 'short-answer';

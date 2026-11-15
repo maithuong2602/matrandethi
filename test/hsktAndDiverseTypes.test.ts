@@ -78,16 +78,16 @@ describe('Diverse Question Types and HSKT 28-Question Guarantee Tests', () => {
         expect(getQuestionSubtypeLabel('single-choice')).toBe('Trắc nghiệm 1 đáp án');
 
         expect(getQuestionSubtype(mockQuestions[1])).toBe('multiple-answer');
-        expect(getQuestionSubtypeLabel('multiple-answer')).toBe('Trắc nghiệm nhiều đáp án');
+        expect(getQuestionSubtypeLabel('multiple-answer')).toBe('Trắc nghiệm Đúng - Sai (Nhiều đáp án)');
 
         expect(getQuestionSubtype(mockQuestions[2])).toBe('true-false');
-        expect(getQuestionSubtypeLabel('true-false')).toBe('Trắc nghiệm Đúng - Sai');
+        expect(getQuestionSubtypeLabel('true-false')).toBe('Trắc nghiệm Đúng - Sai (Tình huống)');
 
         expect(getQuestionSubtype(mockQuestions[3])).toBe('essay');
         expect(getQuestionSubtypeLabel('essay')).toBe('Tự luận');
     });
 
-    it('should generate multi-section Word HTML separating 1-answer, multiple-answer, true-false, and essay', () => {
+    it('should generate multi-section Word HTML grouping 1-answer in Part I, true-false & multiple-answer in Part II, and essay', () => {
         const headerInfo = {
             donVi: 'PHÒNG GD&ĐT QUẬN HẢI CHÂU',
             tenTruong: 'THCS LÊ HỒNG PHONG',
@@ -99,20 +99,19 @@ describe('Diverse Question Types and HSKT 28-Question Guarantee Tests', () => {
 
         const wordHtml = generateExamWordHtml(mockQuestions, headerInfo);
 
-        // Kiểm tra phân rõ các phần theo số La Mã
+        // Kiểm tra phân rõ các phần theo chuẩn Bộ GD&ĐT (Phần II gộp cả tình huống và nhiều đáp án đúng vào dạng Đúng - Sai)
         expect(wordHtml).toContain('PHẦN I. CÂU HỎI TRẮC NGHIỆM 1 ĐÁP ÁN');
-        expect(wordHtml).toContain('PHẦN II. CÂU HỎI TRẮC NGHIỆM NHIỀU ĐÁP ÁN');
-        expect(wordHtml).toContain('PHẦN III. CÂU HỎI TRẮC NGHIỆM ĐÚNG - SAI');
-        expect(wordHtml).toContain('PHẦN IV. TỰ LUẬN');
+        expect(wordHtml).toContain('PHẦN II. CÂU HỎI TRẮC NGHIỆM ĐÚNG - SAI');
+        expect(wordHtml).toContain('PHẦN III. TỰ LUẬN');
 
         // Bảng đáp án Đúng - Sai có cấu trúc lệnh hỏi a, b, c, d
         expect(wordHtml).toContain('Thí sinh điền (Đ/S)');
+        expect(wordHtml).toContain('Câu 2');
         expect(wordHtml).toContain('Câu 3');
 
         // Hướng dẫn chấm phân tách rõ các phần
         expect(wordHtml).toContain('HƯỚNG DẪN CHẤM');
         expect(wordHtml).toContain('Trắc nghiệm 1 đáp án');
-        expect(wordHtml).toContain('Trắc nghiệm nhiều đáp án');
         expect(wordHtml).toContain('Trắc nghiệm Đúng - Sai');
         expect(wordHtml).toContain('Tự luận');
     });

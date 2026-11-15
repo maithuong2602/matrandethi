@@ -973,11 +973,12 @@ const ExamGenerator: React.FC = () => {
                 return sub === 'short-answer';
             }
             if (preferredQuestionType === 'true-false') {
-                return sub === 'true-false';
+                // Dạng Đúng - Sai bao gồm cả Đúng/Sai tình huống và Đúng/Sai nhiều đáp án đúng (hai loại là 1 dạng chung)
+                return sub === 'true-false' || sub === 'multiple-answer';
             }
             if (preferredQuestionType === 'multiple-choice') {
-                // Nhóm Trắc nghiệm nhiều lựa chọn bao gồm cả Trắc nghiệm 1 đáp án và Trắc nghiệm nhiều đáp án
-                return sub === 'single-choice' || sub === 'multiple-answer';
+                // Nhóm Trắc nghiệm 1 đáp án đúng (4 chọn 1)
+                return sub === 'single-choice';
             }
             return sub === 'essay';
         };
@@ -1635,10 +1636,10 @@ const ExamGenerator: React.FC = () => {
             const sub = getQuestionSubtype(q);
             switch (sub) {
                 case 'single-choice': return 1;
-                case 'multiple-answer': return 2;
-                case 'true-false': return 3;
-                case 'short-answer': return 4;
-                case 'essay': return 5;
+                case 'multiple-answer': return 2; // Cùng thuộc dạng Đúng - Sai (Phần II)
+                case 'true-false': return 2; // Dạng Đúng - Sai (Phần II)
+                case 'short-answer': return 3;
+                case 'essay': return 4;
             }
         };
 
@@ -2543,14 +2544,9 @@ const ExamGenerator: React.FC = () => {
                                     <span className="bg-blue-50 text-blue-800 border border-blue-200 px-2.5 py-1 rounded-lg font-medium">
                                         1 đáp án: <strong>{activeQuestions.filter(q => getQuestionSubtype(q) === 'single-choice').length}</strong>
                                     </span>
-                                    {activeQuestions.filter(q => getQuestionSubtype(q) === 'multiple-answer').length > 0 && (
-                                        <span className="bg-purple-50 text-purple-800 border border-purple-200 px-2.5 py-1 rounded-lg font-medium">
-                                            Nhiều đáp án: <strong>{activeQuestions.filter(q => getQuestionSubtype(q) === 'multiple-answer').length}</strong>
-                                        </span>
-                                    )}
-                                    {activeQuestions.filter(q => getQuestionSubtype(q) === 'true-false').length > 0 && (
+                                    {activeQuestions.filter(q => ['true-false', 'multiple-answer'].includes(getQuestionSubtype(q))).length > 0 && (
                                         <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2.5 py-1 rounded-lg font-medium">
-                                            Đúng - Sai: <strong>{activeQuestions.filter(q => getQuestionSubtype(q) === 'true-false').length}</strong>
+                                            Đúng - Sai: <strong>{activeQuestions.filter(q => ['true-false', 'multiple-answer'].includes(getQuestionSubtype(q))).length}</strong>
                                         </span>
                                     )}
                                     {activeQuestions.filter(q => getQuestionSubtype(q) === 'short-answer').length > 0 && (
@@ -2801,31 +2797,33 @@ const ExamGenerator: React.FC = () => {
                     <div className="space-y-4">
                         {(() => {
                             const list = reviewTab === 'hskt' ? activeHsktQuestions : activeQuestions;
-                            const sectionOrderList: QuestionSubtype[] = ['single-choice', 'multiple-answer', 'true-false', 'short-answer', 'essay'];
-                            const presentSections = sectionOrderList.filter(type => list.some(item => getQuestionSubtype(item) === type));
+                            const getSectionKey = (sub: QuestionSubtype): 'single-choice' | 'true-false' | 'short-answer' | 'essay' => {
+                                if (sub === 'multiple-answer') return 'true-false';
+                                return sub;
+                            };
+                            const sectionOrderList: ('single-choice' | 'true-false' | 'short-answer' | 'essay')[] = ['single-choice', 'true-false', 'short-answer', 'essay'];
+                            const presentSections = sectionOrderList.filter(type => list.some(item => getSectionKey(getQuestionSubtype(item)) === type));
                             const romanNumerals = ['I', 'II', 'III', 'IV', 'V'];
 
                             return list.map((q, idx, arr) => {
                                 const qSub = getQuestionSubtype(q);
+                                const currentSecKey = getSectionKey(qSub);
                                 const prevSub = idx > 0 ? getQuestionSubtype(arr[idx - 1]) : null;
-                                const isFirstOfSection = idx === 0 || qSub !== prevSub;
+                                const prevSecKey = prevSub ? getSectionKey(prevSub) : null;
+                                const isFirstOfSection = idx === 0 || currentSecKey !== prevSecKey;
 
-                                const sectionIndex = presentSections.indexOf(qSub);
+                                const sectionIndex = presentSections.indexOf(currentSecKey);
                                 const roman = romanNumerals[sectionIndex] || String(sectionIndex + 1);
                                 const sectionPoints = arr
-                                    .filter(item => getQuestionSubtype(item) === qSub)
+                                    .filter(item => getSectionKey(getQuestionSubtype(item)) === currentSecKey)
                                     .reduce((sum, item) => sum + (item.points ?? (item.category === 'essay' ? 1.0 : 0.25)), 0);
 
                                 let sectionTitle = '';
                                 let sectionDesc = '';
-                                switch (qSub) {
+                                switch (currentSecKey) {
                                     case 'single-choice':
                                         sectionTitle = `PHẦN ${roman}. CÂU HỎI TRẮC NGHIỆM 1 ĐÁP ÁN`;
                                         sectionDesc = 'Thí sinh chọn 01 phương án đúng nhất trong các phương án A, B, C, D:';
-                                        break;
-                                    case 'multiple-answer':
-                                        sectionTitle = `PHẦN ${roman}. CÂU HỎI TRẮC NGHIỆM NHIỀU ĐÁP ÁN`;
-                                        sectionDesc = 'Thí sinh chọn tất cả các phương án đúng:';
                                         break;
                                     case 'true-false':
                                         sectionTitle = `PHẦN ${roman}. CÂU HỎI TRẮC NGHIỆM ĐÚNG - SAI`;
