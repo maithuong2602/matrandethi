@@ -17,7 +17,7 @@ import {
     extractHtmlParts,
     parseParts
 } from '../utils';
-import { reviewExamWithAI, autoFillMissingQuestions } from '../services/geminiService';
+import { reviewExamWithAI, autoFillMissingQuestions, autoFixExamWithAI } from '../services/geminiService';
 import { splitLegacyTrueFalseQuestions, autoTagQuestion } from './QuestionManager';
 import { CURRICULUM } from '../data/curriculum';
 import { CANONICAL_REQUIREMENTS, KNTT_LESSON_MAPPINGS } from '../data/curriculum/index';
@@ -191,6 +191,7 @@ const ExamGenerator: React.FC = () => {
 
     // AI Review State
     const [isReviewing, setIsReviewing] = useState<boolean>(false);
+    const [isAutoFixing, setIsAutoFixing] = useState<boolean>(false);
     const [reviewResult, setReviewResult] = useState<ExamReviewResult | null>(null);
     const [isReviewModalOpen, setIsReviewModalOpen] = useState<boolean>(false);
 
@@ -1551,7 +1552,7 @@ const ExamGenerator: React.FC = () => {
         if (generatedTest.length === 0) return;
         setIsReviewing(true);
         try {
-            const gradeNum = headerInfo.monHoc.match(/\d+/)?.[0] || '6';
+            const gradeNum = headerInfo.monHoc.match(/\d+/)?.[0] || '8';
             const result = await reviewExamWithAI(generatedTest, `Khối ${gradeNum}`, headerInfo.tenKyThi);
             setReviewResult(result);
             setIsReviewModalOpen(true);
@@ -1559,6 +1560,29 @@ const ExamGenerator: React.FC = () => {
             alert("Lỗi khi thẩm định bằng AI: " + (error as Error).message);
         } finally {
             setIsReviewing(false);
+        }
+    };
+
+    // --- AI AUTO-FIX HANDLER (SỬA TỰ ĐỘNG THEO GỢI Ý HOÀN THIỆN) ---
+    const handleAutoFixExam = async () => {
+        if (!reviewResult || generatedTest.length === 0) return;
+        setIsAutoFixing(true);
+        try {
+            const gradeNum = headerInfo.monHoc.match(/\d+/)?.[0] || '8';
+            const res = await autoFixExamWithAI(
+                generatedTest,
+                reviewResult,
+                `Khối ${gradeNum}`,
+                headerInfo.tenKyThi,
+                bank
+            );
+            setGeneratedTest(res.fixedQuestions);
+            setReviewResult(res.updatedReview);
+            showNotice(`Đã tự động sửa thành công ${res.fixedQuestions.length} câu hỏi theo toàn bộ gợi ý hoàn thiện!`);
+        } catch (error: any) {
+            alert("Lỗi khi tự động sửa đề thi: " + (error?.message || String(error)));
+        } finally {
+            setIsAutoFixing(false);
         }
     };
 
@@ -2893,6 +2917,13 @@ const ExamGenerator: React.FC = () => {
                                 <p className="text-sm text-purple-800">{reviewResult.verdict}</p>
                             </div>
 
+                            {reviewResult.overallScore >= 95 && reviewResult.recommendations.some(r => r.startsWith('✓')) && (
+                                <div className="bg-emerald-50 border border-emerald-300 rounded-xl p-3.5 flex items-center gap-3 text-emerald-800 text-xs sm:text-sm font-semibold shadow-xs">
+                                    <CheckCircle2 size={20} className="text-emerald-600 shrink-0" />
+                                    <span>Đề thi đã được tự động hoàn thiện và chuẩn hóa xuất sắc theo toàn bộ gợi ý khảo thí!</span>
+                                </div>
+                            )}
+
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
                                     <h4 className="font-bold text-emerald-900 text-sm mb-2">Điểm mạnh:</h4>
@@ -2901,21 +2932,49 @@ const ExamGenerator: React.FC = () => {
                                     </ul>
                                 </div>
                                 <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
-                                    <h4 className="font-bold text-amber-900 text-sm mb-2">Gợi ý hoàn thiện:</h4>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <h4 className="font-bold text-amber-900 text-sm">Gợi ý hoàn thiện:</h4>
+                                        <button
+                                            onClick={handleAutoFixExam}
+                                            disabled={isAutoFixing}
+                                            className="px-3 py-1 bg-gradient-to-r from-amber-600 to-indigo-600 hover:from-amber-700 hover:to-indigo-700 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 shadow-xs transition-all disabled:opacity-50 cursor-pointer"
+                                            title="Tự động sửa các lỗi và hoàn thiện đề thi theo gợi ý của AI"
+                                        >
+                                            {isAutoFixing ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />}
+                                            {isAutoFixing ? 'Đang sửa...' : 'Sửa tự động'}
+                                        </button>
+                                    </div>
                                     <ul className="text-xs text-amber-800 space-y-1 list-disc list-inside">
-                                        {reviewResult.recommendations.map((r, i) => <li key={i}>{r}</li>)}
+                                        {reviewResult.recommendations.map((r, i) => (
+                                            <li key={i} className={r.startsWith('✓') ? 'text-emerald-700 font-medium' : ''}>
+                                                {r}
+                                            </li>
+                                        ))}
                                     </ul>
                                 </div>
                             </div>
                         </div>
 
-                        <div className="p-4 bg-gray-50 border-t border-gray-200 flex justify-end">
-                            <button
-                                onClick={() => setIsReviewModalOpen(false)}
-                                className="px-6 py-2 bg-primary text-white font-bold rounded-xl text-sm hover:bg-primary-dark"
-                            >
-                                Đóng
-                            </button>
+                        <div className="p-4 bg-gray-50 border-t border-gray-200 flex flex-col sm:flex-row justify-between items-center gap-3">
+                            <div className="text-xs text-gray-500 italic">
+                                {isAutoFixing ? 'Hệ thống đang tự động tối ưu hóa câu từ và xử lý theo gợi ý...' : 'Bấm "Sửa tự động theo gợi ý" để phần mềm tự động tối ưu hóa toàn bộ đề thi.'}
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={handleAutoFixExam}
+                                    disabled={isAutoFixing}
+                                    className="px-5 py-2.5 bg-gradient-to-r from-amber-600 to-indigo-600 hover:from-amber-700 hover:to-indigo-700 text-white font-bold rounded-xl text-sm flex items-center gap-2 shadow-md transition-all disabled:opacity-50 cursor-pointer"
+                                >
+                                    {isAutoFixing ? <Loader2 size={16} className="animate-spin" /> : <Wand2 size={16} />}
+                                    {isAutoFixing ? 'Đang tự động sửa đề...' : 'Sửa tự động theo gợi ý'}
+                                </button>
+                                <button
+                                    onClick={() => setIsReviewModalOpen(false)}
+                                    className="px-6 py-2.5 bg-gray-200 text-gray-700 font-bold rounded-xl text-sm hover:bg-gray-300 transition-all cursor-pointer"
+                                >
+                                    Đóng
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>

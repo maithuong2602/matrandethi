@@ -1247,7 +1247,12 @@ Dựa sát 100% vào nội dung nguồn tài liệu/file đính kèm${genPdf ? `
 - Dạng câu hỏi: ${typeNames[genType] || genType}
 ${criteriaBlock}
 
-YÊU CẦU CỐT LÕI VỀ NỘI DUNG TÌNH HUỐNG & CÂU HỎI:
+YÊU CẦU CỐT LÕI VỀ VĂN PHONG & NỘI DUNG (ĐẶC BIỆT CHÚ Ý):
+- CÂU HỎI NGẮN GỌN, TRỰC DIỆN, SÚC TÍCH: Câu hỏi và các phương án phải cô đọng, đi thẳng vào vấn đề. Tuyệt đối KHÔNG viết dài dòng lê thê nhiều chữ gây khó khăn và áp lực đọc hiểu cho học sinh THCS.
+- TUYỆT ĐỐI CẤM THAM CHIẾU VỊ TRÍ SGK / HÌNH / BẢNG:
+  + Nghiêm cấm bắt đầu câu hỏi bằng "Trong bảng...", "Ở Hình X.Y...", "Trong chương trình ở Hình 14.7...", "Khi quan sát Hình...", "Theo SGK...", "Theo bài học...".
+  + Sách giáo khoa/tài liệu chỉ là căn cứ hỗ trợ lấy đúng thuật ngữ khoa học GDPT 2018. Học sinh làm bài kiểm tra KHÔNG có sách trước mặt, đề thi phải hoàn toàn độc lập (self-contained).
+  + Nếu câu hỏi cần đoạn mã (Scratch/Python), sơ đồ hoặc dữ liệu: Hãy đưa trực tiếp đoạn mã/dữ liệu ngắn gọn (2-3 dòng) vào đề bài, tuyệt đối KHÔNG chỉ định học sinh nhìn vào hình/bảng trong SGK.
 - Toàn bộ nội dung Tình huống và các phát biểu/lựa chọn BẮT BUỘC phải trích xuất, khai thác trực tiếp từ kiến thức, dữ kiện, ví dụ thực tế có trong TÀI LIỆU NGUỒN ĐÍNH KÈM và Yêu cầu cần đạt của bài học.
 - Mỗi Tình huống phải là một bối cảnh cụ thể, riêng biệt gắn với nội dung tài liệu nguồn để học sinh phân tích. Tuyệt đối KHÔNG lấy kiến thức ngoài phạm vi bài học và KHÔNG lặp lại mô-típ giữa các tình huống.
 
@@ -3101,7 +3106,12 @@ ${formatExample}`;
                                             ].join('\n');
                                             const promptText = `Hãy đóng vai chuyên gia biên soạn đề kiểm tra môn Tin học theo Công văn 7991/BGDĐT. Dựa sát 100% vào nội dung nguồn tài liệu/file đính kèm${lesson ? ` của bài học "${lesson}" (Khối ${grade || ''})` : ''}, hãy tạo danh sách câu hỏi theo ĐÚNG cú pháp chuẩn dưới đây để phần mềm tự động nhận hàng loạt:
 
-${allCrit ? `YÊU CẦU CẦN ĐẠT (TIÊU CHÍ) CỦA BÀI HỌC:\n${allCrit}\n\n` : ''}YÊU CẦU CỐT LÕI VỀ NỘI DUNG TÌNH HUỐNG & CÂU HỎI:
+${allCrit ? `YÊU CẦU CẦN ĐẠT (TIÊU CHÍ) CỦA BÀI HỌC:\n${allCrit}\n\n` : ''}YÊU CẦU CỐT LÕI VỀ VĂN PHONG & NỘI DUNG (ĐẶC BIỆT CHÚ Ý):
+- CÂU HỎI NGẮN GỌN, TRỰC DIỆN, SÚC TÍCH: Câu hỏi và các phương án phải cô đọng, đi thẳng vào vấn đề. Tuyệt đối KHÔNG viết dài dòng lê thê nhiều chữ gây khó khăn và áp lực đọc hiểu cho học sinh THCS.
+- TUYỆT ĐỐI CẤM THAM CHIẾU VỊ TRÍ SGK / HÌNH / BẢNG:
+  + Nghiêm cấm bắt đầu câu hỏi bằng "Trong bảng...", "Ở Hình X.Y...", "Trong chương trình ở Hình 14.7...", "Khi quan sát Hình...", "Theo SGK...", "Theo bài học...".
+  + Sách giáo khoa/tài liệu chỉ là căn cứ hỗ trợ lấy đúng thuật ngữ khoa học GDPT 2018. Học sinh làm bài kiểm tra KHÔNG có sách trước mặt, đề thi phải hoàn toàn độc lập (self-contained).
+  + Nếu câu hỏi cần đoạn mã (Scratch/Python), sơ đồ hoặc dữ liệu: Hãy đưa trực tiếp đoạn mã/dữ liệu ngắn gọn (2-3 dòng) vào đề bài, tuyệt đối KHÔNG chỉ định học sinh nhìn vào hình/bảng trong SGK.
 - Toàn bộ nội dung Tình huống và các phát biểu/lựa chọn BẮT BUỘC phải trích xuất, khai thác trực tiếp từ kiến thức, dữ kiện, ví dụ thực tế có trong TÀI LIỆU NGUỒN ĐÍNH KÈM và Yêu cầu cần đạt của bài học.
 - Mỗi Tình huống phải là một bối cảnh cụ thể, riêng biệt gắn với nội dung tài liệu nguồn để học sinh phân tích.
 
