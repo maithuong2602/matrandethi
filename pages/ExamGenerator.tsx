@@ -2480,9 +2480,9 @@ const ExamGenerator: React.FC = () => {
                     )}
 
                     {/* UNIFIED CONTROL PANEL (GỌN GÀNG, TÁCH BIỆT ĐỀ CHÍNH THỨC & ĐỀ HSKT) */}
-                    <div className="bg-white rounded-2xl shadow-xs border border-gray-200 overflow-hidden">
+                    <div className="bg-white rounded-2xl shadow-xs border border-gray-200 relative z-30">
                         {/* Row 1: Exam Name + Mode Switcher (Đề Chính Thức vs Đề & Biểu mẫu chấm HSKT) + Quick Save/Export */}
-                        <div className="p-4 border-b border-gray-100 flex flex-wrap items-center justify-between gap-3 bg-slate-50/60">
+                        <div className="p-4 border-b border-gray-100 flex flex-wrap items-center justify-between gap-3 bg-slate-50/60 rounded-t-2xl">
                             <div className="flex flex-wrap items-center gap-2.5 flex-1 min-w-[260px]">
                                 <button
                                     type="button"
@@ -2545,7 +2545,7 @@ const ExamGenerator: React.FC = () => {
 
                         {/* Row 2: Context Toolbar depending on Regular vs HSKT tab */}
                         {reviewTab === 'regular' ? (
-                            <div className="p-3.5 flex flex-wrap items-center justify-between gap-3">
+                            <div className="p-3.5 flex flex-wrap items-center justify-between gap-3 rounded-b-2xl">
                                 <div className="flex flex-wrap items-center gap-2">
                                 <div className="flex flex-wrap items-center gap-1.5 text-xs">
                                     <span className="bg-blue-50 text-blue-800 border border-blue-200 px-2.5 py-1 rounded-lg font-medium">
@@ -2592,24 +2592,32 @@ const ExamGenerator: React.FC = () => {
 
                                 <div className="flex flex-wrap items-center gap-2">
                                     {/* Bulk Swap Menu */}
-                                    <div className="relative" ref={swapMenuRef}>
+                                    <div className="relative z-50" ref={swapMenuRef}>
                                         <button
                                             type="button"
                                             onClick={(e) => { e.preventDefault(); e.stopPropagation(); setIsSwapMenuOpen(!isSwapMenuOpen); }}
-                                            className="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 flex items-center gap-1 font-bold text-xs border border-gray-200 cursor-pointer"
+                                            className="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 flex items-center gap-1 font-bold text-xs border border-gray-200 cursor-pointer shadow-2xs"
                                         >
-                                            <RefreshCw size={13} /> Đổi câu hỏi <ChevronDown size={12} />
+                                            <RefreshCw size={13} /> Đổi câu hỏi <ChevronDown size={12} className={`transition-transform duration-200 ${isSwapMenuOpen ? 'rotate-180' : ''}`} />
                                         </button>
                                         {isSwapMenuOpen && (
-                                            <div className="absolute right-0 top-full mt-1.5 w-44 bg-white rounded-xl shadow-xl border border-gray-200 z-50 overflow-hidden">
-                                                <button onClick={() => triggerBulkSwap()} className="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-xs flex items-center gap-2 font-bold text-gray-800">
-                                                    <RefreshCw size={13} /> Đổi toàn bộ đề
+                                            <div className="absolute left-0 top-full mt-1.5 w-52 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 py-1.5 text-xs">
+                                                <button onClick={() => triggerBulkSwap()} className="w-full text-left px-3.5 py-2 hover:bg-gray-100 flex items-center gap-2 font-bold text-gray-800 transition-colors cursor-pointer">
+                                                    <RefreshCw size={13} className="text-primary shrink-0" /> Đổi toàn bộ đề
                                                 </button>
-                                                <div className="border-t border-gray-100"></div>
-                                                <button onClick={() => triggerBulkSwap('NB')} className="w-full text-left px-4 py-2 hover:bg-gray-50 text-xs text-green-700 font-semibold">Mức Nhận biết</button>
-                                                <button onClick={() => triggerBulkSwap('TH')} className="w-full text-left px-4 py-2 hover:bg-gray-50 text-xs text-blue-700 font-semibold">Mức Thông hiểu</button>
-                                                <button onClick={() => triggerBulkSwap('VD')} className="w-full text-left px-4 py-2 hover:bg-gray-50 text-xs text-yellow-700 font-semibold">Mức Vận dụng</button>
-                                                <button onClick={() => triggerBulkSwap('VDC')} className="w-full text-left px-4 py-2 hover:bg-gray-50 text-xs text-red-700 font-semibold">Mức Vận dụng cao</button>
+                                                <div className="border-t border-gray-100 my-1"></div>
+                                                <button onClick={() => triggerBulkSwap('NB')} className="w-full text-left px-3.5 py-1.5 hover:bg-green-50 text-green-700 font-semibold flex items-center gap-2 transition-colors cursor-pointer">
+                                                    <span className="w-2 h-2 rounded-full bg-green-500 shrink-0"></span> Mức Nhận biết
+                                                </button>
+                                                <button onClick={() => triggerBulkSwap('TH')} className="w-full text-left px-3.5 py-1.5 hover:bg-blue-50 text-blue-700 font-semibold flex items-center gap-2 transition-colors cursor-pointer">
+                                                    <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0"></span> Mức Thông hiểu
+                                                </button>
+                                                <button onClick={() => triggerBulkSwap('VD')} className="w-full text-left px-3.5 py-1.5 hover:bg-amber-50 text-amber-700 font-semibold flex items-center gap-2 transition-colors cursor-pointer">
+                                                    <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0"></span> Mức Vận dụng
+                                                </button>
+                                                <button onClick={() => triggerBulkSwap('VDC')} className="w-full text-left px-3.5 py-1.5 hover:bg-rose-50 text-rose-700 font-semibold flex items-center gap-2 transition-colors cursor-pointer">
+                                                    <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0"></span> Mức Vận dụng cao
+                                                </button>
                                             </div>
                                         )}
                                     </div>
@@ -2654,7 +2662,7 @@ const ExamGenerator: React.FC = () => {
                             </div>
                         ) : (
                             /* HSKT DEDICATED TOOLBAR */
-                            <div className="p-4 bg-rose-50/40 space-y-3">
+                            <div className="p-4 bg-rose-50/40 space-y-3 rounded-b-2xl">
                                 <div className="flex flex-wrap items-center justify-between gap-3">
                                     <div className="flex flex-wrap items-center gap-2">
                                         <span className="text-xs font-bold text-rose-900 bg-rose-100/80 border border-rose-200 px-3 py-1 rounded-lg">
