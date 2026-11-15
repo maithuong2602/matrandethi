@@ -435,6 +435,60 @@ const MatrixBuilder: React.FC = () => {
                         syncRowFromNf(recMeta.idx);
                     }
 
+                    // Cân đối nội bộ giữa các bài mới theo tỷ lệ số tiết và tổng điểm (tránh bài 1 tiết chiếm 22,5% còn bài 2 tiết chỉ có 15%)
+                    const getRowPointsVal = (rIdx: number) => {
+                        const cfg = nfRows[rIdx];
+                        if (!cfg) return 0;
+                        const bTN = (cfg.mc?.B?.count || 0) + (cfg.tf?.B?.count || 0) + (cfg.sa?.B?.count || 0);
+                        const hTN = (cfg.mc?.H?.count || 0) + (cfg.tf?.H?.count || 0) + (cfg.sa?.H?.count || 0);
+                        const vdTN = (cfg.mc?.VD?.count || 0) + (cfg.tf?.VD?.count || 0) + (cfg.sa?.VD?.count || 0);
+                        const bTL = cfg.essay?.B?.count || 0;
+                        const hTL = cfg.essay?.H?.count || 0;
+                        const vdTL = cfg.essay?.VD?.count || 0;
+                        return (bTN + hTN + vdTN) * 0.25 + (bTL + hTL + vdTL) * 1.0;
+                    };
+                    const sumNewPeriods = newRowsMeta.reduce((s: number, m: any) => s + m.soTiet, 0) || 1;
+                    const totalNewPoints = newRowsMeta.reduce((s: number, m: any) => s + getRowPointsVal(m.idx), 0);
+                    let newBalGuard = 0;
+                    while (newRowsMeta.length >= 2 && newBalGuard < 50) {
+                        newBalGuard++;
+                        const underNew = newRowsMeta
+                            .filter((m: any) => {
+                                const targetPt = (m.soTiet / sumNewPeriods) * totalNewPoints;
+                                return getRowPointsVal(m.idx) < targetPt - 0.26;
+                            })
+                            .sort((a: any, b: any) => {
+                                const gapA = (a.soTiet / sumNewPeriods) * totalNewPoints - getRowPointsVal(a.idx);
+                                const gapB = (b.soTiet / sumNewPeriods) * totalNewPoints - getRowPointsVal(b.idx);
+                                return gapB - gapA;
+                            });
+                        const overNew = newRowsMeta
+                            .filter((m: any) => {
+                                const targetPt = (m.soTiet / sumNewPeriods) * totalNewPoints;
+                                return getRowPointsVal(m.idx) > targetPt + 0.26 && getRowTotalTN(m.idx) > (m.soTiet <= 1 ? 1 : 2);
+                            })
+                            .sort((a: any, b: any) => {
+                                const gapA = getRowPointsVal(a.idx) - (a.soTiet / sumNewPeriods) * totalNewPoints;
+                                const gapB = getRowPointsVal(b.idx) - (b.soTiet / sumNewPeriods) * totalNewPoints;
+                                return gapB - gapA;
+                            });
+                        if (underNew.length === 0 || overNew.length === 0) break;
+                        const recMeta = underNew[0];
+                        const donMeta = overNew[0];
+                        const donCfg = nfRows[donMeta.idx];
+                        const recCfg = nfRows[recMeta.idx];
+                        const donHasH = ((donCfg.mc?.H?.count || 0) + (donCfg.tf?.H?.count || 0)) > 0;
+                        const srcLvl: 'H' | 'B' = donHasH ? 'H' : 'B';
+                        const dstLvl: 'B' | 'H' = recMeta.hasNB && srcLvl === 'B' ? 'B' : 'H';
+                        const pMove: 'mc' | 'tf' =
+                            (donCfg.mc?.[srcLvl]?.count || 0) >= (donCfg.tf?.[srcLvl]?.count || 0) ? 'mc' : 'tf';
+                        if ((donCfg[pMove]?.[srcLvl]?.count || 0) <= 0) break;
+                        donCfg[pMove][srcLvl].count--;
+                        recCfg[pMove][dstLvl].count = (recCfg[pMove][dstLvl].count || 0) + 1;
+                        syncRowFromNf(donMeta.idx);
+                        syncRowFromNf(recMeta.idx);
+                    }
+
                     // Đề cuối kỳ: BẮT BUỘC lấy Vận dụng từ bài mới.
                     // Nếu bài cũ (isOld) đang có câu Vận dụng (Tự luận) trong khi bài mới (isNew) CÓ YCCĐ Vận dụng (hasVD),
                     // tự động chuyển câu Vận dụng từ bài cũ sang bài mới có Vận dụng!
@@ -847,6 +901,10 @@ const MatrixBuilder: React.FC = () => {
         const SCORE_TN = 0.25;
         const TOTAL_SCORE = 10.0;
         const MAX_OLD_PERCENT = 0.35; // 35% cap for old lessons in Final Exam
+        if (!data.pointsConfig) data.pointsConfig = {};
+        data.pointsConfig.pointsTL = 1.0;
+        data.pointsConfig.pointsTNKQ = 0.25;
+        data.pointsConfig.rowEssayPoints = {};
         
         // Calculate Target Counts based on Ratio
         // Standard: 28 TN (7.0 pts) + 3 TL (3.0 pts)
@@ -1217,6 +1275,20 @@ const MatrixBuilder: React.FC = () => {
                 const baseCap = Math.max(1, Math.min(maxOldRowTN, Math.ceil((r.tnTargetQuestions || 1) - 1e-6)));
                 return (!r.canTakeNB && r.canTakeTH && nbCapableRowCount > 0) ? Math.min(4, baseCap) : baseCap;
             }
+            if (hasExaminedReduction && r.isNewLesson) {
+                const hasTL = (r.allocVD + r.allocVDC) > 0;
+                if (hasTL) {
+                    // Bài có ít tiết (<= 1 tiết) đã có Tự luận (1.0đ) thì tối đa chỉ nhận thêm 1 câu TN (để tổng không quá 12.5%)
+                    if (r.soTiet <= 1) {
+                        return 1;
+                    }
+                    // Bài >= 2 tiết đã có TL: tối đa bám sát tnTargetQuestions + 1
+                    return Math.max(1, Math.ceil((r.tnTargetQuestions || 1) + 1));
+                }
+                // Bài mới KHÔNG có Tự luận (ví dụ Bài 13 có 2 tiết):
+                // Phải cho phép nhận đủ số câu TN tương xứng với số tiết (khoảng 8-9 câu TN = 2.0-2.25đ = 20-22.5%)
+                return Math.max(8, Math.ceil((r.tnTargetQuestions || 8) + 1));
+            }
             if (!r.canTakeNB && r.canTakeTH && nbCapableRowCount > 0) {
                 if (hasExaminedReduction && !hasNewNBRowInMatrix) {
                     return Math.max(4, Math.min(7, Math.ceil((r.tnTargetQuestions || 1) + 1)));
@@ -1443,11 +1515,18 @@ const MatrixBuilder: React.FC = () => {
         while (thOnlyRows.length >= 2 && thBalanceGuard < 200) {
             thBalanceGuard++;
             const needyNew = thOnlyRows
-                .filter((r: any) => r.isNewLesson && (r.allocTN || 0) < 2)
+                .filter((r: any) => {
+                    const minNeeded = Math.max(1, Math.floor(r.tnTargetQuestions || 1));
+                    return (r.allocTN || 0) < minNeeded;
+                })
                 .sort((a: any, b: any) => (a.allocTN || 0) - (b.allocTN || 0));
             if (needyNew.length === 0) break;
             const richDonor = thOnlyRows
-                .filter((r: any) => r !== needyNew[0] && r.isNewLesson === needyNew[0].isNewLesson && (r.allocTN || 0) >= 4)
+                .filter((r: any) => {
+                    if (r === needyNew[0] || r.isNewLesson !== needyNew[0].isNewLesson) return false;
+                    const maxAllowed = Math.ceil((r.tnTargetQuestions || 1) + 1);
+                    return (r.allocTN || 0) > maxAllowed;
+                })
                 .sort((a: any, b: any) => (b.allocTN || 0) - (a.allocTN || 0));
             if (richDonor.length === 0) break;
             richDonor[0].allocTN--;
@@ -1565,19 +1644,75 @@ const MatrixBuilder: React.FC = () => {
             updateRowScore(r);
         });
 
+        // Cân đối lại lần cuối cho các bài mới ở đề cuối kỳ theo tỷ lệ số tiết và targetScore
+        if (hasExaminedReduction) {
+            const newRows = rows.filter((r: any) => r.soTiet > 0 && r.isNewLesson);
+            let postPassGuard = 0;
+            while (newRows.length >= 2 && postPassGuard < 50) {
+                postPassGuard++;
+                const under = newRows
+                    .filter((r: any) => {
+                        const targetTN = Math.max(1, Math.round(r.tnTargetQuestions || 1));
+                        return (r.allocTN || 0) < targetTN;
+                    })
+                    .sort((a: any, b: any) => {
+                        const gapA = (a.tnTargetQuestions || 1) - (a.allocTN || 0);
+                        const gapB = (b.tnTargetQuestions || 1) - (b.allocTN || 0);
+                        return gapB - gapA;
+                    });
+                const over = newRows
+                    .filter((r: any) => {
+                        const hasTL = (r.allocVD + r.allocVDC) > 0;
+                        if (r.soTiet <= 1 && hasTL) {
+                            return (r.allocTN || 0) > 1;
+                        }
+                        const maxAllowed = Math.ceil((r.tnTargetQuestions || 1) + 1);
+                        return (r.allocTN || 0) > maxAllowed;
+                    })
+                    .sort((a: any, b: any) => {
+                        const gapA = (a.allocTN || 0) - (a.tnTargetQuestions || 1);
+                        const gapB = (b.allocTN || 0) - (b.tnTargetQuestions || 1);
+                        return gapB - gapA;
+                    });
+                if (under.length === 0 || over.length === 0) break;
+                const don = over[0];
+                const rec = under[0];
+                if (don.allocTH > 0) {
+                    don.allocTH--;
+                    don.allocTN--;
+                    if (rec.hasNB && remNB > 0) rec.allocNB++; else rec.allocTH++;
+                    rec.allocTN++;
+                } else if (don.allocNB > 0 && rec.hasNB) {
+                    don.allocNB--;
+                    don.allocTN--;
+                    rec.allocNB++;
+                    rec.allocTN++;
+                } else {
+                    break;
+                }
+                updateRowScore(don);
+                updateRowScore(rec);
+            }
+        }
+
         // --- 6. APPLY TO DATA OBJECT (BOTH CLASSIC & NEW 4-PART FORMAT) ---
         if (!data.newFormatRows) data.newFormatRows = {};
 
         // Track remaining quotas for 4-part split across rows:
         // Standard 10.0pt exam:
         // - Nhiều lựa chọn (mc): 12 câu = 3,0đ (30%) -> 8 Biết + 4 Hiểu (hoặc 6 Biết + 6 Hiểu)
-        // - "Đúng – Sai" (tf): 8 lệnh hỏi = 2,0đ (20%) -> 4 Biết + 4 Hiểu (hoặc 16 lệnh hỏi = 4,0đ (40%) -> 8 Biết + 8 Hiểu khi tắt Trả lời ngắn)
-        // - Trả lời ngắn (sa): 8 câu = 2,0đ (20%) -> 4 Biết + 4 Hiểu
+        // - "Đúng – Sai" (tf): 16 lệnh hỏi = 4,0đ (40%) -> 8 Biết + 8 Hiểu (khi tắt Trả lời ngắn, theo đúng yêu cầu: cả trắc nghiệm nhiều đáp án đúng và đúng sai là 4 điểm)
+        // - Trả lời ngắn (sa): 8 câu = 2,0đ (20%) -> chỉ khi bật useShortAnswer
         // - Tự luận (essay): 3 câu = 3,0đ (30%) -> 3 Vận dụng
-        const useShortAnswer = data.newPointsConfig?.useShortAnswer !== false;
+        const useShortAnswer = data.newPointsConfig?.useShortAnswer === true;
         const capMC = 12;
         const capTF = useShortAnswer ? 8 : 16;
         const capSA = useShortAnswer ? 8 : 0;
+        if (!data.newPointsConfig) data.newPointsConfig = {};
+        data.newPointsConfig.useShortAnswer = useShortAnswer;
+        data.newPointsConfig.mcPoint = 0.25;
+        data.newPointsConfig.tfPoint = 0.25;
+        data.newPointsConfig.essayPoint = 1.0;
 
         let remMC_B = ratioOption === '30-40-30' ? 6 : 8;
         let remTF_B = useShortAnswer

@@ -385,4 +385,96 @@ describe('Diverse Question Types and HSKT 28-Question Guarantee Tests', () => {
         const picked2 = newNoVD.filter(r => (hasNewVD2 ? (r.isNew && r.hasVD) : r.hasVD));
         expect(picked2.some(r => !r.isNew)).toBe(true);
     });
+
+    it('should maintain strict sequential question order (13..28) in Part II grading table for combined multiple-answer and true-false', () => {
+        // Tạo 12 câu Phần I (single-choice, Câu 1..12)
+        const part1Questions: any[] = [];
+        for (let i = 1; i <= 12; i++) {
+            part1Questions.push({
+                id: `mc_${i}`,
+                category: 'mc',
+                questionType: 'multiple-choice',
+                content: `Câu trắc nghiệm 1 đáp án ${i}`,
+                options: [
+                    { id: 'A', text: 'A', isCorrect: true },
+                    { id: 'B', text: 'B', isCorrect: false }
+                ],
+                points: 0.25,
+                level: 'NB',
+                lesson: 'Bài 1'
+            });
+        }
+
+        // Tạo 8 câu multiple-answer và 8 câu true-false cho Phần II (Câu 13..28)
+        const part2Questions: any[] = [];
+        for (let i = 13; i <= 20; i++) {
+            part2Questions.push({
+                id: `ma_${i}`,
+                category: 'mc',
+                questionType: 'multiple-answer',
+                content: `Câu trắc nghiệm nhiều đáp án ${i}`,
+                options: [
+                    { id: 'A', text: 'A', isCorrect: true },
+                    { id: 'B', text: 'B', isCorrect: true },
+                    { id: 'C', text: 'C', isCorrect: false },
+                    { id: 'D', text: 'D', isCorrect: true }
+                ],
+                points: 0.25,
+                level: 'TH',
+                lesson: 'Bài 2'
+            });
+        }
+        for (let i = 21; i <= 28; i++) {
+            part2Questions.push({
+                id: `tf_${i}`,
+                category: 'mc',
+                questionType: 'true-false',
+                content: `Câu đúng sai tình huống ${i}`,
+                options: [
+                    { id: 'a', text: 'a', isCorrect: true },
+                    { id: 'b', text: 'b', isCorrect: false },
+                    { id: 'c', text: 'c', isCorrect: true },
+                    { id: 'd', text: 'd', isCorrect: false }
+                ],
+                points: 0.25,
+                level: 'TH',
+                lesson: 'Bài 3'
+            });
+        }
+
+        // 3 câu tự luận (Câu 29..31)
+        const essayQuestions: any[] = [
+            { id: 'tl_1', category: 'essay', questionType: 'essay', content: 'TL 1', points: 1.0, level: 'VD', lesson: 'Bài 4' },
+            { id: 'tl_2', category: 'essay', questionType: 'essay', content: 'TL 2', points: 1.0, level: 'VD', lesson: 'Bài 12' },
+            { id: 'tl_3', category: 'essay', questionType: 'essay', content: 'TL 3', points: 1.0, level: 'VD', lesson: 'Bài 14' }
+        ];
+
+        const allQuestions = [...part1Questions, ...part2Questions, essayQuestions[0], essayQuestions[1], essayQuestions[2]];
+        const headerInfo = {
+            donVi: 'PHÒNG GD&ĐT',
+            tenTruong: 'THCS LÊ HỒNG PHONG',
+            tenKyThi: 'KIỂM TRA CUỐI KÌ I',
+            monHoc: 'MÔN: TIN HỌC – LỚP 8'
+        };
+
+        const html = generateExamWordHtml(allQuestions, headerInfo);
+
+        // Bảng đáp án Phần II phải chứa đủ từ Câu 13 đến Câu 28
+        for (let i = 13; i <= 28; i++) {
+            expect(html).toContain(`Câu ${i}`);
+        }
+
+        // Kiểm tra tính liên tục, không nhảy cóc: Câu 13 phải xuất hiện trước Câu 14, Câu 14 trước Câu 15...
+        let lastPos = 0;
+        for (let i = 13; i <= 28; i++) {
+            const currentPos = html.indexOf(`Câu ${i}`);
+            expect(currentPos).toBeGreaterThan(0);
+            expect(currentPos).toBeGreaterThanOrEqual(lastPos);
+            lastPos = currentPos;
+        }
+
+        // Điểm chuẩn: Phần I = 3.0đ, Phần II = 4.0đ, Phần III = 3.0đ
+        expect(html).toContain('3,0 điểm');
+        expect(html).toContain('4,0 điểm');
+    });
 });

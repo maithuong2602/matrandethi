@@ -314,6 +314,13 @@ export const buildHsktExamQuestions = (
         const pa = getPartOrder(a);
         const pb = getPartOrder(b);
         if (pa !== pb) return pa - pb;
+        if (pa === 2 && pb === 2) {
+            const subA = getQuestionSubtype(a);
+            const subB = getQuestionSubtype(b);
+            if (subA !== subB) {
+                return subA === 'multiple-answer' ? -1 : 1;
+            }
+        }
         const la = levelOrder[(a.level || 'NB').toUpperCase()] || 5;
         const lb = levelOrder[(b.level || 'NB').toUpperCase()] || 5;
         if (la !== lb) return la - lb;
@@ -599,8 +606,11 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
     }
 
     // Gộp câu hỏi nhiều đáp án đúng vào dạng Đúng - Sai (Phần II) theo quy định Bộ GD&ĐT
-    const combinedTfQuestions = [...multipleAnswerQuestions, ...trueFalseQuestions];
-    const totalTfPoints = totalMultipleAnswerPoints + totalTrueFalsePoints;
+    // Lấy trực tiếp từ danh sách questions để bảo đảm số thứ tự câu hỏi tăng dần liên tục (Câu 13, 14, 15... 28)
+    const combinedTfQuestions = questions.filter(
+        q => getQuestionSubtype(q) === 'true-false' || getQuestionSubtype(q) === 'multiple-answer'
+    );
+    const totalTfPoints = combinedTfQuestions.reduce((sum, q) => sum + getMcQuestionPoint(q), 0);
 
     if (combinedTfQuestions.length > 0) {
         sections.push({
@@ -960,48 +970,112 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                 gradingRowsHtml += `</tr>`;
             });
         } else if (sec.type === 'true-false') {
-            let tfGrid = `<table style="width: 100%; border-collapse: collapse; text-align: center; font-size: 11pt; margin: 0 auto;">
-                <tr style="background-color: #f0f0f0; font-weight: bold;">
-                    <td style="border: 1px solid black; padding: 3px; width: 25%;">Câu hỏi</td>
-                    <td style="border: 1px solid black; padding: 3px; width: 75%;">Đáp án các ý (a, b, c, d)</td>
-                </tr>`;
-            sec.questions.forEach(q => {
-                const qNum = questionIndexMap.get(q) || 1;
-                let ansStr = '';
-                if (Array.isArray(q.options) && q.options.some((o: any) => ['a', 'b', 'c', 'd'].includes(String(o.id || '').toLowerCase()))) {
-                    ansStr = q.options.map((o: any, sIdx: number) => {
-                        const lbl = o.id || ['a', 'b', 'c', 'd'][sIdx];
-                        return `<strong>${lbl}:</strong> ${o.isCorrect ? '<span style="color: green; font-weight: bold;">Đúng</span>' : '<span style="color: red; font-weight: bold;">Sai</span>'}`;
-                    }).join(';&nbsp;&nbsp;&nbsp;&nbsp;');
+            const isAllSingleTf = sec.questions.every(
+                q => q.options && q.options.length === 2 && q.options.some((o: any) => ['đúng', 'sai'].includes(String(o.id || o.text || '').toLowerCase()))
+            );
+            if (isAllSingleTf) {
+                let cols = 15;
+                if (sec.questions.length > 15) {
+                    let minEmpty = 15;
+                    let bestCols = 15;
+                    for (let c = 15; c >= 10; c--) {
+                        const rows = Math.ceil(sec.questions.length / c);
+                        const empty = (rows * c) - sec.questions.length;
+                        if (empty < minEmpty) {
+                            minEmpty = empty;
+                            bestCols = c;
+                        }
+                    }
+                    cols = bestCols;
                 } else {
-                    const isFalse = q.answer === 'Sai' || q.options?.find((o: any) => o.isCorrect)?.id === 'Sai';
-                    ansStr = isFalse ? '<span style="color: red; font-weight: bold;">Sai</span>' : '<span style="color: green; font-weight: bold;">Đúng</span>';
+                    cols = sec.questions.length;
                 }
-                tfGrid += `<tr>
-                    <td style="border: 1px solid black; padding: 3px; font-weight: bold;">Câu ${qNum}</td>
-                    <td style="border: 1px solid black; padding: 3px; text-align: left; padding-left: 8px;">${ansStr}</td>
-                </tr>`;
-            });
-            tfGrid += `</table>`;
-            tfGrid += `
-                <div style="margin-top: 4pt; font-size: 10pt; font-style: italic; color: #444;">
-                    * Thang điểm câu hỏi Đúng/Sai (theo chuẩn Bộ GD&ĐT): Đúng 01 ý được 0,10đ; đúng 02 ý được 0,25đ; đúng 03 ý được 0,50đ; đúng 04 ý được 1,00đ.
-                </div>
-            `;
+                const rows = Math.ceil(sec.questions.length / cols);
+                let grid = `<table style="width: 100%; border-collapse: collapse; text-align: center; font-size: 11pt; margin: 0 auto; table-layout: fixed;">`;
+                for (let r = 0; r < rows; r++) {
+                    grid += `<tr>`;
+                    for (let c = 0; c < cols; c++) {
+                        const idx = r * cols + c;
+                        if (idx < sec.questions.length) {
+                            const q = sec.questions[idx];
+                            const qNum = questionIndexMap.get(q) || (idx + 1);
+                            grid += `<td width="${(100 / cols).toFixed(2)}%" style="border: 1px solid black; font-weight: bold; padding: 2px; background-color: #f0f0f0; width: ${100 / cols}%;">${qNum}</td>`;
+                        } else {
+                            grid += `<td width="${(100 / cols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / cols}%;">&nbsp;</td>`;
+                        }
+                    }
+                    grid += `</tr><tr>`;
+                    for (let c = 0; c < cols; c++) {
+                        const idx = r * cols + c;
+                        if (idx < sec.questions.length) {
+                            const q = sec.questions[idx];
+                            const isFalse = q.answer === 'Sai' || q.options?.find((o: any) => o.isCorrect)?.id === 'Sai';
+                            const ansLetter = isFalse ? 'S' : 'Đ';
+                            grid += `<td width="${(100 / cols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; font-weight: bold; width: ${100 / cols}%;">${ansLetter}</td>`;
+                        } else {
+                            grid += `<td width="${(100 / cols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / cols}%;">&nbsp;</td>`;
+                        }
+                    }
+                    grid += `</tr>`;
+                }
+                grid += `</table>`;
+                gradingRowsHtml += `
+                    <tr>
+                        <td style="border: 1px solid black; padding: 8px; text-align: center; font-weight: bold; vertical-align: middle;">
+                            ${sec.title.replace(/^PHẦN\s*[IVX]+\.\s*/i, '')}:<br/>${formatDiem(sec.points)} điểm
+                        </td>
+                        <td style="border: 1px solid black; padding: 8px; vertical-align: middle;">
+                            ${grid}
+                        </td>
+                        <td style="border: 1px solid black; padding: 8px; text-align: center; font-weight: bold; vertical-align: middle;">
+                            ${formatDiem(sec.points)}đ
+                        </td>
+                    </tr>
+                `;
+            } else {
+                let tfGrid = `<table style="width: 100%; border-collapse: collapse; text-align: center; font-size: 11pt; margin: 0 auto;">
+                    <tr style="background-color: #f0f0f0; font-weight: bold;">
+                        <td style="border: 1px solid black; padding: 3px; width: 25%;">Câu hỏi</td>
+                        <td style="border: 1px solid black; padding: 3px; width: 75%;">Đáp án các ý (a, b, c, d)</td>
+                    </tr>`;
+                sec.questions.forEach(q => {
+                    const qNum = questionIndexMap.get(q) || 1;
+                    let ansStr = '';
+                    if (Array.isArray(q.options) && q.options.some((o: any) => ['a', 'b', 'c', 'd'].includes(String(o.id || '').toLowerCase()))) {
+                        ansStr = q.options.map((o: any, sIdx: number) => {
+                            const lbl = o.id || ['a', 'b', 'c', 'd'][sIdx];
+                            return `<strong>${lbl}:</strong> ${o.isCorrect ? '<span style="color: green; font-weight: bold;">Đúng</span>' : '<span style="color: red; font-weight: bold;">Sai</span>'}`;
+                        }).join(';&nbsp;&nbsp;&nbsp;&nbsp;');
+                    } else {
+                        const isFalse = q.answer === 'Sai' || q.options?.find((o: any) => o.isCorrect)?.id === 'Sai';
+                        ansStr = isFalse ? '<span style="color: red; font-weight: bold;">Sai</span>' : '<span style="color: green; font-weight: bold;">Đúng</span>';
+                    }
+                    tfGrid += `<tr>
+                        <td style="border: 1px solid black; padding: 3px; font-weight: bold;">Câu ${qNum}</td>
+                        <td style="border: 1px solid black; padding: 3px; text-align: left; padding-left: 8px;">${ansStr}</td>
+                    </tr>`;
+                });
+                tfGrid += `</table>`;
+                tfGrid += `
+                    <div style="margin-top: 4pt; font-size: 10pt; font-style: italic; color: #444;">
+                        * Thang điểm câu hỏi Đúng/Sai (theo chuẩn Bộ GD&ĐT): Đúng 01 ý được 0,10đ; đúng 02 ý được 0,25đ; đúng 03 ý được 0,50đ; đúng 04 ý được 1,00đ.
+                    </div>
+                `;
 
-            gradingRowsHtml += `
-                <tr>
-                    <td style="border: 1px solid black; padding: 8px; text-align: center; font-weight: bold; vertical-align: middle;">
-                        ${sec.title.replace(/^PHẦN\s*[IVX]+\.\s*/i, '')}:<br/>${formatDiem(sec.points)} điểm
-                    </td>
-                    <td style="border: 1px solid black; padding: 8px; vertical-align: middle;">
-                        ${tfGrid}
-                    </td>
-                    <td style="border: 1px solid black; padding: 8px; text-align: center; font-weight: bold; vertical-align: middle;">
-                        ${formatDiem(sec.points)}đ
-                    </td>
-                </tr>
-            `;
+                gradingRowsHtml += `
+                    <tr>
+                        <td style="border: 1px solid black; padding: 8px; text-align: center; font-weight: bold; vertical-align: middle;">
+                            ${sec.title.replace(/^PHẦN\s*[IVX]+\.\s*/i, '')}:<br/>${formatDiem(sec.points)} điểm
+                        </td>
+                        <td style="border: 1px solid black; padding: 8px; vertical-align: middle;">
+                            ${tfGrid}
+                        </td>
+                        <td style="border: 1px solid black; padding: 8px; text-align: center; font-weight: bold; vertical-align: middle;">
+                            ${formatDiem(sec.points)}đ
+                        </td>
+                    </tr>
+                `;
+            }
         } else {
             let cols = 15;
             if (sec.questions.length > 15) {
@@ -2748,7 +2822,11 @@ export const generateExamVariants = (
 
             if (sub === 'true-false' || sub === 'multiple-answer') {
                 qType = 'true-false';
-                if (q.options && q.options.length > 0) {
+                const isSingleTf = q.options && q.options.length === 2 && q.options.some((o: any) => ['đúng', 'sai'].includes(String(o.id || o.text || '').toLowerCase()));
+                if (isSingleTf) {
+                    const correctOpt = q.options.find((o: any) => o.isCorrect);
+                    ansStr = correctOpt ? correctOpt.id : (q.answer || 'Đúng');
+                } else if (q.options && q.options.length > 0) {
                     ansStr = q.options.map((o: any, sIdx: number) => {
                         const lbl = (o.id || ['a', 'b', 'c', 'd'][sIdx] || '').toLowerCase();
                         return `${lbl}-${o.isCorrect ? 'Đ' : 'S'}`;

@@ -1648,6 +1648,13 @@ const ExamGenerator: React.FC = () => {
             const pa = getPartOrder(a);
             const pb = getPartOrder(b);
             if (pa !== pb) return pa - pb;
+            if (pa === 2 && pb === 2) {
+                const subA = getQuestionSubtype(a);
+                const subB = getQuestionSubtype(b);
+                if (subA !== subB) {
+                    return subA === 'multiple-answer' ? -1 : 1;
+                }
+            }
             const la = levelOrder[a.level as keyof typeof levelOrder] || 5;
             const lb = levelOrder[b.level as keyof typeof levelOrder] || 5;
             if (la !== lb) return la - lb;
