@@ -31,12 +31,18 @@ import { splitLegacyTrueFalseQuestions, autoTagQuestion } from './QuestionManage
 import { CURRICULUM } from '../data/curriculum';
 import { CANONICAL_REQUIREMENTS, KNTT_LESSON_MAPPINGS } from '../data/curriculum/index';
 import { loadQuestionBank, saveQuestionBank } from '../services/storage/questionBankStorage';
+import { generateOfflineQuestions } from '../services/offlineQuestionGenerator';
 import {
     filterQuestionsByActiveCriteria,
     purgeInvalidQuestionsAndResync,
     getQuestionTypeKey,
     getCanonicalCriterionKeyForQuestion,
-    detectGradeFromLessonOrContext
+    detectGradeFromLessonOrContext,
+    normalizeLessonString,
+    extractLessonNumber,
+    resolveCanonicalLessonName,
+    areCriteriaSemanticallySame,
+    normalizeCriterionText
 } from '../services/criteriaService';
 import {
     getSavedExams,
@@ -2021,6 +2027,71 @@ const ExamGenerator: React.FC = () => {
     };
 
     // --- STEP 3: REVIEW & EXPORT ---
+    /**
+     * So khớp chính xác bài học (ĐÚNG BÀI 100%)
+     * Bảo đảm tuyệt đối không bị nhận nhầm ví dụ Bài 1 với Bài 10, Bài 11...
+     */
+    const isLessonStrictMatch = (lessonA: string, lessonB: string, grade?: string): boolean => {
+        if (!lessonA || !lessonB) return false;
+        const numA = extractLessonNumber(lessonA);
+        const numB = extractLessonNumber(lessonB);
+        if (numA && numB) {
+            return numA.toLowerCase() === numB.toLowerCase();
+        }
+        if (grade) {
+            const canA = resolveCanonicalLessonName(grade, lessonA);
+            const canB = resolveCanonicalLessonName(grade, lessonB);
+            if (canA && canB && normalizeLessonString(canA) === normalizeLessonString(canB)) {
+                return true;
+            }
+        }
+        const normA = normalizeLessonString(lessonA);
+        const normB = normalizeLessonString(lessonB);
+        if (normA === normB) return true;
+
+        const cleanA = normA.replace(/^bài\s*\d+[a-z]?\s*[:\.]?\s*/i, '').trim();
+        const cleanB = normB.replace(/^bài\s*\d+[a-z]?\s*[:\.]?\s*/i, '').trim();
+        if (cleanA && cleanB && cleanA === cleanB) return true;
+        if (cleanA.length > 6 && cleanB.length > 6 && (cleanA.includes(cleanB) || cleanB.includes(cleanA))) {
+            return true;
+        }
+        return false;
+    };
+
+    /**
+     * So khớp tiêu chí Yêu cầu cần đạt (ĐÚNG TIÊU CHÍ YCCĐ 100%)
+     */
+    const isCriterionStrictMatch = (b: BankQuestion, q: BankQuestion, grade: string): boolean => {
+        // 1. So khớp theo mã số tiêu chí (ví dụ: "1.1", "2.1")
+        const codeQ = (q.criteria || '').match(/\b(\d+\.\d+)\b/)?.[1] || q.curriculum?.requirementId;
+        const codeB = (b.criteria || '').match(/\b(\d+\.\d+)\b/)?.[1] || b.curriculum?.requirementId;
+        if (codeQ && codeB) {
+            return codeQ === codeB;
+        }
+
+        // 2. So khớp theo canonical criterion key chuẩn hóa (tra cứu văn bản YCCĐ trong CURRICULUM và custom store)
+        const keyQ = getCanonicalCriterionKeyForQuestion(q, grade, q.lesson);
+        const keyB = getCanonicalCriterionKeyForQuestion(b, grade, b.lesson);
+        if (keyQ && keyB && keyQ !== 'general:::default' && keyB !== 'general:::default') {
+            if (keyQ === keyB) return true;
+        }
+
+        // 3. So khớp ngữ nghĩa YCCĐ nếu cả hai có văn bản
+        if (q.criteria && b.criteria) {
+            if (areCriteriaSemanticallySame(q.criteria, b.criteria)) return true;
+            const normQ = normalizeCriterionText(q.criteria);
+            const normB = normalizeCriterionText(b.criteria);
+            if (normQ && normB && (normQ === normB || normQ.includes(normB) || normB.includes(normQ))) return true;
+        }
+
+        // 4. Nếu q không có thông tin tiêu chí thì coi như khớp
+        if (!q.criteria && !q.curriculum?.requirementId) {
+            return true;
+        }
+
+        return false;
+    };
+
     const triggerBulkSwap = (targetLevel?: string) => {
         setIsSwapMenuOpen(false);
         setTimeout(() => handleBulkSwap(targetLevel), 50);
@@ -2042,63 +2113,74 @@ const ExamGenerator: React.FC = () => {
 
         let swappedCount = 0;
         const targetG = detectGradeFromContext(generatedTest, headerInfo, importedMatrix);
+        const candidatePool = activeBank.length > 0 ? activeBank : bank;
+        const isGradeMatch = (b: BankQuestion) => !b.grade || String(b.grade) === targetG;
+
         newTest.forEach((q, index) => {
             if (targetLevel && q.level !== targetLevel) return;
 
-            const qLesson = q.lesson.toLowerCase().trim();
             const qType = getQuestionTypeKey(q);
-            const qCKey = getCanonicalCriterionKeyForQuestion(q, targetG, q.lesson);
-
-            // Tập hợp các YCCĐ đang được sử dụng bởi các câu hỏi thuộc LOẠI CÂU HỎI KHÁC trong đề
-            const cKeysUsedByOtherTypes = new Set<string>();
-            newTest.forEach((otherQ, otherIdx) => {
-                if (otherIdx === index) return;
-                if (getQuestionTypeKey(otherQ) !== qType) {
-                    cKeysUsedByOtherTypes.add(getCanonicalCriterionKeyForQuestion(otherQ, targetG, otherQ.lesson));
-                }
-            });
-
-            const isCompatible = (b: BankQuestion) =>
-                b.level === q.level && b.category === q.category && getQuestionTypeKey(b) === qType;
-            const isLessonMatch = (b: BankQuestion) => {
-                const bLesson = b.lesson.toLowerCase().trim();
-                return bLesson.includes(qLesson) || qLesson.includes(bLesson);
+            const isTypeMatch = (b: BankQuestion) => b.category === q.category && getQuestionTypeKey(b) === qType;
+            const isLevelMatch = (b: BankQuestion) => {
+                if (b.level === q.level) return true;
+                if (q.level === 'VD' && b.level === 'VDC') return true;
+                return false;
             };
 
-            let pool = bank.filter(b => isCompatible(b) && isLessonMatch(b));
-            if (pool.length === 0) {
-                pool = bank.filter(b => b.level === q.level && b.category === q.category && isLessonMatch(b));
-            }
-            let validCandidates = pool.filter(b => !currentTestIds.has(b.id) && !newlySelectedIds.has(b.id));
-
-            // Ưu tiên 1: Các ứng viên có YCCĐ KHÔNG bị trùng với loại câu hỏi khác trong đề
-            const nonCollidingCandidates = validCandidates.filter(
-                b => !cKeysUsedByOtherTypes.has(getCanonicalCriterionKeyForQuestion(b, targetG, b.lesson))
+            // Ưu tiên 1: Lấy câu hỏi trong ngân hàng ĐÚNG BÀI và ĐÚNG YCCĐ
+            const candidates = candidatePool.filter(b =>
+                !currentTestIds.has(b.id) &&
+                !newlySelectedIds.has(b.id) &&
+                b.id !== q.id &&
+                isGradeMatch(b) &&
+                isTypeMatch(b) &&
+                isLevelMatch(b) &&
+                isLessonStrictMatch(b.lesson, q.lesson, targetG) &&
+                isCriterionStrictMatch(b, q, targetG)
             );
-            const searchPool = nonCollidingCandidates.length > 0 ? nonCollidingCandidates : validCandidates;
 
-            let finalCandidates: BankQuestion[] = [];
-            if (!cKeysUsedByOtherTypes.has(qCKey)) {
-                finalCandidates = searchPool.filter(
-                    b => getCanonicalCriterionKeyForQuestion(b, targetG, b.lesson) === qCKey
+            let replacement: BankQuestion | null = null;
+            if (candidates.length > 0) {
+                if (isFinalExamExamGen && (q.level === 'VD' || q.level === 'VDC')) {
+                    candidates.sort((candA, candB) => {
+                        const newA = isQuestionFromNewLessonHelper(candA, targetG) ? 1 : 0;
+                        const newB = isQuestionFromNewLessonHelper(candB, targetG) ? 1 : 0;
+                        return newB - newA;
+                    });
+                }
+                replacement = candidates[Math.floor(Math.random() * candidates.length)];
+            } else {
+                // Tự động sinh câu mới chuẩn GDPT 2018 ĐÚNG BÀI + ĐÚNG TIÊU CHÍ YCCĐ nếu ngân hàng đã dùng hết
+                const generatedOffline = generateOfflineQuestions(
+                    targetG,
+                    q.lesson,
+                    q.level,
+                    q.criteria || q.lesson,
+                    1,
+                    qType
                 );
-            }
-            if (finalCandidates.length === 0) {
-                finalCandidates = searchPool;
+                if (generatedOffline && generatedOffline.length > 0) {
+                    const newOffQ = generatedOffline[0];
+                    replacement = {
+                        ...newOffQ,
+                        id: `bulkswap_${Date.now()}_${Math.random().toString(36).substr(2, 7)}_${index}`,
+                        criteria: q.criteria,
+                        lesson: q.lesson,
+                        level: q.level,
+                        category: q.category,
+                        questionType: q.questionType,
+                        mcType: q.mcType,
+                        points: q.points
+                    };
+                }
             }
 
-            if (isFinalExamExamGen && (q.level === 'VD' || q.level === 'VDC')) {
-                finalCandidates.sort((candA, candB) => {
-                    const newA = isQuestionFromNewLessonHelper(candA, targetG) ? 1 : 0;
-                    const newB = isQuestionFromNewLessonHelper(candB, targetG) ? 1 : 0;
-                    return newB - newA;
-                });
-            }
-
-            if (finalCandidates.length > 0) {
-                const replacement = finalCandidates[Math.floor(Math.random() * finalCandidates.length)];
+            if (replacement) {
                 newTest[index] = {
                     ...replacement,
+                    criteria: q.criteria || replacement.criteria,
+                    lesson: q.lesson,
+                    level: q.level,
                     points: q.points,
                     _partOrder: (q as any)._partOrder,
                     _rowIdx: (q as any)._rowIdx,
@@ -2112,77 +2194,110 @@ const ExamGenerator: React.FC = () => {
         });
 
         setGeneratedTest(newTest);
+
+        // Đồng bộ ngay các mã đề variants
+        const availableCodes = ['101', '102', '103', '104', '105', '106', '107', '108'].slice(0, variantCount);
+        const newVariants = generateExamVariants(newTest, availableCodes, shuffleOptions);
+        setVariants(newVariants);
+
         if (swappedCount === 0) {
             alert("Không tìm thấy câu hỏi thay thế nào khác trong ngân hàng.");
         } else {
-            showNotice(`Đã đổi ${swappedCount} câu hỏi mới từ Ngân hàng.`);
+            showNotice(`Đã đổi thành công ${swappedCount} câu hỏi mới (đúng bài, đúng tiêu chí YCCĐ).`);
         }
     };
 
     const swapQuestion = (q: BankQuestion) => {
         const targetG = detectGradeFromContext(generatedTest, headerInfo, importedMatrix);
-        const qLesson = q.lesson.toLowerCase().trim();
         const qType = getQuestionTypeKey(q);
-        const qCKey = getCanonicalCriterionKeyForQuestion(q, targetG, q.lesson);
+        const currentTestIds = new Set(generatedTest.map(gt => gt.id));
 
-        // Tập hợp các YCCĐ đang được sử dụng bởi các câu hỏi thuộc LOẠI CÂU HỎI KHÁC trong đề
-        const cKeysUsedByOtherTypes = new Set<string>();
-        generatedTest.forEach(otherQ => {
-            if (otherQ.uniqueId === q.uniqueId) return;
-            if (getQuestionTypeKey(otherQ) !== qType) {
-                cKeysUsedByOtherTypes.add(getCanonicalCriterionKeyForQuestion(otherQ, targetG, otherQ.lesson));
-            }
-        });
+        // Nguồn tìm kiếm câu hỏi: ưu tiên activeBank, sau đó tới bank
+        const candidatePool = activeBank.length > 0 ? activeBank : bank;
 
-        const isCompatible = (b: BankQuestion) =>
-            b.level === q.level && b.category === q.category && getQuestionTypeKey(b) === qType;
-        const isLessonMatch = (b: BankQuestion) => {
-            const bLesson = b.lesson.toLowerCase().trim();
-            return bLesson.includes(qLesson) || qLesson.includes(bLesson);
+        const isGradeMatch = (b: BankQuestion) => !b.grade || String(b.grade) === targetG;
+        const isTypeMatch = (b: BankQuestion) => b.category === q.category && getQuestionTypeKey(b) === qType;
+        const isLevelMatch = (b: BankQuestion) => {
+            if (b.level === q.level) return true;
+            if (q.level === 'VD' && b.level === 'VDC') return true;
+            return false;
         };
 
-        let pool = bank.filter(b => isCompatible(b) && isLessonMatch(b));
-        if (pool.length === 0) {
-            pool = bank.filter(b => b.level === q.level && b.category === q.category && isLessonMatch(b));
-        }
-        const currentTestIds = new Set(generatedTest.map(gt => gt.id));
-        const candidates = pool.filter(b => !currentTestIds.has(b.id));
-
-        const nonColliding = candidates.filter(
-            b => !cKeysUsedByOtherTypes.has(getCanonicalCriterionKeyForQuestion(b, targetG, b.lesson))
+        // BẮT BUỘC ĐÚNG BÀI VÀ ĐÚNG TIÊU CHÍ YÊU CẦU CẦN ĐẠT (YCCĐ)
+        const candidates = candidatePool.filter(b =>
+            !currentTestIds.has(b.id) &&
+            b.id !== q.id &&
+            isGradeMatch(b) &&
+            isTypeMatch(b) &&
+            isLevelMatch(b) &&
+            isLessonStrictMatch(b.lesson, q.lesson, targetG) &&
+            isCriterionStrictMatch(b, q, targetG)
         );
-        const preferredPool = nonColliding.length > 0 ? nonColliding : candidates;
 
-        let bestCandidates: BankQuestion[] = [];
-        if (!cKeysUsedByOtherTypes.has(qCKey)) {
-            bestCandidates = preferredPool.filter(
-                b => getCanonicalCriterionKeyForQuestion(b, targetG, b.lesson) === qCKey
+        let replacement: BankQuestion | null = null;
+
+        if (candidates.length > 0) {
+            if (isFinalExamExamGen && (q.level === 'VD' || q.level === 'VDC')) {
+                candidates.sort((candA, candB) => {
+                    const newA = isQuestionFromNewLessonHelper(candA, targetG) ? 1 : 0;
+                    const newB = isQuestionFromNewLessonHelper(candB, targetG) ? 1 : 0;
+                    return newB - newA;
+                });
+            }
+            replacement = candidates[Math.floor(Math.random() * candidates.length)];
+        } else {
+            // Khi trong ngân hàng không còn câu hỏi nào khác khớp ĐÚNG BÀI và ĐÚNG YCCĐ này:
+            // Tự động sinh ngay 1 câu hỏi mới chuẩn sư phạm GDPT 2018 ĐÚNG BÀI VÀ ĐÚNG YCCĐ đó!
+            const generatedOffline = generateOfflineQuestions(
+                targetG,
+                q.lesson,
+                q.level,
+                q.criteria || q.lesson,
+                1,
+                qType
             );
-        }
-        if (bestCandidates.length === 0) {
-            bestCandidates = preferredPool;
+            if (generatedOffline && generatedOffline.length > 0) {
+                const newOffQ = generatedOffline[0];
+                replacement = {
+                    ...newOffQ,
+                    id: `swap_${Date.now()}_${Math.random().toString(36).substr(2, 7)}`,
+                    criteria: q.criteria, // Giữ trọn vẹn tiêu chí YCCĐ ban đầu
+                    lesson: q.lesson,     // Giữ trọn vẹn bài học ban đầu
+                    level: q.level,
+                    category: q.category,
+                    questionType: q.questionType,
+                    mcType: q.mcType,
+                    points: q.points
+                };
+                setBank(prev => [...prev, replacement!]);
+                const stored = loadQuestionBank().data || [];
+                saveQuestionBank([...stored, replacement!], { force: true });
+            }
         }
 
-        if (isFinalExamExamGen && (q.level === 'VD' || q.level === 'VDC')) {
-            bestCandidates.sort((candA, candB) => {
-                const newA = isQuestionFromNewLessonHelper(candA, targetG) ? 1 : 0;
-                const newB = isQuestionFromNewLessonHelper(candB, targetG) ? 1 : 0;
-                return newB - newA;
-            });
-        }
-
-        if (bestCandidates.length > 0) {
-            const replacement = bestCandidates[Math.floor(Math.random() * bestCandidates.length)];
+        if (replacement) {
             const newQ = {
                 ...replacement,
+                criteria: q.criteria || replacement.criteria,
+                lesson: q.lesson,
+                level: q.level,
                 points: q.points,
                 _partOrder: (q as any)._partOrder,
                 _rowIdx: (q as any)._rowIdx,
                 uniqueId: Math.random()
             } as any;
-            setGeneratedTest(prev => prev.map(item => item.uniqueId === q.uniqueId ? newQ : item));
+
+            const updatedTest = generatedTest.map(item => item.uniqueId === q.uniqueId ? newQ : item);
+            setGeneratedTest(updatedTest);
+
+            // Đồng bộ ngay variants
+            const availableCodes = ['101', '102', '103', '104', '105', '106', '107', '108'].slice(0, variantCount);
+            const newVariants = generateExamVariants(updatedTest, availableCodes, shuffleOptions);
+            setVariants(newVariants);
+
+            showNotice(`Đã đổi câu hỏi mới (Đúng ${q.lesson} - Tiêu chí ${q.criteria || 'chuẩn'})`);
         } else {
-            alert(`Không tìm thấy câu hỏi nào khác cùng bài và mức độ để thay thế.`);
+            alert(`Không tìm thấy hoặc không thể tạo câu hỏi thay thế đúng bài "${q.lesson}" và tiêu chí "${q.criteria}".`);
         }
     };
 
