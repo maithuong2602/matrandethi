@@ -108,6 +108,9 @@ export const buildSimilarQuestionPrompt = (
     const pointsStr = (q.points ?? (subtype === 'essay' ? 1.0 : 0.25)).toFixed(2).replace('.', ',');
 
     const rawLevel = q.level || 'NB';
+    const critPart = q.criteria ? ` - ${q.criteria}` : '';
+    const fullHeaderTag = `Câu ${index + 1} [${rawLevel}${critPart}] [${subtypeLabel}] (${q.lesson})`;
+
     let typeSpecificRule = '';
     let sampleFormat = '';
 
@@ -119,7 +122,8 @@ export const buildSimilarQuestionPrompt = (
   + PHÂN BỐ ĐÚNG/SAI LINH HOẠT, TUYỆT ĐỐI KHÔNG RẬP KHUÔN 2 ĐÚNG 2 SAI:
     Có thể thiết kế: 3 phát biểu Sai - 1 phát biểu Đúng (3S - 1Đ); hoặc 3 phát biểu Đúng - 1 phát biểu Sai (3Đ - 1S); hoặc 2 Đúng - 2 Sai với vị trí đảo ngẫu nhiên.
     Luôn đảm bảo có cả phát biểu Đúng và phát biểu Sai (tối thiểu 1 Đúng, tối thiểu 1 Sai).`;
-            sampleFormat = `Câu ${index + 1} [${rawLevel}]: Tình huống: <Mô tả tình huống thực tế mới ngắn gọn>
+            sampleFormat = `${fullHeaderTag}:
+Tình huống: <Mô tả tình huống thực tế mới ngắn gọn>
 Xác định tính đúng hoặc sai của các phát biểu sau:
 a) <Phát biểu a mới> [Đúng]
 b) <Phát biểu b mới> [Sai]
@@ -134,7 +138,8 @@ d) <Phát biểu d mới> [Sai]
   + ĐÚNG 4 lựa chọn A, B, C, D. Mọi lựa chọn phải kết thúc bằng dấu chấm (.).
   + PHÂN BỐ SỐ ĐÁP ÁN ĐÚNG: Thiết kế ĐÚNG 2 hoặc ĐÚNG 3 đáp án đúng trong 4 phương án A, B, C, D (ví dụ: A và C đúng; hoặc B, C, D đúng).
   + Đánh dấu dấu sao (*) trước chữ cái của các đáp án đúng (ví dụ: *A. ... và *C. ...).`;
-            sampleFormat = `Câu ${index + 1} [${rawLevel}]: <Nội dung câu hỏi trực tiếp>
+            sampleFormat = `${fullHeaderTag}:
+<Nội dung câu hỏi trực tiếp theo ngữ cảnh mới>
 *A. <Lựa chọn A đúng>.
 B. <Lựa chọn B sai>.
 *C. <Lựa chọn C đúng>.
@@ -147,7 +152,8 @@ D. <Lựa chọn D sai>.
   + Dòng đầu tiên: Nêu bối cảnh / đề bài bài toán tự luận thực tế ngắn gọn.
   + ĐÚNG 4 ý hỏi đánh dấu: a) ..., b) ..., c) ..., d) ...
   + Hướng dẫn chấm: BẮT BUỘC gồm ĐÚNG 4 dòng tương ứng a), b), c), d) kèm biểu điểm chi tiết (mỗi ý 0,25 điểm, tổng 1,0 điểm).`;
-            sampleFormat = `Câu ${index + 1} [${rawLevel}]: <Bối cảnh đề bài mới>
+            sampleFormat = `${fullHeaderTag}:
+<Bối cảnh đề bài mới>
 a) <Yêu cầu ý a>
 b) <Yêu cầu ý b>
 c) <Yêu cầu ý c>
@@ -163,7 +169,8 @@ d) <Đáp án chuẩn ý d> - 0,25 điểm.`;
             typeSpecificRule = `- BẮT BUỘC DẠNG TRẢ LỜI NGẮN:
   + Câu hỏi ngắn gọn, yêu cầu tính toán, xác định giá trị, đếm số lượng hoặc nêu thuật ngữ then chốt.
   + Đáp án là một số hoặc cụm từ ngắn gọn chính xác.`;
-            sampleFormat = `Câu ${index + 1} [${rawLevel}]: <Nội dung câu hỏi mới>
+            sampleFormat = `${fullHeaderTag}:
+<Nội dung câu hỏi mới>
 Đáp án: <Giá trị số hoặc từ khóa ngắn gọn>`;
             break;
 
@@ -172,7 +179,8 @@ d) <Đáp án chuẩn ý d> - 0,25 điểm.`;
   + Câu hỏi ngắn gọn, trực diện, không dài dòng nhiều chữ.
   + ĐÚNG 4 lựa chọn A, B, C, D - DUY NHẤT 1 đáp án đúng. Mọi lựa chọn kết thúc bằng dấu chấm (.).
   + Đánh dấu dấu sao (*) trước phương án đúng duy nhất.`;
-            sampleFormat = `Câu ${index + 1} [${rawLevel}]: <Nội dung câu hỏi trực tiếp>
+            sampleFormat = `${fullHeaderTag}:
+<Nội dung câu hỏi trực tiếp theo ngữ cảnh mới>
 A. <Phương án A>.
 *B. <Phương án B đúng>.
 C. <Phương án C>.
@@ -194,39 +202,45 @@ LƯU Ý QUAN TRỌNG: Hãy sử dụng các sự kiện, thuật ngữ, số li�
 NHIỆM VỤ:
 Hãy tạo 01 CÂU HỎI MỚI TƯƠNG ĐƯƠNG (câu hỏi song song / biến thể bối cảnh) cho Câu ${index + 1} của đề thi môn Tin học Lớp ${resolvedGrade}.
 
-THÔNG TIN CÂU HỎI GỐC CẦN BÁM THEO:
-- Vị trí trong đề: Câu ${index + 1}
-- Thể loại: ${subtypeLabel}
-- Mức độ nhận thức: ${formatCognitiveLevel(q.level)}
-- Bài học: "${q.lesson}"
-- Yêu cầu cần đạt (YCCĐ): "${q.criteria || 'Chuẩn kiến thức bài học'}"
-- Thang điểm: ${pointsStr} điểm
+THÔNG TIN ĐẦY ĐỦ CÁC THÀNH PHẦN CỦA CÂU HỎI GỐC CẦN BÁM THEO:
+- Định danh đầy đủ: ${fullHeaderTag}
+- 1. Số thứ tự câu: Câu ${index + 1}
+- 2. Mức độ nhận thức: ${formatCognitiveLevel(q.level)}
+- 3. Mã tiêu chí YCCĐ: ${q.criteria || '1.1'}
+- 4. Thể loại câu hỏi: ${subtypeLabel}
+- 5. Bài học: "${q.lesson}"
+- 6. Yêu cầu cần đạt chi tiết: "${q.criteria || q.lesson}"
+- 7. Thang điểm: ${pointsStr} điểm (Điểm: ${pointsStr}đ)
 
-NỘI DUNG CÂU HỎI GỐC:
+NỘI DUNG VÀ PHƯƠNG ÁN CÂU HỎI GỐC:
 ${q.content}
 ${formatQuestionOptionsAndAnswer(q)}
 
 ${contextSection}
 
 QUY TẮC SƯ PHẠM CỐT LÕI (BẮT BUỘC TUÂN THỦ 100%):
-1. GIỮ NGUYÊN HOÀN TOÀN MỨC ĐỘ NHẬN THỨC VÀ YCCĐ:
+1. GIỮ NGUYÊN HOÀN TOÀN TẤT CẢ CÁC THÀNH PHẦN CỐT LÕI:
    - Thể loại câu hỏi: "${subtypeLabel}".
    - Mức độ nhận thức: "${rawLevel}" - ${formatCognitiveLevel(rawLevel)}.
 ${getCognitivePedagogicalGuide(rawLevel)}
-   - Chuẩn Yêu cầu cần đạt (YCCĐ): "${q.criteria || q.lesson}".
+   - Mã tiêu chí YCCĐ: "${q.criteria || '1.1'}".
+   - Bài học: "${q.lesson}".
    - Khối lớp: Tin học ${resolvedGrade}.
+   - Thang điểm: ${pointsStr} điểm.
 2. CHỈ ĐỔI NGỮ CẢNH (CONTEXT):
    - Thay đổi bối cảnh, tình huống, bài toán, số liệu, tên nhân vật, thiết bị, phần mềm hoặc dữ kiện theo nguồn tài liệu cung cấp ở trên.
    - Nội dung câu hỏi và các phương án phải ngắn gọn, cô đọng, đi thẳng vào vấn đề. TUYỆT ĐỐI KHÔNG viết dài dòng lê thê nhiều chữ gây quá tải cho học sinh THCS.
 3. TUYỆT ĐỐI KHÔNG THAM CHIẾU VỊ TRÍ SGK:
    - CẤM các cụm từ: "Trong bảng...", "Ở Hình X.Y...", "Trong SGK...", "Theo bài học...".
    - Câu hỏi phải hoàn toàn độc lập (self-contained), học sinh làm bài không có sách giáo khoa trước mặt.
-4. QUY CÁCH ĐẶT NHÃN MỨC ĐỘ NHẬN THỨC VÀ ĐỊNH DẠNG:
-   - Gắn nhãn mức độ nhận thức ngay sau số thứ tự câu: "Câu ${index + 1} [${rawLevel}]: <Nội dung câu hỏi>".
-   - Hệ thống phần mềm sẽ tự động nhận diện tag [${rawLevel}] để lưu trữ đúng mức độ nhận thức vào ngân hàng đề, đồng thời tự động làm sạch nhãn này khi xuất file Word đề thi chính thức để học sinh làm bài.
+4. QUY CÁCH ĐẶT NHÃN ĐẦY ĐỦ CÁC THÀNH PHẦN VÀ ĐỊNH DẠNG ĐẦU RA:
+   - Dòng tiêu đề đầu câu hỏi BẮT BUỘC chứa ĐẦY ĐỦ CÁC THÀNH PHẦN theo đúng cú pháp:
+     "${fullHeaderTag}:"
+     gồm: Số thứ tự câu + Tag Mức độ nhận thức & Mã YCCĐ [${rawLevel}${critPart}] + Tag Thể loại [${subtypeLabel}] + Tag Bài học (${q.lesson}).
+   - Phần mềm sẽ tự động nhận diện tất cả các thành phần này để lưu trữ đồng bộ vào hệ thống (đúng mức độ nhận thức, đúng bài, đúng tiêu chí), đồng thời tự động làm sạch các nhãn tag này khi xuất đề Word chính thức cho học sinh làm bài độc lập.
 ${typeSpecificRule}
 
-ĐỊNH DẠNG ĐẦU RA YÊU CẦU (BẮT BUỘC TRẢ VỀ THEO CÚ PHÁP CHUẨN DƯỚI ĐÂY ĐỂ PHẦN MỀM TỰ ĐỘNG PHÂN TÍCH VÀ THAY THẾ VÀO ĐỀ):
+ĐỊNH DẠNG ĐẦU RA YÊU CẦU (BẮT BUỘC TRẢ VỀ ĐẦY ĐỦ CÁC THÀNH PHẦN THEO CÚ PHÁP CHUẨN DƯỚI ĐÂY ĐỂ PHẦN MỀM TỰ ĐỘNG PHÂN TÍCH VÀ THAY THẾ VÀO ĐỀ):
 ${sampleFormat}
 `;
 };
@@ -264,13 +278,18 @@ LƯU Ý ĐẶC BIỆT: Hãy bám sát nguồn tài liệu trên để làm ngữ
         const subtype = getQuestionSubtype(q);
         const subtypeLabel = getQuestionSubtypeLabel(subtype);
         const pts = (q.points ?? (subtype === 'essay' ? 1.0 : 0.25)).toFixed(2).replace('.', ',');
+        const rawLvl = q.level || 'NB';
+        const crit = q.criteria ? ` - ${q.criteria}` : '';
+        const itemHeader = `Câu ${idx + 1} [${rawLvl}${crit}] [${subtypeLabel}] (${q.lesson})`;
 
         return `--------------------------------------------------
-[CÂU ${idx + 1}] (${pts} điểm)
+[CÂU ${idx + 1}] (${pts} điểm) - ${itemHeader}
+- Định danh đầy đủ: ${itemHeader}
 - Thể loại: ${subtypeLabel}
 - Mức độ nhận thức: ${formatCognitiveLevel(q.level)}
+- Tiêu chí YCCĐ: ${q.criteria || 'Chuẩn kiến thức'}
 - Bài học: "${q.lesson}"
-- Yêu cầu cần đạt: "${q.criteria || 'Chuẩn kiến thức'}"
+- Thang điểm: ${pts} điểm
 - Nội dung gốc:
 ${q.content}
 ${formatQuestionOptionsAndAnswer(q)}`;
@@ -301,23 +320,27 @@ QUY TẮC CỐT LÕI (BẮT BUỘC TUÂN THỦ 100%):
 3. CHỈ ĐỔI NGỮ CẢNH:
    - Thay đổi số liệu, tên biến, đối tượng, bối cảnh thực tế theo nguồn tài liệu cung cấp.
    - Câu hỏi ngắn gọn, trực diện, không dài dòng. Không tham chiếu SGK ("Trong SGK...", "Ở Hình X.Y...").
-4. QUY CÁCH ĐẶT NHÃN MỨC ĐỘ NHẬN THỨC VÀ ĐỊNH DẠNG:
-   - Gắn nhãn mức độ nhận thức ngay sau số thứ tự câu hỏi: ví dụ "Câu 1 [NB]: ...", "Câu 2 [TH]: Tình huống: ...", "Câu 3 [VD]: ...", "Câu 4 [VDC]: ...".
-   - Hệ thống phần mềm sẽ tự động nhận diện tag [NB]/[TH]/[VD]/[VDC] để lưu trữ đúng mức độ nhận thức vào ngân hàng đề, đồng thời tự động làm sạch nhãn này khi xuất file Word đề thi chính thức để học sinh làm bài độc lập.
+4. QUY CÁCH ĐẶT NHÃN ĐẦY ĐỦ CÁC THÀNH PHẦN VÀ ĐỊNH DẠNG ĐẦU RA:
+   - Đầu mỗi câu hỏi BẮT BUỘC có dòng tiêu đề chứa ĐẦY ĐỦ CÁC THÀNH PHẦN:
+     "Câu X [Mức độ - Mã YCCĐ] [Thể loại] (Bài học):"
+     Ví dụ: "Câu 1 [NB - 1.1] [Trắc nghiệm 1 đáp án] (Bài 1: Lược sử công cụ tính toán):"
+   - Hệ thống phần mềm sẽ tự động nhận diện tất cả các tag thành phần này để lưu trữ đồng bộ vào ngân hàng đề, đồng thời tự động làm sạch các nhãn tag khi xuất file Word đề thi chính thức cho học sinh làm bài độc lập.
 
 DANH SÁCH ${filteredIndexedQuestions.length} CÂU HỎI GỐC CẦN TẠO TƯƠNG TỰ:
 ${questionsListText}
 
-ĐỊNH DẠNG ĐẦU RA YÊU CẦU (BẮT BUỘC TRẢ VỀ ĐỦ TỪNG CÂU THEO CÚ PHÁP CHUẨN SAU ĐỂ HỆ THỐNG PARSE VÀ THAY THẾ TỰ ĐỘNG VÀO ĐÚNG VỊ TRÍ ĐỀ THI):
+ĐỊNH DẠNG ĐẦU RA YÊU CẦU (BẮT BUỘC TRẢ VỀ ĐỦ TỪNG CÂU VỚI ĐẦY ĐỦ CÁC THÀNH PHẦN THEO CÚ PHÁP CHUẨN SAU ĐỂ HỆ THỐNG PARSE VÀ THAY THẾ TỰ ĐỘNG VÀO ĐÚNG VỊ TRÍ ĐỀ THI):
 
-Câu 1 [NB]: <Nội dung câu 1 trực tiếp>
+Câu 1 [NB - 1.1] [Trắc nghiệm 1 đáp án] (Bài 1: Lược sử công cụ tính toán):
+<Nội dung câu 1 trực tiếp theo ngữ cảnh mới>
 A. <Phương án A>.
 *B. <Phương án B đúng>.
 C. <Phương án C>.
 D. <Phương án D>.
 Đáp án: B
 
-Câu 2 [TH]: Tình huống: <Mô tả tình huống câu 2>
+Câu 2 [TH - 2.1] [Trắc nghiệm Đúng - Sai] (Bài 2: Thông tin trong môi trường số):
+Tình huống: <Mô tả tình huống câu 2 mới>
 Xác định tính đúng hoặc sai của các phát biểu sau:
 a) <Phát biểu a> [Đúng]
 b) <Phát biểu b> [Sai]
@@ -325,7 +348,7 @@ c) <Phát biểu c> [Đúng]
 d) <Phát biểu d> [Sai]
 Đáp án: a-Đ, b-S, c-Đ, d-S
 
-(Tiếp tục lần lượt đến hết tất cả các câu theo danh sách ở trên...)
+(Tiếp tục lần lượt đầy đủ các thành phần đến hết tất cả các câu theo danh sách ở trên...)
 `;
 };
 

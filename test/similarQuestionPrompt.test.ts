@@ -367,13 +367,38 @@ C. Hard Disk.
             const singlePrompt = buildSimilarQuestionPrompt(mockQuestionSingle, 0);
             expect(singlePrompt).toContain('Mức độ nhận thức: NB (Nhận biết');
             expect(singlePrompt).toContain('Mức NHẬN BIẾT [NB]');
-            expect(singlePrompt).toContain('Câu 1 [NB]:');
+            expect(singlePrompt).toContain('Câu 1 [NB - 1.1] [Trắc nghiệm 1 đáp án] (Bài 1: Lược sử công cụ tính toán):');
 
             const bulkPrompt = buildBulkSimilarExamPrompt([mockQuestionSingle, mockQuestionTF]);
             expect(bulkPrompt).toContain('Mức độ nhận thức: NB (Nhận biết');
             expect(bulkPrompt).toContain('Mức độ nhận thức: TH (Thông hiểu');
-            expect(bulkPrompt).toContain('Câu 1 [NB]:');
-            expect(bulkPrompt).toContain('Câu 2 [TH]:');
+            expect(bulkPrompt).toContain('Câu 1 [NB - 1.1] [Trắc nghiệm 1 đáp án] (Bài 1: Lược sử công cụ tính toán):');
+            expect(bulkPrompt).toContain('Câu 2 [TH - 2.1]');
+            expect(bulkPrompt).toContain('Bài 2: Thông tin trong môi trường số');
+        });
+
+        it('14. prompts contain ALL components: question number, cognitive level & criteria code, question subtype, lesson name, points, stem, options, and answer', () => {
+            const prompt = buildSimilarQuestionPrompt(mockQuestionSingle, 0);
+
+            // Thành phần 1: Định danh câu hỏi
+            expect(prompt).toContain('Câu 1');
+            // Thành phần 2: Mức độ nhận thức
+            expect(prompt).toContain('NB (Nhận biết');
+            // Thành phần 3: Mã tiêu chí YCCĐ
+            expect(prompt).toContain('1.1');
+            // Thành phần 4: Thể loại câu hỏi
+            expect(prompt).toContain('Trắc nghiệm 1 đáp án');
+            // Thành phần 5: Bài học
+            expect(prompt).toContain('Bài 1: Lược sử công cụ tính toán');
+            // Thành phần 6: Thang điểm
+            expect(prompt).toContain('0,25 điểm');
+            // Thành phần 7 & 8: Nội dung câu hỏi và các phương án, đáp án
+            expect(prompt).toContain('Máy tính điện tử thế hệ thứ nhất sử dụng linh kiện chính nào?');
+            expect(prompt).toContain('*B. Đèn điện tử chân không.');
+            expect(prompt).toContain('Đáp án: B');
+
+            // Cú pháp đầy đủ các thành phần
+            expect(prompt).toContain('Câu 1 [NB - 1.1] [Trắc nghiệm 1 đáp án] (Bài 1: Lược sử công cụ tính toán):');
         });
     });
 });

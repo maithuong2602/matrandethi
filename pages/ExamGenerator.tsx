@@ -2510,7 +2510,8 @@ const ExamGenerator: React.FC = () => {
                 similarContextInput,
                 grade
             );
-            const formatted = `Câu ${similarModalQuestion.index + 1}: [${getQuestionSubtypeLabel(getQuestionSubtype(generatedQ))}] [${generatedQ.level}] ${generatedQ.content}\n${formatQuestionOptionsAndAnswer(generatedQ)}`;
+            const critPart = similarModalQuestion.q.criteria ? ` - ${similarModalQuestion.q.criteria}` : '';
+            const formatted = `Câu ${similarModalQuestion.index + 1} [${generatedQ.level || 'NB'}${critPart}] [${getQuestionSubtypeLabel(getQuestionSubtype(generatedQ))}] (${similarModalQuestion.q.lesson}):\n${generatedQ.content}\n${formatQuestionOptionsAndAnswer(generatedQ)}`;
             setSimilarPastedText(formatted);
             showNotice('AI đã tạo thành công câu hỏi tương tự!');
         } catch (err: any) {
@@ -2539,7 +2540,7 @@ const ExamGenerator: React.FC = () => {
 
         const mergedQ: BankQuestion = {
             ...oldQ,
-            content: parsedQ.content || oldQ.content,
+            content: cleanQuestionContentForWord(parsedQ.content || oldQ.content),
             options: parsedQ.options && parsedQ.options.length > 0 ? parsedQ.options : oldQ.options,
             answer: parsedQ.answer || oldQ.answer,
             level: parsedQ.level || oldQ.level,
@@ -2662,7 +2663,8 @@ const ExamGenerator: React.FC = () => {
                     const newQ = await generateSimilarQuestionDirectAI(q, idx, bulkSimilarContextInput, grade);
                     updated[idx] = newQ;
                     successCount++;
-                    previewLines.push(`Câu ${idx + 1}: [${getQuestionSubtypeLabel(getQuestionSubtype(newQ))}] [${newQ.level}] ${newQ.content}\n${formatQuestionOptionsAndAnswer(newQ)}\n`);
+                    const critPart = q.criteria ? ` - ${q.criteria}` : '';
+                    previewLines.push(`Câu ${idx + 1} [${newQ.level || 'NB'}${critPart}] [${getQuestionSubtypeLabel(getQuestionSubtype(newQ))}] (${q.lesson}):\n${newQ.content}\n${formatQuestionOptionsAndAnswer(newQ)}\n`);
                 } catch {
                     // Tiếp tục các câu còn lại
                 }

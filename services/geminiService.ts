@@ -382,6 +382,7 @@ export const parseStructuredTextQuestions = (rawText: string): any[] => {
         let isScenarioTF = false;
         let level: 'NB' | 'TH' | 'VD' | 'VDC' = 'NB';
         let criteria = '';
+        let lesson = '';
 
         // Bóc tách nhãn nếu đặt trước hoặc sau chữ "Câu X:"
         const stripLeadingTags = (input: string): string => {
@@ -430,6 +431,24 @@ export const parseStructuredTextQuestions = (rawText: string): any[] => {
                     else if (criteria.startsWith('3.')) level = 'VD';
                     else if (criteria.startsWith('4.')) level = 'VDC';
                     s = s.slice(critOnlyMatch[0].length).trim();
+                    matched = true;
+                }
+                const lessonTagMatch = s.match(/^(?:\[\s*(?:Bài\s*\d+[^\]]*)\s*\]|\(\s*(?:Bài\s*\d+[^)]*)\s*\))\s*/i);
+                if (lessonTagMatch) {
+                    if (!lesson) {
+                        lesson = (lessonTagMatch[0] || '').replace(/^[[(]\s*|\s*[\])]$/g, '').trim();
+                    }
+                    s = s.slice(lessonTagMatch[0].length).trim();
+                    matched = true;
+                }
+                const pointTagMatch = s.match(/^(?:\[\s*(?:\d+(?:[.,]\d+)?\s*(?:đ|điểm|pts?))\s*\]|\(\s*(?:\d+(?:[.,]\d+)?\s*(?:đ|điểm|pts?))\s*\))\s*/i);
+                if (pointTagMatch) {
+                    s = s.slice(pointTagMatch[0].length).trim();
+                    matched = true;
+                }
+                const colonOrDash = s.match(/^[:\-]\s*/);
+                if (colonOrDash) {
+                    s = s.slice(colonOrDash[0].length).trim();
                     matched = true;
                 }
             }
@@ -517,6 +536,7 @@ export const parseStructuredTextQuestions = (rawText: string): any[] => {
                 mcType: 'true-false',
                 level,
                 criteria,
+                lesson: lesson || undefined,
                 content: stem,
                 options,
                 answer: answerSummary
@@ -538,6 +558,7 @@ export const parseStructuredTextQuestions = (rawText: string): any[] => {
                 mcType: 'multiple-choice',
                 level,
                 criteria,
+                lesson: lesson || undefined,
                 content: stem,
                 options: [
                     { id: 'Đúng', text: 'Đúng', isCorrect: isTrue },
@@ -577,6 +598,7 @@ export const parseStructuredTextQuestions = (rawText: string): any[] => {
                 mcType: isMulti ? 'multiple-answer' : 'multiple-choice',
                 level,
                 criteria,
+                lesson: lesson || undefined,
                 content: stem,
                 options,
                 answer: correctIds.join(', ')
@@ -590,6 +612,7 @@ export const parseStructuredTextQuestions = (rawText: string): any[] => {
                 questionType: 'essay',
                 level,
                 criteria,
+                lesson: lesson || undefined,
                 content: stem,
                 options: [],
                 answer: explicitAnswer
@@ -604,6 +627,7 @@ export const parseStructuredTextQuestions = (rawText: string): any[] => {
                 mcType: 'fill-blank',
                 level,
                 criteria,
+                lesson: lesson || undefined,
                 content: stem,
                 options: [],
                 answer: explicitAnswer
