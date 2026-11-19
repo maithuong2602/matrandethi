@@ -82,7 +82,7 @@ QUY TẮC BÓC TÁCH CHI TIẾT:
    - "multiple-answer": Trắc nghiệm có 2 hoặc nhiều đáp án đúng.
    - "short-answer": Câu hỏi trả lời ngắn.
    - "essay": Câu hỏi tự luận.
-3. "level": Chỉ nhận 1 trong 4 giá trị: "NB" (Nhận biết), "TH" (Thông hiểu), "VD" (Vận dụng), "VDC" (Vận dụng cao).
+3. "level": BẮT BUỘC PHẢI CÓ MỨC ĐỘ NHẬN THỨC cho từng câu hỏi ("NB", "TH", "VD", "VDC"). Chỉ nhận 1 trong 4 giá trị: "NB" (Nhận biết), "TH" (Thông hiểu), "VD" (Vận dụng), "VDC" (Vận dụng cao). Tuyệt đối không để trống trường "level".
 4. Khớp bảng đáp án: Phải đọc bảng đáp án ở cuối đề thi để đánh dấu isCorrect: true cho phương án đúng của từng câu.
 5. ĐỊNH DẠNG ĐẦU RA: CHỈ XUẤT DUY NHẤT 1 KHỐI JSON HỢP LỆ TRONG CẶP \`\`\`json VÀ \`\`\`, KHÔNG KÈM LỜI DẪN, KHÔNG DÙNG COMMENT TRONG JSON.
 

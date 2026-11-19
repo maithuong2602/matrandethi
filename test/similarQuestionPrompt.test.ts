@@ -3,7 +3,9 @@ import {
     buildSimilarQuestionPrompt,
     buildBulkSimilarExamPrompt,
     parseAndMapBulkSimilarQuestions,
-    formatQuestionOptionsAndAnswer
+    formatQuestionOptionsAndAnswer,
+    formatCognitiveLevel,
+    getCognitivePedagogicalGuide
 } from '../services/similarPromptService';
 import { BankQuestion } from '../pages/ExamGenerator';
 import {
@@ -347,6 +349,31 @@ C. Hard Disk.
             expect(azotaHtml).toContain('1. A');
             expect(azotaHtml).toContain('2. a-Đ, b-S, c-Đ, d-S');
             expect(azotaHtml).not.toContain('1. B');
+        });
+
+        it('12. formats cognitive levels with pedagogical descriptions and guides for NB, TH, VD, VDC', () => {
+            expect(formatCognitiveLevel('NB')).toContain('Nhận biết');
+            expect(formatCognitiveLevel('TH')).toContain('Thông hiểu');
+            expect(formatCognitiveLevel('VD')).toContain('Vận dụng');
+            expect(formatCognitiveLevel('VDC')).toContain('Vận dụng cao');
+
+            expect(getCognitivePedagogicalGuide('NB')).toContain('NHẬN BIẾT');
+            expect(getCognitivePedagogicalGuide('TH')).toContain('THÔNG HIỂU');
+            expect(getCognitivePedagogicalGuide('VD')).toContain('VẬN DỤNG');
+            expect(getCognitivePedagogicalGuide('VDC')).toContain('VẬN DỤNG CAO');
+        });
+
+        it('13. prompts embed cognitive level in question information, rules, and sample output format', () => {
+            const singlePrompt = buildSimilarQuestionPrompt(mockQuestionSingle, 0);
+            expect(singlePrompt).toContain('Mức độ nhận thức: NB (Nhận biết');
+            expect(singlePrompt).toContain('Mức NHẬN BIẾT [NB]');
+            expect(singlePrompt).toContain('Câu 1 [NB]:');
+
+            const bulkPrompt = buildBulkSimilarExamPrompt([mockQuestionSingle, mockQuestionTF]);
+            expect(bulkPrompt).toContain('Mức độ nhận thức: NB (Nhận biết');
+            expect(bulkPrompt).toContain('Mức độ nhận thức: TH (Thông hiểu');
+            expect(bulkPrompt).toContain('Câu 1 [NB]:');
+            expect(bulkPrompt).toContain('Câu 2 [TH]:');
         });
     });
 });

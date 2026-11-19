@@ -25,7 +25,8 @@ import {
     buildBulkSimilarExamPrompt,
     parseAndMapBulkSimilarQuestions,
     generateSimilarQuestionDirectAI,
-    formatQuestionOptionsAndAnswer
+    formatQuestionOptionsAndAnswer,
+    formatCognitiveLevel
 } from '../services/similarPromptService';
 import { splitLegacyTrueFalseQuestions, autoTagQuestion } from './QuestionManager';
 import { CURRICULUM } from '../data/curriculum';
@@ -4562,8 +4563,8 @@ const ExamGenerator: React.FC = () => {
                                     <span className="font-bold text-blue-900 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded">
                                         {getQuestionSubtypeLabel(getQuestionSubtype(similarModalQuestion.q))}
                                     </span>
-                                    <span className="font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
-                                        Mức {similarModalQuestion.q.level}
+                                    <span className="font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded" title={formatCognitiveLevel(similarModalQuestion.q.level)}>
+                                        Mức độ nhận thức: {similarModalQuestion.q.level} ({similarModalQuestion.q.level === 'NB' ? 'Nhận biết' : similarModalQuestion.q.level === 'TH' ? 'Thông hiểu' : similarModalQuestion.q.level === 'VD' ? 'Vận dụng' : 'Vận dụng cao'})
                                     </span>
                                     <span className="font-semibold text-gray-700 bg-gray-100 px-2 py-0.5 rounded">
                                         Điểm: {(similarModalQuestion.q.points ?? 0.25).toFixed(2).replace('.', ',')}đ

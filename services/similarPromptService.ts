@@ -10,6 +10,44 @@ export interface BankQuestion extends ExerciseQuestion {
 }
 
 /**
+ * Chuẩn hóa và hiển thị đầy đủ mức độ nhận thức kèm diễn giải sư phạm
+ */
+export const formatCognitiveLevel = (level?: string): string => {
+    const l = (level || 'NB').toUpperCase().trim();
+    switch (l) {
+        case 'NB':
+            return 'NB (Nhận biết - Nhớ, nhận diện, gọi tên sự kiện, khái niệm, thuật ngữ)';
+        case 'TH':
+            return 'TH (Thông hiểu - Giải thích, so sánh, phân biệt, làm rõ ý nghĩa bản chất)';
+        case 'VD':
+            return 'VD (Vận dụng - Áp dụng kiến thức, kỹ năng giải quyết tình huống bài toán cụ thể)';
+        case 'VDC':
+            return 'VDC (Vận dụng cao - Vận dụng tổng hợp, đánh giá, tối ưu hóa bài toán phức hợp)';
+        default:
+            return `${l} (Mức độ nhận thức GDPT 2018)`;
+    }
+};
+
+/**
+ * Hướng dẫn sư phạm đặc thù tương ứng với từng mức độ nhận thức
+ */
+export const getCognitivePedagogicalGuide = (level?: string): string => {
+    const l = (level || 'NB').toUpperCase().trim();
+    switch (l) {
+        case 'NB':
+            return '  + Mức NHẬN BIẾT [NB]: Câu hỏi yêu cầu học sinh nhận diện, gọi tên, nhớ lại kiến thức cốt lõi, thuật ngữ, thiết bị hoặc thao tác cơ bản. Tránh câu hỏi lắt léo, suy luận phức tạp.';
+        case 'TH':
+            return '  + Mức THÔNG HIỂU [TH]: Câu hỏi yêu cầu học sinh giải thích nguyên lý, hiểu bản chất thao tác, so sánh đối chiếu hoặc phân biệt sự khác nhau giữa các đối tượng.';
+        case 'VD':
+            return '  + Mức VẬN DỤNG [VD]: Thiết kế tình huống thực tế, bài toán hoặc ngữ cảnh ứng dụng cụ thể đòi hỏi học sinh vận dụng kiến thức/kỹ năng để tính toán, thiết lập hoặc giải quyết.';
+        case 'VDC':
+            return '  + Mức VẬN DỤNG CAO [VDC]: Tình huống phức hợp, đòi hỏi phân tích đa chiều, tổng hợp nhiều mảng kiến thức, đánh giá hoặc tìm phương án tối ưu nhất.';
+        default:
+            return '  + Đảm bảo câu hỏi bám sát chuẩn mức độ nhận thức theo chương trình GDPT 2018.';
+    }
+};
+
+/**
  * Định dạng nội dung phương án và đáp án của một câu hỏi gốc thành chuỗi văn bản rõ ràng
  */
 export const formatQuestionOptionsAndAnswer = (q: ExerciseQuestion | BankQuestion): string => {
@@ -69,18 +107,19 @@ export const buildSimilarQuestionPrompt = (
     const resolvedGrade = q.grade || grade || '8';
     const pointsStr = (q.points ?? (subtype === 'essay' ? 1.0 : 0.25)).toFixed(2).replace('.', ',');
 
+    const rawLevel = q.level || 'NB';
     let typeSpecificRule = '';
     let sampleFormat = '';
 
     switch (subtype) {
         case 'true-false':
-            typeSpecificRule = `- BẮT BUỘC DẠNG TRẮC NGHIỆM ĐÚNG/SAI THEO TÌNH HUỐNG:
+            typeSpecificRule = `- BẮT BUỘC DẠNG TRẮC NGHIỆM ĐÚNG/SAI (Đúng/Sai theo tình huống):
   + Gồm 1 Tình huống thực tế ngắn gọn, súc tích (khoảng 2-4 dòng), tự chứa đầy đủ dữ kiện độc lập.
   + Kèm ĐÚNG 4 phát biểu a), b), c), d) xoay quanh tình huống đó.
   + PHÂN BỐ ĐÚNG/SAI LINH HOẠT, TUYỆT ĐỐI KHÔNG RẬP KHUÔN 2 ĐÚNG 2 SAI:
     Có thể thiết kế: 3 phát biểu Sai - 1 phát biểu Đúng (3S - 1Đ); hoặc 3 phát biểu Đúng - 1 phát biểu Sai (3Đ - 1S); hoặc 2 Đúng - 2 Sai với vị trí đảo ngẫu nhiên.
     Luôn đảm bảo có cả phát biểu Đúng và phát biểu Sai (tối thiểu 1 Đúng, tối thiểu 1 Sai).`;
-            sampleFormat = `Câu ${index + 1}: Tình huống: <Mô tả tình huống thực tế mới ngắn gọn, KHÔNG kèm nhãn tag trong ngoặc>
+            sampleFormat = `Câu ${index + 1} [${rawLevel}]: Tình huống: <Mô tả tình huống thực tế mới ngắn gọn>
 Xác định tính đúng hoặc sai của các phát biểu sau:
 a) <Phát biểu a mới> [Đúng]
 b) <Phát biểu b mới> [Sai]
@@ -95,7 +134,7 @@ d) <Phát biểu d mới> [Sai]
   + ĐÚNG 4 lựa chọn A, B, C, D. Mọi lựa chọn phải kết thúc bằng dấu chấm (.).
   + PHÂN BỐ SỐ ĐÁP ÁN ĐÚNG: Thiết kế ĐÚNG 2 hoặc ĐÚNG 3 đáp án đúng trong 4 phương án A, B, C, D (ví dụ: A và C đúng; hoặc B, C, D đúng).
   + Đánh dấu dấu sao (*) trước chữ cái của các đáp án đúng (ví dụ: *A. ... và *C. ...).`;
-            sampleFormat = `Câu ${index + 1}: <Nội dung câu hỏi trực tiếp, KHÔNG kèm nhãn tag trong ngoặc vuông>
+            sampleFormat = `Câu ${index + 1} [${rawLevel}]: <Nội dung câu hỏi trực tiếp>
 *A. <Lựa chọn A đúng>.
 B. <Lựa chọn B sai>.
 *C. <Lựa chọn C đúng>.
@@ -108,7 +147,7 @@ D. <Lựa chọn D sai>.
   + Dòng đầu tiên: Nêu bối cảnh / đề bài bài toán tự luận thực tế ngắn gọn.
   + ĐÚNG 4 ý hỏi đánh dấu: a) ..., b) ..., c) ..., d) ...
   + Hướng dẫn chấm: BẮT BUỘC gồm ĐÚNG 4 dòng tương ứng a), b), c), d) kèm biểu điểm chi tiết (mỗi ý 0,25 điểm, tổng 1,0 điểm).`;
-            sampleFormat = `Câu ${index + 1}: <Bối cảnh đề bài mới, KHÔNG kèm nhãn tag trong ngoặc vuông>
+            sampleFormat = `Câu ${index + 1} [${rawLevel}]: <Bối cảnh đề bài mới>
 a) <Yêu cầu ý a>
 b) <Yêu cầu ý b>
 c) <Yêu cầu ý c>
@@ -124,7 +163,7 @@ d) <Đáp án chuẩn ý d> - 0,25 điểm.`;
             typeSpecificRule = `- BẮT BUỘC DẠNG TRẢ LỜI NGẮN:
   + Câu hỏi ngắn gọn, yêu cầu tính toán, xác định giá trị, đếm số lượng hoặc nêu thuật ngữ then chốt.
   + Đáp án là một số hoặc cụm từ ngắn gọn chính xác.`;
-            sampleFormat = `Câu ${index + 1}: <Nội dung câu hỏi mới, KHÔNG kèm nhãn tag trong ngoặc vuông>
+            sampleFormat = `Câu ${index + 1} [${rawLevel}]: <Nội dung câu hỏi mới>
 Đáp án: <Giá trị số hoặc từ khóa ngắn gọn>`;
             break;
 
@@ -133,7 +172,7 @@ d) <Đáp án chuẩn ý d> - 0,25 điểm.`;
   + Câu hỏi ngắn gọn, trực diện, không dài dòng nhiều chữ.
   + ĐÚNG 4 lựa chọn A, B, C, D - DUY NHẤT 1 đáp án đúng. Mọi lựa chọn kết thúc bằng dấu chấm (.).
   + Đánh dấu dấu sao (*) trước phương án đúng duy nhất.`;
-            sampleFormat = `Câu ${index + 1}: <Nội dung câu hỏi trực tiếp, KHÔNG kèm nhãn tag trong ngoặc vuông>
+            sampleFormat = `Câu ${index + 1} [${rawLevel}]: <Nội dung câu hỏi trực tiếp>
 A. <Phương án A>.
 *B. <Phương án B đúng>.
 C. <Phương án C>.
@@ -158,7 +197,7 @@ Hãy tạo 01 CÂU HỎI MỚI TƯƠNG ĐƯƠNG (câu hỏi song song / biến t
 THÔNG TIN CÂU HỎI GỐC CẦN BÁM THEO:
 - Vị trí trong đề: Câu ${index + 1}
 - Thể loại: ${subtypeLabel}
-- Mức độ nhận thức: ${q.level} (NB: Nhận biết, TH: Thông hiểu, VD: Vận dụng, VDC: Vận dụng cao)
+- Mức độ nhận thức: ${formatCognitiveLevel(q.level)}
 - Bài học: "${q.lesson}"
 - Yêu cầu cần đạt (YCCĐ): "${q.criteria || 'Chuẩn kiến thức bài học'}"
 - Thang điểm: ${pointsStr} điểm
@@ -170,9 +209,10 @@ ${formatQuestionOptionsAndAnswer(q)}
 ${contextSection}
 
 QUY TẮC SƯ PHẠM CỐT LÕI (BẮT BUỘC TUÂN THỦ 100%):
-1. GIỮ NGUYÊN HOÀN TOÀN:
+1. GIỮ NGUYÊN HOÀN TOÀN MỨC ĐỘ NHẬN THỨC VÀ YCCĐ:
    - Thể loại câu hỏi: "${subtypeLabel}".
-   - Mức độ nhận thức: "${q.level}".
+   - Mức độ nhận thức: "${rawLevel}" - ${formatCognitiveLevel(rawLevel)}.
+${getCognitivePedagogicalGuide(rawLevel)}
    - Chuẩn Yêu cầu cần đạt (YCCĐ): "${q.criteria || q.lesson}".
    - Khối lớp: Tin học ${resolvedGrade}.
 2. CHỈ ĐỔI NGỮ CẢNH (CONTEXT):
@@ -181,9 +221,9 @@ QUY TẮC SƯ PHẠM CỐT LÕI (BẮT BUỘC TUÂN THỦ 100%):
 3. TUYỆT ĐỐI KHÔNG THAM CHIẾU VỊ TRÍ SGK:
    - CẤM các cụm từ: "Trong bảng...", "Ở Hình X.Y...", "Trong SGK...", "Theo bài học...".
    - Câu hỏi phải hoàn toàn độc lập (self-contained), học sinh làm bài không có sách giáo khoa trước mặt.
-4. ĐẶC BIỆT LƯU Ý KHI XUẤT CÂU HỎI (KHI XUẤT WORD CHỈ HIỂN THỊ CÂU HỎI):
-   - Sau "Câu X:" chỉ viết TRỰC TIẾP nội dung câu hỏi.
-   - TUYỆT ĐỐI KHÔNG gắn các nhãn tag trong ngoặc vuông như "[Trắc nghiệm 1 đáp án]", "[Đúng/Sai]", "[Nhiều đáp án]", "[Tự luận]", "[NB]", "[TH]", "[VD]", "[VDC]" vào nội dung câu hỏi. Khi xuất ra file Word làm đề kiểm tra, chỉ hiển thị duy nhất nội dung câu hỏi và các phương án.
+4. QUY CÁCH ĐẶT NHÃN MỨC ĐỘ NHẬN THỨC VÀ ĐỊNH DẠNG:
+   - Gắn nhãn mức độ nhận thức ngay sau số thứ tự câu: "Câu ${index + 1} [${rawLevel}]: <Nội dung câu hỏi>".
+   - Hệ thống phần mềm sẽ tự động nhận diện tag [${rawLevel}] để lưu trữ đúng mức độ nhận thức vào ngân hàng đề, đồng thời tự động làm sạch nhãn này khi xuất file Word đề thi chính thức để học sinh làm bài.
 ${typeSpecificRule}
 
 ĐỊNH DẠNG ĐẦU RA YÊU CẦU (BẮT BUỘC TRẢ VỀ THEO CÚ PHÁP CHUẨN DƯỚI ĐÂY ĐỂ PHẦN MỀM TỰ ĐỘNG PHÂN TÍCH VÀ THAY THẾ VÀO ĐỀ):
@@ -228,7 +268,7 @@ LƯU Ý ĐẶC BIỆT: Hãy bám sát nguồn tài liệu trên để làm ngữ
         return `--------------------------------------------------
 [CÂU ${idx + 1}] (${pts} điểm)
 - Thể loại: ${subtypeLabel}
-- Mức độ: ${q.level}
+- Mức độ nhận thức: ${formatCognitiveLevel(q.level)}
 - Bài học: "${q.lesson}"
 - Yêu cầu cần đạt: "${q.criteria || 'Chuẩn kiến thức'}"
 - Nội dung gốc:
@@ -247,32 +287,37 @@ QUY TẮC CỐT LÕI (BẮT BUỘC TUÂN THỦ 100%):
 1. GIỮ NGUYÊN 100% VỊ TRÍ VÀ THỨ TỰ CÂU HỎI:
    - Giữ nguyên số thứ tự từng câu (ví dụ: Câu 1 mới tương ứng Câu 1 gốc, Câu 2 mới tương ứng Câu 2 gốc, v.v.).
    - Tuyệt đối không nhảy cóc, không gộp câu, không bỏ sót bất kỳ câu nào.
-2. GIỮ NGUYÊN HOÀN TOÀN THỂ LOẠI, MỨC ĐỘ VÀ YÊU CẦU CẦN ĐẠT CỦA TỪNG CÂU:
-   - Nếu câu gốc là [Trắc nghiệm 1 đáp án] -> Tạo câu mới [Trắc nghiệm 1 đáp án] (4 lựa chọn A, B, C, D - duy nhất 1 đáp án đúng).
-   - Nếu câu gốc là [Đúng/Sai] theo tình huống -> Tạo tình huống mới + 4 phát biểu a, b, c, d (tỷ lệ 3Đ-1S, 3S-1Đ hoặc 2Đ-2S linh hoạt).
-   - Nếu câu gốc là [Nhiều đáp án] -> Tạo câu mới có 4 lựa chọn A, B, C, D với ĐÚNG 2 hoặc 3 đáp án đúng.
-   - Nếu câu gốc là [Tự luận] -> Tạo câu tự luận mới gồm lời dẫn + 4 ý a, b, c, d kèm hướng dẫn chấm 4 ý chi tiết.
-   - Giữ nguyên mức độ nhận thức (NB/TH/VD/VDC) và bài học của câu gốc.
+2. TUÂN THỦ CHÍNH XÁC MỨC ĐỘ NHẬN THỨC VÀ THỂ LOẠI TỪNG CÂU:
+   - Giữ nguyên mức độ nhận thức (NB/TH/VD/VDC) của từng câu theo đúng chuẩn GDPT 2018:
+     + Mức Nhận biết [NB]: Câu hỏi nhớ lại kiến thức cốt lõi, nhận diện, gọi tên sự kiện, thuật ngữ, công cụ, linh kiện. Tránh câu hỏi đánh đố, lắt léo.
+     + Mức Thông hiểu [TH]: Câu hỏi giải thích nguyên lý hoạt động, làm rõ bản chất, phân biệt sự khác nhau, so sánh đối chiếu giữa các khái niệm.
+     + Mức Vận dụng [VD]: Câu hỏi tình huống thực tế, bài toán hoặc bài thực hành cụ thể yêu cầu học sinh áp dụng kiến thức/kỹ năng để tính toán, thiết lập hoặc xử lý.
+     + Mức Vận dụng cao [VDC]: Tình huống thực tiễn phức hợp, đòi hỏi phân tích chuyên sâu, tổng hợp đa chiều, đánh giá hoặc tìm giải pháp tối ưu.
+   - Thể loại câu hỏi phải tương ứng 100%:
+     + Nếu câu gốc là [Trắc nghiệm 1 đáp án] -> Tạo câu mới [Trắc nghiệm 1 đáp án] (4 lựa chọn A, B, C, D - duy nhất 1 đáp án đúng).
+     + Nếu câu gốc là [Đúng/Sai] theo tình huống -> Tạo tình huống mới + 4 phát biểu a, b, c, d (tỷ lệ 3Đ-1S, 3S-1Đ hoặc 2Đ-2S linh hoạt).
+     + Nếu câu gốc là [Nhiều đáp án] -> Tạo câu mới có 4 lựa chọn A, B, C, D với ĐÚNG 2 hoặc 3 đáp án đúng.
+     + Nếu câu gốc là [Tự luận] -> Tạo câu tự luận mới gồm lời dẫn + 4 ý a, b, c, d kèm hướng dẫn chấm 4 ý chi tiết.
 3. CHỈ ĐỔI NGỮ CẢNH:
    - Thay đổi số liệu, tên biến, đối tượng, bối cảnh thực tế theo nguồn tài liệu cung cấp.
    - Câu hỏi ngắn gọn, trực diện, không dài dòng. Không tham chiếu SGK ("Trong SGK...", "Ở Hình X.Y...").
-4. ĐẶC BIỆT LƯU Ý KHI XUẤT CÂU HỎI (KHI XUẤT WORD CHỈ HIỂN THỊ CÂU HỎI):
-   - Sau "Câu X:" chỉ viết TRỰC TIẾP nội dung câu hỏi.
-   - TUYỆT ĐỐI KHÔNG gắn các nhãn tag trong ngoặc vuông như "[Trắc nghiệm 1 đáp án]", "[Đúng/Sai]", "[Nhiều đáp án]", "[Tự luận]", "[NB]", "[TH]", "[VD]", "[VDC]" vào nội dung câu hỏi. Đề thi xuất Word chỉ hiển thị thuần túy câu hỏi để học sinh làm bài.
+4. QUY CÁCH ĐẶT NHÃN MỨC ĐỘ NHẬN THỨC VÀ ĐỊNH DẠNG:
+   - Gắn nhãn mức độ nhận thức ngay sau số thứ tự câu hỏi: ví dụ "Câu 1 [NB]: ...", "Câu 2 [TH]: Tình huống: ...", "Câu 3 [VD]: ...", "Câu 4 [VDC]: ...".
+   - Hệ thống phần mềm sẽ tự động nhận diện tag [NB]/[TH]/[VD]/[VDC] để lưu trữ đúng mức độ nhận thức vào ngân hàng đề, đồng thời tự động làm sạch nhãn này khi xuất file Word đề thi chính thức để học sinh làm bài độc lập.
 
 DANH SÁCH ${filteredIndexedQuestions.length} CÂU HỎI GỐC CẦN TẠO TƯƠNG TỰ:
 ${questionsListText}
 
 ĐỊNH DẠNG ĐẦU RA YÊU CẦU (BẮT BUỘC TRẢ VỀ ĐỦ TỪNG CÂU THEO CÚ PHÁP CHUẨN SAU ĐỂ HỆ THỐNG PARSE VÀ THAY THẾ TỰ ĐỘNG VÀO ĐÚNG VỊ TRÍ ĐỀ THI):
 
-Câu 1: <Nội dung câu 1 trực tiếp, không gắn nhãn trong ngoặc>
+Câu 1 [NB]: <Nội dung câu 1 trực tiếp>
 A. <Phương án A>.
 *B. <Phương án B đúng>.
 C. <Phương án C>.
 D. <Phương án D>.
 Đáp án: B
 
-Câu 2: Tình huống: <Mô tả tình huống câu 2, không gắn nhãn trong ngoặc>
+Câu 2 [TH]: Tình huống: <Mô tả tình huống câu 2>
 Xác định tính đúng hoặc sai của các phát biểu sau:
 a) <Phát biểu a> [Đúng]
 b) <Phát biểu b> [Sai]
