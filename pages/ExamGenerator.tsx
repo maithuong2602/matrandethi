@@ -526,6 +526,7 @@ const ExamGenerator: React.FC = () => {
     };
 
     const normalizeExamQuestionPoints = (qs: BankQuestion[]): BankQuestion[] => {
+        if (!Array.isArray(qs)) return [];
         const mcCount = qs.filter(q => q.category !== 'essay').length;
         return qs.map(q => {
             if (q.category === 'essay') {
@@ -2093,6 +2094,10 @@ const ExamGenerator: React.FC = () => {
 
         setCurrentDossierId(null);
         setGeneratedTest(selected);
+        const availableCodes = ['101', '102', '103', '104', '105', '106', '107', '108'].slice(0, variantCount);
+        const newVariants = generateExamVariants(selected, availableCodes, shuffleOptions);
+        setVariants(newVariants);
+        setActiveVariantCode(availableCodes[0] || '101');
         const builtHskt = buildHsktExamQuestions(selected, currentActiveBank, headerInfo, 28);
         setHsktTest(builtHskt);
         setHsktSelectedIds(builtHskt.map(q => String(q.id)));
@@ -2433,10 +2438,10 @@ const ExamGenerator: React.FC = () => {
                 uniqueId: Math.random()
             } as any;
 
+            const actualIdx = generatedTest.findIndex(item => (q.uniqueId && item.uniqueId === q.uniqueId) || item.id === q.id);
+            const resolvedIdx = actualIdx !== -1 ? actualIdx : targetIndex;
             const updatedTest = generatedTest.map((item, idx) => {
-                if (targetIndex !== undefined && idx === targetIndex) return newQ;
-                if (q.uniqueId && item.uniqueId === q.uniqueId) return newQ;
-                if (item.id === q.id) return newQ;
+                if (resolvedIdx !== undefined && idx === resolvedIdx) return newQ;
                 return item;
             });
             setGeneratedTest(updatedTest);
@@ -2546,13 +2551,19 @@ const ExamGenerator: React.FC = () => {
             uniqueId: Math.random() // Unique ID mới
         };
 
-        setGeneratedTest(prev => {
-            const next = [...prev];
-            next[targetIdx] = mergedQ;
-            return next;
-        });
+        const actualIdx = generatedTest.findIndex(item => (oldQ.uniqueId && item.uniqueId === oldQ.uniqueId) || item.id === oldQ.id);
+        const resolvedIdx = actualIdx !== -1 ? actualIdx : targetIdx;
 
-        showNotice(`Đã thay thế câu hỏi tương tự vào Câu ${targetIdx + 1} thành công (giữ nguyên vị trí và điểm)!`);
+        const next = [...generatedTest];
+        next[resolvedIdx] = mergedQ;
+        setGeneratedTest(next);
+
+        // Đồng bộ ngay lập tức variants
+        const availableCodes = ['101', '102', '103', '104', '105', '106', '107', '108'].slice(0, variantCount);
+        const newVariants = generateExamVariants(next, availableCodes, shuffleOptions);
+        setVariants(newVariants);
+
+        showNotice(`Đã thay thế câu hỏi tương tự vào Câu ${resolvedIdx + 1} thành công (giữ nguyên vị trí và điểm)!`);
         setSimilarModalQuestion(null);
     };
 
@@ -2658,6 +2669,9 @@ const ExamGenerator: React.FC = () => {
 
             setBulkSimilarPastedText(previewLines.join('\n'));
             setGeneratedTest(updated);
+            const availableCodes = ['101', '102', '103', '104', '105', '106', '107', '108'].slice(0, variantCount);
+            const newVariants = generateExamVariants(updated, availableCodes, shuffleOptions);
+            setVariants(newVariants);
             showNotice(`Đã tạo tự động bằng AI và thay thế thành công ${successCount}/${targetEntries.length} câu vào đúng vị trí!`);
         } catch (err: any) {
             alert('Lỗi tạo hàng loạt bằng AI: ' + (err?.message || err));
@@ -2674,7 +2688,7 @@ const ExamGenerator: React.FC = () => {
         const availableCodes = ['101', '102', '103', '104', '105', '106', '107', '108'].slice(0, variantCount);
         const isOutOfSync = !variants || variants.length === 0 ||
             variants[0]?.questions?.length !== generatedTest.length ||
-            variants[0]?.questions[0]?.content !== generatedTest[0]?.content;
+            variants[0]?.questions.some((q, i) => q.content !== generatedTest[i]?.content || q.id !== generatedTest[i]?.id);
 
         const effectiveVariants = isOutOfSync
             ? generateExamVariants(generatedTest, availableCodes, shuffleOptions)
@@ -2684,9 +2698,12 @@ const ExamGenerator: React.FC = () => {
             setVariants(effectiveVariants);
         }
 
+        // Luôn bám sát 100% danh sách câu hỏi đang mở trên giao diện (WYSIWYG)
+        const currentActiveQuestions = reviewTab === 'hskt' ? activeHsktQuestions : activeQuestions;
+
         if (exportType === 'azota_current' || exportType === 'azota_all') {
             const variantsToExport = exportType === 'azota_current'
-                ? [effectiveVariants.find(v => v.code === activeVariantCode) || effectiveVariants[0]].filter(Boolean)
+                ? [{ code: activeVariantCode, questions: currentActiveQuestions }]
                 : effectiveVariants;
 
             variantsToExport.forEach(v => {
@@ -2721,7 +2738,7 @@ const ExamGenerator: React.FC = () => {
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            const baseName = (customFileName || buildDefaultFileName(activeQuestions, headerInfo, teacherName, importedMatrix)).trim();
+            const baseName = (customFileName || buildDefaultFileName(currentActiveQuestions, headerInfo, teacherName, importedMatrix)).trim();
             a.download = `Bang_Dap_An_${baseName}.doc`;
             a.click();
         } else if (exportType === 'full_dossier') {
@@ -2730,7 +2747,7 @@ const ExamGenerator: React.FC = () => {
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            const baseName = (customFileName || buildDefaultFileName(activeQuestions, headerInfo, teacherName, importedMatrix)).trim();
+            const baseName = (customFileName || buildDefaultFileName(currentActiveQuestions, headerInfo, teacherName, importedMatrix)).trim();
             a.download = `Ho_So_${baseName}.doc`;
             a.click();
         } else if (exportType === 'all') {
@@ -2771,21 +2788,20 @@ const ExamGenerator: React.FC = () => {
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            const baseName = (customFileName || buildDefaultFileName(activeQuestions, headerInfo, teacherName, importedMatrix)).trim();
+            const baseName = (customFileName || buildDefaultFileName(currentActiveQuestions, headerInfo, teacherName, importedMatrix)).trim();
             a.download = `Bo_De_${baseName}.doc`;
             a.click();
         } else if (exportType === 'hskt_both' || exportType === 'hskt_exam' || exportType === 'hskt_grading') {
             const section = exportType === 'hskt_exam' ? 'exam_only' : exportType === 'hskt_grading' ? 'grading_only' : 'both';
             handleDownloadHsktWord(section);
         } else {
-            const currentV = effectiveVariants.find(v => v.code === activeVariantCode) || effectiveVariants[0];
-            const vHeader = { ...headerInfo, maDe: activeVariantCode };
-            const html = generateExamWordHtml(currentV ? currentV.questions : generatedTest, vHeader);
+            const vHeader = { ...headerInfo, maDe: activeVariantCode, isHsktExam: reviewTab === 'hskt' };
+            const html = generateExamWordHtml(currentActiveQuestions, vHeader);
             const blob = new Blob(['\ufeff', html], { type: 'application/msword' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            const baseName = (customFileName || buildDefaultFileName(activeQuestions, headerInfo, teacherName, importedMatrix)).trim();
+            const baseName = (customFileName || buildDefaultFileName(currentActiveQuestions, headerInfo, teacherName, importedMatrix)).trim();
             a.download = `${baseName}.doc`;
             a.click();
         }
@@ -3430,24 +3446,14 @@ const ExamGenerator: React.FC = () => {
                                     <button
                                         type="button"
                                         onClick={() => {
-                                            const availableCodes = ['101', '102', '103', '104', '105', '106', '107', '108'].slice(0, variantCount);
-                                            const isOutOfSync = !variants || variants.length === 0 ||
-                                                variants[0]?.questions?.length !== generatedTest.length ||
-                                                variants[0]?.questions[0]?.content !== generatedTest[0]?.content;
-                                            const effectiveVariants = isOutOfSync
-                                                ? generateExamVariants(generatedTest, availableCodes, shuffleOptions)
-                                                : variants;
-                                            if (isOutOfSync) {
-                                                setVariants(effectiveVariants);
-                                            }
-                                            const currentV = effectiveVariants.find(v => v.code === activeVariantCode) || effectiveVariants[0];
-                                            const vHeader = { ...headerInfo, maDe: activeVariantCode };
-                                            const html = generateExamWordHtml(currentV ? currentV.questions : generatedTest, vHeader);
+                                            const currentActiveQuestions = reviewTab === 'hskt' ? activeHsktQuestions : activeQuestions;
+                                            const vHeader = { ...headerInfo, maDe: activeVariantCode, isHsktExam: reviewTab === 'hskt' };
+                                            const html = generateExamWordHtml(currentActiveQuestions, vHeader);
                                             const blob = new Blob(['\ufeff', html], { type: 'application/msword' });
                                             const url = URL.createObjectURL(blob);
                                             const a = document.createElement('a');
                                             a.href = url;
-                                            const baseName = (customFileName || buildDefaultFileName(activeQuestions, headerInfo, teacherName, importedMatrix)).trim();
+                                            const baseName = (customFileName || buildDefaultFileName(currentActiveQuestions, headerInfo, teacherName, importedMatrix)).trim();
                                             a.download = `${baseName}.doc`;
                                             a.click();
                                         }}

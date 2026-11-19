@@ -390,13 +390,19 @@ export const cleanQuestionContentForWord = (content: string): string => {
     let prev = '';
     while (s !== prev) {
         prev = s;
+        // Bỏ tiền tố Câu X, Bài X
         s = s.replace(/^(?:Câu\s*\d+|Bài\s*\d+|\d+)\s*[.):\-]?\s*/i, '').trim();
-        s = s.replace(/^(?:\[\s*(?:Trắc\s*nghiệm[^\]]*|Đúng\s*[-–/]\s*Sai|Nhiều\s*đáp\s*án|Tự\s*luận|Trả\s*lời\s*ngắn|Điền\s*khuyết|TL|TN|TF_SCENARIO|NB|TH|VD|VDC|Nhận\s*biết|Thông\s*hiểu|Vận\s*dụng(?:\s*cao)?|\d+\.\d+)[^\]]*\]|\(\s*(?:Trắc\s*nghiệm[^)]*|Đúng\s*[-–/]\s*Sai|Nhiều\s*đáp\s*án|Tự\s*luận|Trả\s*lời\s*ngắn|Điền\s*khuyết|TL|TN|NB|TH|VD|VDC|Nhận\s*biết|Thông\s*hiểu|Vận\s*dụng(?:\s*cao)?|\d+\.\d+)[^)]*\))\s*/i, '').trim();
+        // Bỏ các tag trong ngoặc vuông hoặc tròn ở đầu câu
+        s = s.replace(/^(?:\[\s*(?:Trắc\s*nghiệm[^\]]*|Đúng\s*[-–/]\s*Sai|Nhiều\s*đáp\s*án|Tự\s*luận|Trả\s*lời\s*ngắn|Điền\s*khuyết|TL|TN|TF_SCENARIO|NB|TH|VD|VDC|Nhận\s*biết|Thông\s*hiểu|Vận\s*dụng(?:\s*cao)?|\d+\.\d+)[^\]]*\]|\(\s*(?:Trắc\s*nghiệm[^)]*|Đúng\s*[-–/]\s*Sai|Nhiều\s*đáp\s*án|Tự\s*luận|Trả\s*lời\s*ngắn|Điền\s*khuyết|TL|TN|NB|TH|VD|VDC|Nhận\s*biết|Thông\s*hiểu|Vận\s*dụng(?:\s*cao)?|Bài\s*\d+[^)]*|\d+\.\d+)[^)]*\))\s*/i, '').trim();
+        // Bóc sạch tag bất kỳ dạng [NB - 1.1], [Trắc nghiệm 1 đáp án], [TH], v.v. ở đầu câu
+        s = s.replace(/^\[[^\]]*\]\s*/i, '').trim();
+        s = s.replace(/^\(Bài\s*\d+[^)]*\)\s*/i, '').trim();
     }
     return s;
 };
 
 export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
+    if (!Array.isArray(questions)) questions = [];
     const isHsktExam = Boolean(headerInfo?.isHsktExam);
     const exportSection: 'both' | 'exam_only' | 'grading_only' = headerInfo?.exportSection || 'both';
 
@@ -591,9 +597,14 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
         </table>
     `;
 
+    // Hàm tạo key định danh ổn định cho câu hỏi (tránh lỗi object reference mất đồng bộ)
+    const getQuestionKey = (q: any, fallbackIdx: number): string => {
+        return String(q?.uniqueId || q?.id || `idx_${fallbackIdx}_${(q?.content || '').slice(0, 30)}`);
+    };
+
     // Bản đồ vị trí câu hỏi toàn bài (đảm bảo thứ tự Câu 1, Câu 2... liên tục bám sát ma trận và đề thi)
-    const questionIndexMap = new Map<any, number>();
-    questions.forEach((q, idx) => questionIndexMap.set(q, idx + 1));
+    const questionIndexMap = new Map<string, number>();
+    questions.forEach((q, idx) => questionIndexMap.set(getQuestionKey(q, idx), idx + 1));
 
     interface ExamSectionDef {
         type: QuestionSubtype;
@@ -680,7 +691,7 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
             for (let j = 0; j < cols; j++) {
                 const qIdx = i * cols + j;
                 if (qIdx < secQuestions.length) {
-                    const qNum = questionIndexMap.get(secQuestions[qIdx]) || (qIdx + 1);
+                    const qNum = questionIndexMap.get(getQuestionKey(secQuestions[qIdx], qIdx)) || (qIdx + 1);
                     gridHtml += `<td width="${(100 / cols).toFixed(2)}%" style="border: 1px solid black; text-align: center; font-weight: bold; padding: 4px 2px; font-size: 11pt; width: ${100 / cols}%;">Câu<br/>${qNum}</td>`;
                 } else {
                     gridHtml += `<td width="${(100 / cols).toFixed(2)}%" style="border: 1px solid black; padding: 4px 2px; width: ${100 / cols}%;">&nbsp;</td>`;
@@ -706,8 +717,8 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
             const subColWidth = (82 / (chunk.length * 4)).toFixed(2);
             html += `<table style="border-collapse: collapse; margin: 4pt auto 8pt auto; width: 100%; table-layout: fixed; font-size: 11pt; text-align: center;">`;
             html += `<tr><td style="border: 1px solid black; font-weight: bold; padding: 3px; width: 18%; background-color: #f7f7f7;">Câu hỏi</td>`;
-            chunk.forEach(q => {
-                const qNum = questionIndexMap.get(q) || '';
+            chunk.forEach((q, cIdx) => {
+                const qNum = questionIndexMap.get(getQuestionKey(q, cIdx)) || '';
                 html += `<td colspan="4" style="border: 1px solid black; font-weight: bold; padding: 3px; background-color: #f7f7f7;">Câu ${qNum}</td>`;
             });
             html += `</tr><tr><td style="border: 1px solid black; font-weight: bold; padding: 3px; background-color: #fafafa;">Lệnh hỏi</td>`;
@@ -755,8 +766,8 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
 
         // Nội dung câu hỏi trong phần
         if (sec.type === 'essay') {
-            const essayHtml = sec.questions.map((q) => {
-                const qNum = questionIndexMap.get(q) || 1;
+            const essayHtml = sec.questions.map((q, qIdx) => {
+                const qNum = questionIndexMap.get(getQuestionKey(q, qIdx)) || (qIdx + 1);
                 const pointsStr = (q.points || 1.0).toFixed(1).replace('.', ',');
                 const cleanText = cleanQuestionContentForWord(q.content || '');
                 const lines = cleanText.split('\n');
@@ -785,8 +796,8 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
             }).join('');
             examBodyHtml += essayHtml;
         } else if (sec.type === 'true-false') {
-            const tfHtml = sec.questions.map((q) => {
-                const qNum = questionIndexMap.get(q) || 1;
+            const tfHtml = sec.questions.map((q, qIdx) => {
+                const qNum = questionIndexMap.get(getQuestionKey(q, qIdx)) || (qIdx + 1);
                 const hasFourStatements = Array.isArray(q.options) && q.options.length >= 2;
                 if (hasFourStatements) {
                     const isScenario = /tình\s*huống/i.test(q.content || '') || /xác định tính đúng/i.test(q.content || '');
@@ -827,8 +838,8 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
             examBodyHtml += tfHtml;
         } else {
             // single-choice, multiple-answer, short-answer
-            const mcHtml = sec.questions.map((q) => {
-                const qNum = questionIndexMap.get(q) || 1;
+            const mcHtml = sec.questions.map((q, qIdx) => {
+                const qNum = questionIndexMap.get(getQuestionKey(q, qIdx)) || (qIdx + 1);
                 const displayContent = cleanQuestionContentForWord(q.content || '').replace(/\n/g, '<br/>');
                 const multiNote = sec.type === 'multiple-answer' ? ' <em style="font-weight: normal; font-size: 12pt; color: #333;">(Chọn các đáp án đúng)</em>' : '';
                 let questionHtml = `<p style="margin-top: 6pt; margin-bottom: 0; font-size: 13pt; text-align: justify;"><strong>Câu ${qNum}.</strong> ${displayContent}${multiNote}</p>`;
@@ -902,7 +913,7 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
             const rowspan = sec.questions.length;
             sec.questions.forEach((q, index) => {
                 const isFirst = index === 0;
-                const qNum = questionIndexMap.get(q) || 1;
+                const qNum = questionIndexMap.get(getQuestionKey(q, index)) || (index + 1);
                 const qLabel = `Câu ${qNum}`;
 
                 let rawAnswer = q.answer || '';
@@ -1010,7 +1021,7 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                         const idx = r * cols + c;
                         if (idx < sec.questions.length) {
                             const q = sec.questions[idx];
-                            const qNum = questionIndexMap.get(q) || (idx + 1);
+                            const qNum = questionIndexMap.get(getQuestionKey(q, idx)) || (idx + 1);
                             grid += `<td width="${(100 / cols).toFixed(2)}%" style="border: 1px solid black; font-weight: bold; padding: 2px; background-color: #f0f0f0; width: ${100 / cols}%;">${qNum}</td>`;
                         } else {
                             grid += `<td width="${(100 / cols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / cols}%;">&nbsp;</td>`;
@@ -1050,8 +1061,8 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                         <td style="border: 1px solid black; padding: 3px; width: 25%;">Câu hỏi</td>
                         <td style="border: 1px solid black; padding: 3px; width: 75%;">Đáp án các ý (a, b, c, d)</td>
                     </tr>`;
-                sec.questions.forEach(q => {
-                    const qNum = questionIndexMap.get(q) || 1;
+                sec.questions.forEach((q, sIdx) => {
+                    const qNum = questionIndexMap.get(getQuestionKey(q, sIdx)) || (sIdx + 1);
                     let ansStr = '';
                     if (Array.isArray(q.options) && q.options.some((o: any) => ['a', 'b', 'c', 'd'].includes(String(o.id || '').toLowerCase()))) {
                         ansStr = q.options.map((o: any, sIdx: number) => {
@@ -1114,7 +1125,7 @@ export const generateExamWordHtml = (questions: any[], headerInfo: any) => {
                     const idx = r * cols + c;
                     if (idx < sec.questions.length) {
                         const q = sec.questions[idx];
-                        const qNum = questionIndexMap.get(q) || (idx + 1);
+                        const qNum = questionIndexMap.get(getQuestionKey(q, idx)) || (idx + 1);
                         grid += `<td width="${(100 / cols).toFixed(2)}%" style="border: 1px solid black; font-weight: bold; padding: 2px; background-color: #f0f0f0; width: ${100 / cols}%;">${qNum}</td>`;
                     } else {
                         grid += `<td width="${(100 / cols).toFixed(2)}%" style="border: 1px solid black; padding: 2px; width: ${100 / cols}%;">&nbsp;</td>`;
@@ -2740,17 +2751,19 @@ export const generatePrintHTML = (data: MatrixData, examName: string) => {
 };
 
 export const generateAzotaKeyHtml = (questions: any[]) => {
+    if (!Array.isArray(questions) || questions.length === 0) return '';
     let keyHtml = `<div style="font-family: 'Times New Roman', serif; font-size: 14pt; margin: 0 auto; max-width: 800px; page-break-before: always;"><h1 style="text-align: center;">ANSWER KEYS</h1></div>
                 <div style="font-family: 'Times New Roman', serif; font-size: 13pt; margin: 0 auto; max-width: 800px;">`;
     let answers = ``;
     questions.forEach((q, index) => {
         const num = index + 1;
         const sub = getQuestionSubtype(q);
-        if (sub === 'true-false' && q.options && q.options.length > 0) {
-            const tfSummary = q.options.map((opt: any) => `${opt.id || 'a'}-${opt.isCorrect ? 'Đ' : 'S'}`).join(', ');
+        const opts = Array.isArray(q.options) ? q.options : [];
+        if (sub === 'true-false' && opts.length > 0) {
+            const tfSummary = opts.map((opt: any) => `${opt.id || 'a'}-${opt.isCorrect ? 'Đ' : 'S'}`).join(', ');
             answers += `<p style="font-size: 13pt;">${num}. ${tfSummary}</p>`;
-        } else if (q.category !== 'essay' && q.options && q.options.length > 0) {
-            const correctOpt = q.options.filter((opt: any) => opt.isCorrect).map((opt: any) => opt.id).join(', ');
+        } else if (q.category !== 'essay' && opts.length > 0) {
+            const correctOpt = opts.filter((opt: any) => opt.isCorrect).map((opt: any) => opt.id).join(', ');
             if (correctOpt) {
                 answers += `<p style="font-size: 13pt;">${num}. ${correctOpt}</p>`;
             } else if (q.answer) {
@@ -2766,6 +2779,7 @@ export const generateAzotaKeyHtml = (questions: any[]) => {
 // --- CHUYÊN NGHIỆP: BỘ TIỆN ÍCH TRỘN ĐỀ VÀ HỒ SƠ KHẢO THÍ ĐA MÃ ĐỀ ---
 
 export const shuffleArray = <T>(array: T[]): T[] => {
+    if (!Array.isArray(array)) return [];
     const copy = [...array];
     for (let i = copy.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
@@ -2779,12 +2793,19 @@ export const generateExamVariants = (
     variantCodes: string[] = ['101', '102', '103', '104'],
     shuffleOptions: boolean = true
 ): any[] => {
+    if (!Array.isArray(baseQuestions) || baseQuestions.length === 0) return [];
+
+    const safeQuestions = baseQuestions.map(q => ({
+        ...q,
+        options: Array.isArray(q?.options) ? q.options : []
+    }));
+
     // Phân loại câu hỏi theo các phần theo quy định của Bộ GD&ĐT
-    const part1 = baseQuestions.filter(q => getQuestionSubtype(q) === 'single-choice');
+    const part1 = safeQuestions.filter(q => getQuestionSubtype(q) === 'single-choice');
     // Gộp cả câu hỏi Đúng/Sai tình huống và câu hỏi nhiều đáp án đúng vào Phần II: Đúng - Sai (1 dạng chung)
-    const part2 = baseQuestions.filter(q => getQuestionSubtype(q) === 'multiple-answer' || getQuestionSubtype(q) === 'true-false');
-    const part3 = baseQuestions.filter(q => getQuestionSubtype(q) === 'short-answer');
-    const part4 = baseQuestions.filter(q => getQuestionSubtype(q) === 'essay');
+    const part2 = safeQuestions.filter(q => getQuestionSubtype(q) === 'multiple-answer' || getQuestionSubtype(q) === 'true-false');
+    const part3 = safeQuestions.filter(q => getQuestionSubtype(q) === 'short-answer');
+    const part4 = safeQuestions.filter(q => getQuestionSubtype(q) === 'essay');
 
     return variantCodes.map((code, codeIdx) => {
         let currentP1 = [...part1];
