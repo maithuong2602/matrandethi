@@ -1,10 +1,94 @@
 import React, { useState, useRef } from 'react';
 import {
     Upload, FileText, CheckCircle2, AlertCircle, X, ChevronDown,
-    ChevronUp, Sparkles, FolderCheck, Save, Eye, FileCode, Check, RefreshCw
+    ChevronUp, Sparkles, FolderCheck, Save, Eye, FileCode, Check, RefreshCw, Copy
 } from 'lucide-react';
 import { parseUploadedExam, ParsedExamResult } from '../services/examUploadParserService';
 import { ExerciseQuestion } from '../types';
+
+export const AI_CONVERT_PROMPT_TEMPLATE = `Bạn là một chuyên gia xử lý và chuyển đổi dữ liệu đề thi trắc nghiệm theo chương trình GDPT 2018 / 2025 của Bộ Giáo dục & Đào tạo Việt Nam.
+
+NHIỆM VỤ CỦA BẠN:
+Phân tích toàn bộ nội dung đề thi (gồm các câu hỏi, lựa chọn A/B/C/D, ý a/b/c/d và bảng đáp án / hướng dẫn chấm) được cung cấp dưới đây, và chuyển đổi chính xác 100% thành định dạng JSON chuẩn của phần mềm ExamMaster Pro.
+
+CẤU TRÚC JSON MẪU BẮT BUỘC:
+\`\`\`json
+{
+  "title": "KIỂM TRA CUỐI HỌC KỲ I - NĂM HỌC 2026–2027",
+  "grade": "8",
+  "headerInfo": {
+    "donVi": "UBND PHƯỜNG HẢI CHÂU",
+    "tenTruong": "TRƯỜNG THCS LÊ HỒNG PHONG",
+    "tenKyThi": "KIỂM TRA CUỐI HỌC KỲ I - NĂM HỌC 2026–2027",
+    "monHoc": "MÔN: TIN HỌC – LỚP 8",
+    "thoiGian": "45 phút (không kể thời gian giao đề)",
+    "maDe": "101"
+  },
+  "questions": [
+    {
+      "id": "q1",
+      "category": "mc",
+      "questionType": "single-choice",
+      "level": "NB",
+      "criteria": "1.1",
+      "lesson": "Bài 1: Lược sử công cụ tính toán",
+      "content": "Máy tính điện tử thế hệ thứ nhất sử dụng linh kiện chính nào?",
+      "options": [
+        { "id": "A", "text": "Bóng bán dẫn.", "isCorrect": false },
+        { "id": "B", "text": "Đèn điện tử chân không.", "isCorrect": true },
+        { "id": "C", "text": "Mạch tích hợp.", "isCorrect": false },
+        { "id": "D", "text": "Bộ vi xử lí.", "isCorrect": false }
+      ],
+      "answer": "B",
+      "points": 0.25
+    },
+    {
+      "id": "q13",
+      "category": "mc",
+      "questionType": "true-false",
+      "level": "TH",
+      "criteria": "2.1",
+      "lesson": "Bài 2: Thông tin trong môi trường số",
+      "content": "Xác định tính đúng hoặc sai về đặc điểm của việc lưu trữ và xử lí thông tin số:",
+      "options": [
+        { "id": "a", "text": "Thông tin số dễ dàng sao chép và chia sẻ trên môi trường mạng.", "isCorrect": true },
+        { "id": "b", "text": "Thông tin số không thể bị chỉnh sửa sau khi được tạo ra.", "isCorrect": false },
+        { "id": "c", "text": "Công cụ số hỗ trợ xử lí lượng dữ liệu rất lớn trong thời gian ngắn.", "isCorrect": true },
+        { "id": "d", "text": "Mọi thông tin trên Internet đều hoàn toàn chính xác và an toàn tuyệt đối.", "isCorrect": false }
+      ],
+      "answer": "a-Đ, b-S, c-Đ, d-S",
+      "points": 0.25
+    },
+    {
+      "id": "q29",
+      "category": "essay",
+      "questionType": "essay",
+      "level": "VD",
+      "criteria": "3.1",
+      "lesson": "Bài 6: Sắp xếp và lọc dữ liệu",
+      "content": "Em hãy nêu các bước thực hiện thao tác lọc dữ liệu tự động trong bảng tính Excel.",
+      "answer": "HƯỚNG DẪN CHẤM:\\n- Bước 1: Chọn bảng dữ liệu cần lọc (0,25đ).\\n- Bước 2: Vào thẻ Data, chọn Filter (0,25đ).\\n- Bước 3: Nhấp vào mũi tên tại tiêu đề cột cần lọc, chọn tiêu chí (0,50đ).",
+      "points": 1.0
+    }
+  ]
+}
+\`\`\`
+
+QUY TẮC BÓC TÁCH CHI TIẾT:
+1. "content": CHỈ LẤY PHẦN NỘI DUNG CÂU HỎI. TUYỆT ĐỐI KHÔNG để lại tiền tố "Câu 1.", "Câu 13.", "Bài 1:" hoặc các tag "[NB]", "[Trắc nghiệm 1 đáp án]".
+2. "questionType":
+   - "single-choice": Trắc nghiệm 4 phương án A, B, C, D (options có id: "A", "B", "C", "D" in hoa).
+   - "true-false": Trắc nghiệm Đúng - Sai 4 ý (options có id: "a", "b", "c", "d" in thường, kèm isCorrect: true/false tương ứng).
+   - "multiple-answer": Trắc nghiệm có 2 hoặc nhiều đáp án đúng.
+   - "short-answer": Câu hỏi trả lời ngắn.
+   - "essay": Câu hỏi tự luận.
+3. "level": Chỉ nhận 1 trong 4 giá trị: "NB" (Nhận biết), "TH" (Thông hiểu), "VD" (Vận dụng), "VDC" (Vận dụng cao).
+4. Khớp bảng đáp án: Phải đọc bảng đáp án ở cuối đề thi để đánh dấu isCorrect: true cho phương án đúng của từng câu.
+5. ĐỊNH DẠNG ĐẦU RA: CHỈ XUẤT DUY NHẤT 1 KHỐI JSON HỢP LỆ TRONG CẶP \`\`\`json VÀ \`\`\`, KHÔNG KÈM LỜI DẪN, KHÔNG DÙNG COMMENT TRONG JSON.
+
+---
+DƯỚI ĐÂY LÀ NỘI DUNG ĐỀ THI CẦN CHUYỂN ĐỔI:
+[DÁN TOÀN BỘ NỘI DUNG ĐỀ THI VÀ ĐÁP ÁN CỦA BẠN VÀO ĐÂY]`;
 
 interface ExamUploadModalProps {
     isOpen: boolean;
@@ -21,13 +105,14 @@ export const ExamUploadModal: React.FC<ExamUploadModalProps> = ({
     onSaveToMainBank,
     onSaveToSimilarBank
 }) => {
-    const [activeTab, setActiveTab] = useState<'file' | 'paste'>('file');
+    const [activeTab, setActiveTab] = useState<'file' | 'paste' | 'prompt'>('file');
     const [pastedText, setPastedText] = useState<string>('');
     const [fileName, setFileName] = useState<string>('');
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [parseResult, setParseResult] = useState<ParsedExamResult | null>(null);
     const [showQuestionsPreview, setShowQuestionsPreview] = useState<boolean>(false);
     const [isDragOver, setIsDragOver] = useState<boolean>(false);
+    const [copiedPrompt, setCopiedPrompt] = useState<boolean>(false);
 
     // Editable fields in preview
     const [customTitle, setCustomTitle] = useState<string>('');
@@ -199,6 +284,17 @@ export const ExamUploadModal: React.FC<ExamUploadModalProps> = ({
                         >
                             <FileCode size={15} /> Dán nội dung trực tiếp
                         </button>
+                        <button
+                            type="button"
+                            onClick={() => { setActiveTab('prompt'); handleReset(); }}
+                            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+                                activeTab === 'prompt'
+                                    ? 'bg-purple-600 text-white shadow-xs'
+                                    : 'text-slate-600 hover:bg-slate-100'
+                            }`}
+                        >
+                            <Sparkles size={15} /> Lấy Prompt Tạo JSON Chuẩn (Cho AI khác)
+                        </button>
                     </div>
 
                     {/* Tab 1: Upload File */}
@@ -265,6 +361,54 @@ export const ExamUploadModal: React.FC<ExamUploadModalProps> = ({
                                 >
                                     <Sparkles size={14} /> Phân Tích & Nhận Diện Đề Thi
                                 </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Tab 3: AI Prompt Generator for JSON */}
+                    {activeTab === 'prompt' && !parseResult && (
+                        <div className="space-y-4">
+                            <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                                <div>
+                                    <h4 className="text-xs font-bold text-purple-900 flex items-center gap-1.5">
+                                        <Sparkles size={14} className="text-purple-600" />
+                                        Prompt Chuyển Đổi Đề Thi Thành JSON Chuẩn ExamMaster Pro
+                                    </h4>
+                                    <p className="text-[11px] text-purple-700 mt-0.5">
+                                        Sao chép prompt này, dán vào <strong>ChatGPT, Claude hoặc Gemini</strong> kèm đề thi của bạn. AI sẽ trả về khối JSON chuẩn 100% để bạn dán vào Tab "Dán nội dung trực tiếp" hoặc lưu thành file .json tải lên!
+                                    </p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        navigator.clipboard.writeText(AI_CONVERT_PROMPT_TEMPLATE);
+                                        setCopiedPrompt(true);
+                                        setTimeout(() => setCopiedPrompt(false), 2500);
+                                    }}
+                                    className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-xs shrink-0 cursor-pointer transition-all"
+                                >
+                                    {copiedPrompt ? <Check size={14} className="text-emerald-300" /> : <Copy size={14} />}
+                                    {copiedPrompt ? 'Đã Sao Chép Prompt!' : 'Sao Chép Prompt Này'}
+                                </button>
+                            </div>
+
+                            <div className="relative">
+                                <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
+                                    Nội dung Prompt:
+                                </label>
+                                <textarea
+                                    readOnly
+                                    value={AI_CONVERT_PROMPT_TEMPLATE}
+                                    rows={13}
+                                    className="w-full text-xs font-mono p-3 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none resize-none leading-relaxed text-slate-800"
+                                />
+                            </div>
+
+                            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 space-y-1">
+                                <p className="font-bold text-slate-700">📌 3 Bước đơn giản để có đề thi nhận dạng 100%:</p>
+                                <p>1. Bấm nút <strong>"Sao Chép Prompt Này"</strong> ở trên.</p>
+                                <p>2. Dán vào <strong>ChatGPT / Claude / Gemini</strong>, kéo xuống dưới cùng thay thế dòng <code>[DÁN TOÀN BỘ NỘI DUNG ĐỀ THI...]</code> bằng đề thi của bạn.</p>
+                                <p>3. Copy khối <code>```json ... ```</code> mà AI phản hồi, quay lại đây chuyển sang tab <strong>"Dán nội dung trực tiếp"</strong> rồi bấm <strong>"Phân Tích & Nhận Diện"</strong>!</p>
                             </div>
                         </div>
                     )}
