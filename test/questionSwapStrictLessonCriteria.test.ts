@@ -5,7 +5,8 @@ import {
     resolveCanonicalLessonName,
     getCanonicalCriterionKeyForQuestion,
     areCriteriaSemanticallySame,
-    normalizeCriterionText
+    normalizeCriterionText,
+    normalizeQuestionContentKey
 } from '../services/criteriaService';
 import { generateOfflineQuestions } from '../services/offlineQuestionGenerator';
 
@@ -267,5 +268,118 @@ describe('Đổi câu hỏi: Đổi đúng bài và đúng tiêu chí YCCĐ (Str
         const textCustom = qCustom[0].content || qCustom[0].text || '';
         expect(textCustom).toContain('Bài 99: Chuyên đề Trí tuệ nhân tạo nâng cao');
         expect(textCustom).toContain('thị giác máy tính');
+    });
+
+    it('7. Question swap candidate filtering rejects ANY question already in the test (by ID or content)', () => {
+        const targetG = '8';
+        const currentQ = {
+            id: 'q_current_swap',
+            content: 'Năm 1642, Blaise Pascal đã sáng chế ra máy tính cơ học nào?',
+            lesson: 'Bài 1: Lược sử công cụ tính toán',
+            criteria: '1.1',
+            level: 'NB',
+            category: 'mc',
+            questionType: 'multiple-choice'
+        };
+
+        const existingOtherTestQuestion = {
+            id: 'q_other_in_exam',
+            content: 'Máy tính điện tử thế hệ thứ nhất sử dụng linh kiện điện tử chính nào sau đây?',
+            lesson: 'Bài 1: Lược sử công cụ tính toán',
+            criteria: '1.1',
+            level: 'NB',
+            category: 'mc',
+            questionType: 'multiple-choice'
+        };
+
+        const generatedTest = [currentQ, existingOtherTestQuestion];
+        const existingOtherTestIds = new Set(
+            generatedTest.filter(gt => gt.id !== currentQ.id).map(gt => gt.id)
+        );
+        const currentTestContents = new Set(
+            generatedTest.map(gt => normalizeQuestionContentKey(gt.content || (gt as any).text || ''))
+        );
+
+        const bank = [
+            // Candidate 1: Same lesson, same criteria, but same ID as existing question in exam
+            {
+                id: 'q_other_in_exam',
+                content: 'Máy tính điện tử thế hệ thứ nhất sử dụng linh kiện điện tử chính nào sau đây?',
+                lesson: 'Bài 1: Lược sử công cụ tính toán',
+                criteria: '1.1',
+                level: 'NB',
+                category: 'mc',
+                questionType: 'multiple-choice'
+            },
+            // Candidate 2: Different ID, but DUPLICATE CONTENT with question already in exam
+            {
+                id: 'q_diff_id_same_content',
+                content: 'máy tính điện tử thế hệ thứ nhất sử dụng linh kiện điện tử chính nào sau đây?',
+                lesson: 'Bài 1: Lược sử công cụ tính toán',
+                criteria: '1.1',
+                level: 'NB',
+                category: 'mc',
+                questionType: 'multiple-choice'
+            },
+            // Candidate 3: Same content as currentQ being swapped (no point swapping to the exact same question!)
+            {
+                id: 'q_same_as_current',
+                content: 'Năm 1642, Blaise Pascal đã sáng chế ra máy tính cơ học nào?',
+                lesson: 'Bài 1: Lược sử công cụ tính toán',
+                criteria: '1.1',
+                level: 'NB',
+                category: 'mc',
+                questionType: 'multiple-choice'
+            },
+            // Candidate 4: Right lesson, right criteria, right level, NOT in exam!
+            {
+                id: 'q_fresh_valid',
+                content: 'Chiếc máy tính cơ học Pascaline có khả năng thực hiện trực tiếp các phép tính nào?',
+                lesson: 'Bài 1: Lược sử công cụ tính toán',
+                criteria: '1.1',
+                level: 'NB',
+                category: 'mc',
+                questionType: 'multiple-choice'
+            }
+        ];
+
+        const validCandidates = bank.filter(b => {
+            if (existingOtherTestIds.has(b.id) || b.id === currentQ.id) return false;
+            const bKey = normalizeQuestionContentKey(b.content || (b as any).text || '');
+            if (bKey && currentTestContents.has(bKey)) return false;
+            if (b.level !== currentQ.level || b.category !== currentQ.category || b.questionType !== currentQ.questionType) return false;
+            if (!isLessonStrictMatch(b.lesson, currentQ.lesson, targetG)) return false;
+            if (!isCriterionStrictMatch(b, currentQ, targetG)) return false;
+            return true;
+        });
+
+        expect(validCandidates).toHaveLength(1);
+        expect(validCandidates[0].id).toBe('q_fresh_valid');
+    });
+
+    it('8. generateOfflineQuestions excludes questions in excludeContents and selects an unpicked concept', () => {
+        const lesson = 'Bài 1: Lược sử công cụ tính toán';
+        const level = 'NB';
+        const criteria = '1.1';
+        const existingStem = 'Máy tính điện tử thế hệ thứ nhất sử dụng linh kiện điện tử chính nào sau đây?';
+
+        // When excludeContents includes the first concept stem
+        const generated = generateOfflineQuestions(
+            '8',
+            lesson,
+            level,
+            criteria,
+            1,
+            'multiple-choice',
+            [normalizeQuestionContentKey(existingStem)]
+        );
+
+        expect(generated).toHaveLength(1);
+        const generatedStem = generated[0].content || generated[0].text || '';
+        // Guaranteed NOT to be the existing stem
+        expect(generatedStem).not.toBe(existingStem);
+        expect(normalizeQuestionContentKey(generatedStem)).not.toBe(normalizeQuestionContentKey(existingStem));
+        // Still belongs to Bài 1 Lược sử công cụ tính toán
+        expect(generatedStem.toLowerCase()).toMatch(/pascal|pascaline|babbage|lovelace|eniac/);
     });
 });

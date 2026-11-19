@@ -35,6 +35,22 @@ export const normalizeCriterionText = (text: string): string => {
 };
 
 /**
+ * Chuẩn hóa nội dung câu hỏi để kiểm tra chống trùng lặp trong đề thi
+ * (loại bỏ tiền tố Câu 1..., tag mức độ, tag bài học, dấu câu và khoảng trắng thừa)
+ */
+export const normalizeQuestionContentKey = (text: string): string => {
+    if (!text) return '';
+    return text
+        .toLowerCase()
+        .replace(/<[^>]*>/g, '') // Bỏ thẻ HTML
+        .replace(/^[c|C]âu\s*\d+\s*[:.]?\s*/i, '') // Bỏ tiền tố Câu 1, Câu 2...
+        .replace(/\[[^\]]*\]/g, '') // Bỏ các tag trong ngoặc vuông như [NB - 1.1], [Trắc nghiệm 1 đáp án]...
+        .replace(/\([^\)]*bài\s*\d+[^\)]*\)/gi, '') // Bỏ ghi chú (Bài 1: ...)
+        .replace(/[^a-z0-9àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/g, '')
+        .trim();
+};
+
+/**
  * Checks if two criterion strings represent the same semantic requirement
  * (handles minor wording differences between CURRICULUM and REQUIREMENTS_DATA, e.g., "tìm kiếm được thông tin" vs "tìm kiếm thông tin", "thông qua" vs "qua", "nhiệm vụ học tập" vs "nhiệm vụ")
  */

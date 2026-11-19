@@ -43,7 +43,8 @@ import {
     resolveCanonicalLessonName,
     areCriteriaSemanticallySame,
     normalizeCriterionText,
-    getLessonsForSubTopic
+    getLessonsForSubTopic,
+    normalizeQuestionContentKey
 } from '../services/criteriaService';
 import {
     getSavedExams,
@@ -2121,12 +2122,15 @@ const ExamGenerator: React.FC = () => {
         if (!window.confirm(`Bạn có chắc muốn đổi ${label}?`)) return;
 
         const newTest = [...generatedTest];
-        const currentTestIds = new Set(generatedTest.map(t => t.id));
-        const newlySelectedIds = new Set<string>();
+        const usedIds = new Set<string>();
+        const usedContents = new Set<string>();
 
+        // Giữ lại ID và Content của những câu KHÔNG bị đổi trong đợt này
         newTest.forEach(q => {
             if (targetLevel && q.level !== targetLevel) {
-                newlySelectedIds.add(q.id);
+                usedIds.add(q.id);
+                const cKey = normalizeQuestionContentKey(q.content || (q as any).text || '');
+                if (cKey) usedContents.add(cKey);
             }
         });
 
@@ -2146,17 +2150,16 @@ const ExamGenerator: React.FC = () => {
                 return false;
             };
 
-            // Ưu tiên 1: Lấy câu hỏi trong ngân hàng ĐÚNG BÀI và ĐÚNG YCCĐ
-            const candidates = candidatePool.filter(b =>
-                !currentTestIds.has(b.id) &&
-                !newlySelectedIds.has(b.id) &&
-                b.id !== q.id &&
-                isGradeMatch(b) &&
-                isTypeMatch(b) &&
-                isLevelMatch(b) &&
-                isLessonStrictMatch(b.lesson, q.lesson, targetG) &&
-                isCriterionStrictMatch(b, q, targetG)
-            );
+            // NGUYÊN TẮC: CHỈ ĐỔI NHỮNG CÂU CHƯA CÓ TRONG ĐỀ HIỆN TẠI, ĐÚNG BÀI, ĐÚNG TIÊU CHÍ YCCĐ
+            const candidates = candidatePool.filter(b => {
+                if (usedIds.has(b.id) || b.id === q.id) return false;
+                const bContentKey = normalizeQuestionContentKey(b.content || (b as any).text || '');
+                if (bContentKey && usedContents.has(bContentKey)) return false;
+                if (!isGradeMatch(b) || !isTypeMatch(b) || !isLevelMatch(b)) return false;
+                if (!isLessonStrictMatch(b.lesson, q.lesson, targetG)) return false;
+                if (!isCriterionStrictMatch(b, q, targetG)) return false;
+                return true;
+            });
 
             let replacement: BankQuestion | null = null;
             if (candidates.length > 0) {
@@ -2169,14 +2172,15 @@ const ExamGenerator: React.FC = () => {
                 }
                 replacement = candidates[Math.floor(Math.random() * candidates.length)];
             } else {
-                // Tự động sinh câu mới chuẩn GDPT 2018 ĐÚNG BÀI + ĐÚNG TIÊU CHÍ YCCĐ nếu ngân hàng đã dùng hết
+                // Tự động sinh câu mới chuẩn GDPT 2018 ĐÚNG BÀI + ĐÚNG TIÊU CHÍ YCCĐ + CHƯA CÓ TRONG ĐỀ HIỆN TẠI
                 const generatedOffline = generateOfflineQuestions(
                     targetG,
                     q.lesson,
                     q.level,
                     q.criteria || q.lesson,
                     1,
-                    qType
+                    qType,
+                    Array.from(usedContents)
                 );
                 if (generatedOffline && generatedOffline.length > 0) {
                     const newOffQ = generatedOffline[0];
@@ -2205,10 +2209,14 @@ const ExamGenerator: React.FC = () => {
                     _rowIdx: (q as any)._rowIdx,
                     uniqueId: Math.random()
                 } as any;
-                newlySelectedIds.add(replacement.id);
+                usedIds.add(replacement.id);
+                const repKey = normalizeQuestionContentKey(replacement.content || (replacement as any).text || '');
+                if (repKey) usedContents.add(repKey);
                 swappedCount++;
             } else {
-                newlySelectedIds.add(q.id);
+                usedIds.add(q.id);
+                const qKey = normalizeQuestionContentKey(q.content || (q as any).text || '');
+                if (qKey) usedContents.add(qKey);
             }
         });
 
@@ -2222,14 +2230,26 @@ const ExamGenerator: React.FC = () => {
         if (swappedCount === 0) {
             alert("Không tìm thấy câu hỏi thay thế nào khác trong ngân hàng.");
         } else {
-            showNotice(`Đã đổi thành công ${swappedCount} câu hỏi mới (đúng bài, đúng tiêu chí YCCĐ).`);
+            showNotice(`Đã đổi thành công ${swappedCount} câu hỏi mới (chưa có trong đề, đúng bài, đúng tiêu chí YCCĐ).`);
         }
     };
 
     const swapQuestion = (q: BankQuestion, targetIndex?: number) => {
         const targetG = detectGradeFromContext(generatedTest, headerInfo, importedMatrix);
         const qType = getQuestionTypeKey(q);
-        const currentTestIds = new Set(generatedTest.map(gt => gt.id));
+
+        // Tập ID của các câu hỏi khác đang có trong đề hiện tại
+        const existingOtherTestIds = new Set(
+            generatedTest
+                .filter((item, idx) => targetIndex !== undefined ? idx !== targetIndex : (item.uniqueId ? item.uniqueId !== q.uniqueId : item.id !== q.id))
+                .map(item => item.id)
+        );
+
+        // Tập nội dung chuẩn hóa của TẤT CẢ các câu hỏi trong đề hiện tại (bao gồm cả chính câu q đang muốn đổi)
+        // để bảo đảm câu thay thế KHÔNG TRÙNG với bất kỳ câu nào khác trong đề VÀ KHÔNG TRÙNG với chính câu đang đổi
+        const currentTestContents = new Set(
+            generatedTest.map(item => normalizeQuestionContentKey(item.content || (item as any).text || ''))
+        );
 
         // Nguồn tìm kiếm câu hỏi: ưu tiên activeBank, sau đó tới bank
         const candidatePool = activeBank.length > 0 ? activeBank : bank;
@@ -2242,16 +2262,16 @@ const ExamGenerator: React.FC = () => {
             return false;
         };
 
-        // BẮT BUỘC ĐÚNG BÀI VÀ ĐÚNG TIÊU CHÍ YÊU CẦU CẦN ĐẠT (YCCĐ)
-        const candidates = candidatePool.filter(b =>
-            !currentTestIds.has(b.id) &&
-            b.id !== q.id &&
-            isGradeMatch(b) &&
-            isTypeMatch(b) &&
-            isLevelMatch(b) &&
-            isLessonStrictMatch(b.lesson, q.lesson, targetG) &&
-            isCriterionStrictMatch(b, q, targetG)
-        );
+        // NGUYÊN TẮC BẮT BUỘC: CHỈ ĐỔI NHỮNG CÂU CHƯA CÓ TRONG ĐỀ HIỆN TẠI, ĐÚNG BÀI VÀ ĐÚNG TIÊU CHÍ YCCĐ
+        const candidates = candidatePool.filter(b => {
+            if (existingOtherTestIds.has(b.id) || b.id === q.id) return false;
+            const bContentKey = normalizeQuestionContentKey(b.content || (b as any).text || '');
+            if (bContentKey && currentTestContents.has(bContentKey)) return false;
+            if (!isGradeMatch(b) || !isTypeMatch(b) || !isLevelMatch(b)) return false;
+            if (!isLessonStrictMatch(b.lesson, q.lesson, targetG)) return false;
+            if (!isCriterionStrictMatch(b, q, targetG)) return false;
+            return true;
+        });
 
         let replacement: BankQuestion | null = null;
 
@@ -2265,15 +2285,16 @@ const ExamGenerator: React.FC = () => {
             }
             replacement = candidates[Math.floor(Math.random() * candidates.length)];
         } else {
-            // Khi trong ngân hàng không còn câu hỏi nào khác khớp ĐÚNG BÀI và ĐÚNG YCCĐ này:
-            // Tự động sinh ngay 1 câu hỏi mới chuẩn sư phạm GDPT 2018 ĐÚNG BÀI VÀ ĐÚNG YCCĐ đó!
+            // Khi trong ngân hàng không còn câu hỏi nào khác khớp ĐÚNG BÀI, ĐÚNG YCCĐ và CHƯA CÓ TRONG ĐỀ:
+            // Tự động sinh ngay 1 câu hỏi mới chuẩn sư phạm GDPT 2018 ĐÚNG BÀI VÀ ĐÚNG YCCĐ đó, loại trừ mọi nội dung đã có trong đề!
             const generatedOffline = generateOfflineQuestions(
                 targetG,
                 q.lesson,
                 q.level,
                 q.criteria || q.lesson,
                 1,
-                qType
+                qType,
+                Array.from(currentTestContents)
             );
             if (generatedOffline && generatedOffline.length > 0) {
                 const newOffQ = generatedOffline[0];
@@ -2319,7 +2340,7 @@ const ExamGenerator: React.FC = () => {
             const newVariants = generateExamVariants(updatedTest, availableCodes, shuffleOptions);
             setVariants(newVariants);
 
-            showNotice(`Đã đổi câu hỏi mới (Đúng ${q.lesson} - Tiêu chí ${q.criteria || 'chuẩn'})`);
+            showNotice(`Đã đổi câu hỏi mới (Chưa có trong đề - Đúng ${q.lesson} - Tiêu chí ${q.criteria || 'chuẩn'})`);
         } else {
             alert(`Không tìm thấy hoặc không thể tạo câu hỏi thay thế đúng bài "${q.lesson}" và tiêu chí "${q.criteria}".`);
         }

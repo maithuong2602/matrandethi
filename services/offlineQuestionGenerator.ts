@@ -1414,11 +1414,21 @@ export const generateOfflineQuestions = (
   level: string, // NB, TH, VD, VDC
   criteriaText: string,
   quantity: number,
-  questionType: string = 'multiple-choice'
+  questionType: string = 'multiple-choice',
+  excludeContents: string[] = []
 ): any[] => {
   const topic = findMatchingTopic(lesson, criteriaText, grade);
   const normalizedLevel = (level || 'NB').toUpperCase();
   const results: any[] = [];
+
+  const normKey = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/g, '');
+  const normExclude = (excludeContents || []).map(normKey).filter(Boolean);
+  const isExcluded = (stem: string) => {
+    if (normExclude.length === 0) return false;
+    const sKey = normKey(stem);
+    if (!sKey) return false;
+    return normExclude.some(ex => ex === sKey || (ex.length > 20 && sKey.length > 20 && (ex.includes(sKey) || sKey.includes(ex))));
+  };
 
   for (let i = 0; i < quantity; i++) {
     const uniqueId = `off_${Date.now()}_${Math.random().toString(36).substr(2, 7)}_${i}`;
@@ -1436,7 +1446,8 @@ export const generateOfflineQuestions = (
           };
         });
         const vdPool = [...(topic.concepts.vd || []), ...(topic.concepts.th || []), ...(topic.concepts.nb || [])];
-        const baseConcept = vdPool[i % vdPool.length];
+        const availableVd = vdPool.filter(cand => !isExcluded(cand.stem));
+        const baseConcept = availableVd.length > 0 ? availableVd[i % availableVd.length] : vdPool[i % vdPool.length];
         const cleanCrit = (criteriaText || '').replace(/^\d+(?:\.\d+)*\s*/, '').trim();
         const scenarioStem = baseConcept
           ? `${baseConcept.stem.replace(/\?$/, '.')} Trong quá trình xử lý tình huống liên quan đến nội dung "${cleanCrit || lesson}", học sinh đã phân tích và đưa ra các phương án nhận định cụ thể.`
@@ -1461,7 +1472,8 @@ export const generateOfflineQuestions = (
 
       case 'short-answer': {
         const pool = topic.concepts.shortAnswer;
-        const item = pool[i % pool.length];
+        const availableItems = pool.filter(cand => !isExcluded(cand.stem));
+        const item = availableItems.length > 0 ? availableItems[i % availableItems.length] : pool[i % pool.length];
         results.push({
           id: uniqueId,
           content: item.stem,
@@ -1481,7 +1493,8 @@ export const generateOfflineQuestions = (
 
       case 'essay': {
         const pool = topic.concepts.essay;
-        const item = pool[i % pool.length];
+        const availableItems = pool.filter(cand => !isExcluded(cand.stem));
+        const item = availableItems.length > 0 ? availableItems[i % availableItems.length] : pool[i % pool.length];
         results.push({
           id: uniqueId,
           content: item.stem,
@@ -1506,7 +1519,15 @@ export const generateOfflineQuestions = (
         else if (normalizedLevel.includes('VD')) levelKey = 'vd';
 
         const pool = topic.concepts[levelKey] || topic.concepts.nb;
-        const item = pool[i % pool.length];
+        const availableItems = pool.filter(cand => !isExcluded(cand.stem));
+        let item = availableItems.length > 0 ? availableItems[i % availableItems.length] : pool[i % pool.length];
+
+        if (availableItems.length === 0 && isExcluded(item.stem)) {
+          const dynTopic = createDynamicLessonTopic(lesson, criteriaText, grade);
+          const dynPool = dynTopic.concepts[levelKey] || dynTopic.concepts.nb;
+          if (dynPool.length > 0) item = dynPool[i % dynPool.length];
+        }
+
         const correct1 = item.correct;
         const correct2 = item.distractors[0] ? `Phương án bổ sung hợp lệ theo ngữ cảnh: ${item.distractors[0]}` : 'Đáp án đúng kèm theo.';
         const wrong1 = item.distractors[1] || 'Phương án hoàn toàn không chính xác.';
@@ -1552,7 +1573,14 @@ export const generateOfflineQuestions = (
         else if (normalizedLevel.includes('VD')) levelKey = 'vd';
 
         const pool = topic.concepts[levelKey] || topic.concepts.nb;
-        const item = pool[i % pool.length];
+        const availableItems = pool.filter(cand => !isExcluded(cand.stem));
+        let item = availableItems.length > 0 ? availableItems[i % availableItems.length] : pool[i % pool.length];
+
+        if (availableItems.length === 0 && isExcluded(item.stem)) {
+          const dynTopic = createDynamicLessonTopic(lesson, criteriaText, grade);
+          const dynPool = dynTopic.concepts[levelKey] || dynTopic.concepts.nb;
+          if (dynPool.length > 0) item = dynPool[i % dynPool.length];
+        }
 
         const rawOpts = [
           { text: item.correct, isCorrect: true },
