@@ -2226,7 +2226,7 @@ const ExamGenerator: React.FC = () => {
         }
     };
 
-    const swapQuestion = (q: BankQuestion) => {
+    const swapQuestion = (q: BankQuestion, targetIndex?: number) => {
         const targetG = detectGradeFromContext(generatedTest, headerInfo, importedMatrix);
         const qType = getQuestionTypeKey(q);
         const currentTestIds = new Set(generatedTest.map(gt => gt.id));
@@ -2306,7 +2306,12 @@ const ExamGenerator: React.FC = () => {
                 uniqueId: Math.random()
             } as any;
 
-            const updatedTest = generatedTest.map(item => item.uniqueId === q.uniqueId ? newQ : item);
+            const updatedTest = generatedTest.map((item, idx) => {
+                if (targetIndex !== undefined && idx === targetIndex) return newQ;
+                if (q.uniqueId && item.uniqueId === q.uniqueId) return newQ;
+                if (item.id === q.id) return newQ;
+                return item;
+            });
             setGeneratedTest(updatedTest);
 
             // Đồng bộ ngay variants
@@ -3688,7 +3693,7 @@ const ExamGenerator: React.FC = () => {
                                                     <div className="flex items-center gap-1.5 flex-wrap">
                                                         <button
                                                             type="button"
-                                                            onClick={() => swapQuestion(q)}
+                                                            onClick={() => swapQuestion(q, idx)}
                                                             className="text-xs flex items-center gap-1 text-primary hover:bg-blue-50 px-2 py-1 rounded font-semibold transition-colors cursor-pointer"
                                                         >
                                                             <RefreshCw size={13} /> Đổi câu khác
