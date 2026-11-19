@@ -42,7 +42,8 @@ import {
     extractLessonNumber,
     resolveCanonicalLessonName,
     areCriteriaSemanticallySame,
-    normalizeCriterionText
+    normalizeCriterionText,
+    getLessonsForSubTopic
 } from '../services/criteriaService';
 import {
     getSavedExams,
@@ -1196,6 +1197,92 @@ const ExamGenerator: React.FC = () => {
         reader.readAsText(file);
     };
 
+    // --- LESSON & CRITERIA STRICT MATCHING HELPERS ---
+    /**
+     * So khớp chính xác bài học (ĐÚNG BÀI 100%)
+     * Bảo đảm tuyệt đối không bị nhận nhầm ví dụ Bài 1 với Bài 10, Bài 11, Bài 2...
+     */
+    const isLessonStrictMatch = (lessonA: string, lessonB: string, grade?: string): boolean => {
+        if (!lessonA || !lessonB) return false;
+
+        // 1. Nếu cả 2 đều có số bài học ("Bài 1", "Bài 2", "Bài 10", ...): BẮT BUỘC số bài phải giống nhau
+        const numA = extractLessonNumber(lessonA);
+        const numB = extractLessonNumber(lessonB);
+        if (numA && numB) {
+            return numA.toLowerCase() === numB.toLowerCase();
+        }
+
+        const effectiveG = grade ? (grade.match(/\d+/)?.[0] || grade).trim() : '8';
+        const canA = resolveCanonicalLessonName(effectiveG, lessonA);
+        const canB = resolveCanonicalLessonName(effectiveG, lessonB);
+        const canNumA = extractLessonNumber(canA);
+        const canNumB = extractLessonNumber(canB);
+        if (canNumA && canNumB) {
+            return canNumA.toLowerCase() === canNumB.toLowerCase();
+        }
+
+        // 2. Nếu một bên là tên đơn vị kiến thức/chủ đề con trong ma trận (ví dụ: "Sơ lược về lịch sử phát triển máy tính")
+        const subLessonsA = getLessonsForSubTopic(effectiveG, lessonA);
+        const subLessonsB = getLessonsForSubTopic(effectiveG, lessonB);
+        if (subLessonsA.length > 0) {
+            if (subLessonsA.some(l => isLessonStrictMatch(l, lessonB, effectiveG))) return true;
+        }
+        if (subLessonsB.length > 0) {
+            if (subLessonsB.some(l => isLessonStrictMatch(lessonA, l, effectiveG))) return true;
+        }
+
+        // 3. Chuẩn hóa tên bài
+        if (canA && canB && normalizeLessonString(canA) === normalizeLessonString(canB)) {
+            return true;
+        }
+        const normA = normalizeLessonString(lessonA);
+        const normB = normalizeLessonString(lessonB);
+        if (normA && normB && normA === normB) {
+            return true;
+        }
+
+        return false;
+    };
+
+    /**
+     * So khớp tiêu chí Yêu cầu cần đạt (ĐÚNG TIÊU CHÍ YCCĐ 100%)
+     */
+    const isCriterionStrictMatch = (b: BankQuestion, q: BankQuestion, grade: string): boolean => {
+        // Phải đúng bài học trước tiên - không bao giờ so khớp tiêu chí giữa 2 bài khác nhau
+        if (!isLessonStrictMatch(b.lesson, q.lesson, grade)) {
+            return false;
+        }
+
+        // 1. So khớp theo canonical criterion key chuẩn hóa theo bài học (ví dụ: "2:::1.1", "1:::1.1")
+        const keyQ = getCanonicalCriterionKeyForQuestion(q, grade, q.lesson);
+        const keyB = getCanonicalCriterionKeyForQuestion(b, grade, b.lesson);
+        if (keyQ && keyB && keyQ !== 'general:::default' && keyB !== 'general:::default') {
+            if (keyQ === keyB) return true;
+        }
+
+        // 2. So khớp theo mã số tiêu chí (ví dụ: "1.1", "2.1")
+        const codeQ = (q.criteria || '').match(/\b(\d+\.\d+)\b/)?.[1] || q.curriculum?.requirementId;
+        const codeB = (b.criteria || '').match(/\b(\d+\.\d+)\b/)?.[1] || b.curriculum?.requirementId;
+        if (codeQ && codeB) {
+            return codeQ === codeB;
+        }
+
+        // 3. So khớp ngữ nghĩa YCCĐ nếu cả hai có văn bản
+        if (q.criteria && b.criteria) {
+            if (areCriteriaSemanticallySame(q.criteria, b.criteria)) return true;
+            const normQ = normalizeCriterionText(q.criteria);
+            const normB = normalizeCriterionText(b.criteria);
+            if (normQ && normB && (normQ === normB || normQ.includes(normB) || normB.includes(normQ))) return true;
+        }
+
+        // 4. Nếu q không có thông tin tiêu chí thì coi như khớp
+        if (!q.criteria && !q.curriculum?.requirementId) {
+            return true;
+        }
+
+        return false;
+    };
+
     // --- MAIN GENERATION LOGIC ---
     const generateTest = () => {
         const selected: BankQuestion[] = [];
@@ -1342,23 +1429,28 @@ const ExamGenerator: React.FC = () => {
             }
 
             const qLessonRaw = (q.lesson || '').trim();
-            const qLessonNorm = normalizeTextKey(qLessonRaw);
-            const qLessonCode = extractLessonCode(qLessonRaw);
+            if (!qLessonRaw) return false;
 
-            const { lessonTitles, lessonCodes, reqIds } = getMatchedLessonsForRow(lessonName, subTopicName, mainTopicName);
+            // 1. Khớp bài học chính xác tuyệt đối:
+            if (lessonName && isLessonStrictMatch(qLessonRaw, lessonName, targetGrade)) {
+                return true;
+            }
+            if (subTopicName && isLessonStrictMatch(qLessonRaw, subTopicName, targetGrade)) {
+                return true;
+            }
 
+            // 2. Kiểm tra qua mapping YCCĐ chính thức của chương trình
+            const { lessonCodes, reqIds } = getMatchedLessonsForRow(lessonName, subTopicName, mainTopicName);
             if (q.curriculum?.requirementId && reqIds.has(q.curriculum.requirementId)) {
                 return true;
             }
-            if (qLessonCode && lessonCodes.has(qLessonCode)) {
+
+            // 3. Khớp mã số bài học (bảo đảm không nhận nhầm Bài 1 với Bài 10, 11, 12)
+            const qCode = extractLessonCode(qLessonRaw);
+            if (qCode && lessonCodes.has(qCode)) {
                 return true;
             }
-            for (const targetNorm of lessonTitles) {
-                if (!targetNorm) continue;
-                if (qLessonNorm.includes(targetNorm) || targetNorm.includes(qLessonNorm)) {
-                    return true;
-                }
-            }
+
             return false;
         };
 
@@ -1491,17 +1583,7 @@ const ExamGenerator: React.FC = () => {
                 shuffle(tier4)
             ];
 
-            // Tier 5: Nếu trong bài vẫn chưa đủ số câu, tìm thêm các câu chưa dùng thuộc cùng Chủ đề lớn (mainTopicName)
-            const totalInRowTiers = tier1.length + tier2.length + tier3.length + tier4.length;
-            if (totalInRowTiers < count && mainTopicName) {
-                const candidateIds = new Set([...tier1, ...tier2, ...tier3, ...tier4].map(q => q.id));
-                const topicPool = currentActiveBank.filter(q => {
-                    if (usedIds.has(q.id) || candidateIds.has(q.id)) return false;
-                    return doesQuestionMatchRow(q, mainTopicName, mainTopicName, mainTopicName) && q.category === category;
-                });
-                tiers.push(shuffle(topicPool.filter(q => isLevelMatch(q.level, level))));
-                tiers.push(shuffle(topicPool.filter(q => !isLevelMatch(q.level, level))));
-            }
+            // Không tìm ngoài bài học: bảo đảm 100% câu hỏi thuộc đúng bài học của dòng ma trận
 
             // Xác định tập YCCĐ khả dụng cho từng loại câu hỏi khác còn chờ lấy trong cùng (bài, mức độ)
             // để tránh chiếm mất YCCĐ duy nhất của loại câu hỏi khác
@@ -2027,70 +2109,7 @@ const ExamGenerator: React.FC = () => {
     };
 
     // --- STEP 3: REVIEW & EXPORT ---
-    /**
-     * So khớp chính xác bài học (ĐÚNG BÀI 100%)
-     * Bảo đảm tuyệt đối không bị nhận nhầm ví dụ Bài 1 với Bài 10, Bài 11...
-     */
-    const isLessonStrictMatch = (lessonA: string, lessonB: string, grade?: string): boolean => {
-        if (!lessonA || !lessonB) return false;
-        const numA = extractLessonNumber(lessonA);
-        const numB = extractLessonNumber(lessonB);
-        if (numA && numB) {
-            return numA.toLowerCase() === numB.toLowerCase();
-        }
-        if (grade) {
-            const canA = resolveCanonicalLessonName(grade, lessonA);
-            const canB = resolveCanonicalLessonName(grade, lessonB);
-            if (canA && canB && normalizeLessonString(canA) === normalizeLessonString(canB)) {
-                return true;
-            }
-        }
-        const normA = normalizeLessonString(lessonA);
-        const normB = normalizeLessonString(lessonB);
-        if (normA === normB) return true;
 
-        const cleanA = normA.replace(/^bài\s*\d+[a-z]?\s*[:\.]?\s*/i, '').trim();
-        const cleanB = normB.replace(/^bài\s*\d+[a-z]?\s*[:\.]?\s*/i, '').trim();
-        if (cleanA && cleanB && cleanA === cleanB) return true;
-        if (cleanA.length > 6 && cleanB.length > 6 && (cleanA.includes(cleanB) || cleanB.includes(cleanA))) {
-            return true;
-        }
-        return false;
-    };
-
-    /**
-     * So khớp tiêu chí Yêu cầu cần đạt (ĐÚNG TIÊU CHÍ YCCĐ 100%)
-     */
-    const isCriterionStrictMatch = (b: BankQuestion, q: BankQuestion, grade: string): boolean => {
-        // 1. So khớp theo mã số tiêu chí (ví dụ: "1.1", "2.1")
-        const codeQ = (q.criteria || '').match(/\b(\d+\.\d+)\b/)?.[1] || q.curriculum?.requirementId;
-        const codeB = (b.criteria || '').match(/\b(\d+\.\d+)\b/)?.[1] || b.curriculum?.requirementId;
-        if (codeQ && codeB) {
-            return codeQ === codeB;
-        }
-
-        // 2. So khớp theo canonical criterion key chuẩn hóa (tra cứu văn bản YCCĐ trong CURRICULUM và custom store)
-        const keyQ = getCanonicalCriterionKeyForQuestion(q, grade, q.lesson);
-        const keyB = getCanonicalCriterionKeyForQuestion(b, grade, b.lesson);
-        if (keyQ && keyB && keyQ !== 'general:::default' && keyB !== 'general:::default') {
-            if (keyQ === keyB) return true;
-        }
-
-        // 3. So khớp ngữ nghĩa YCCĐ nếu cả hai có văn bản
-        if (q.criteria && b.criteria) {
-            if (areCriteriaSemanticallySame(q.criteria, b.criteria)) return true;
-            const normQ = normalizeCriterionText(q.criteria);
-            const normB = normalizeCriterionText(b.criteria);
-            if (normQ && normB && (normQ === normB || normQ.includes(normB) || normB.includes(normQ))) return true;
-        }
-
-        // 4. Nếu q không có thông tin tiêu chí thì coi như khớp
-        if (!q.criteria && !q.curriculum?.requirementId) {
-            return true;
-        }
-
-        return false;
-    };
 
     const triggerBulkSwap = (targetLevel?: string) => {
         setIsSwapMenuOpen(false);

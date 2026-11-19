@@ -207,4 +207,65 @@ describe('Đổi câu hỏi: Đổi đúng bài và đúng tiêu chí YCCĐ (Str
         expect(replacement.level).toBe('NB');
         expect(replacement.points).toBe(0.25);
     });
+
+    it('5. findMatchingTopic matches exact lesson in Grade 8 and avoids falling back to Input/Output hardware', () => {
+        // Bài 2 Lớp 8: Thông tin trong môi trường số
+        const qBai2 = generateOfflineQuestions(
+            '8',
+            'Bài 2: Thông tin trong môi trường số',
+            'NB',
+            '1.1 - Nêu được đặc điểm của thông tin số',
+            1,
+            'multiple-choice'
+        );
+        expect(qBai2).toHaveLength(1);
+        const text2 = (qBai2[0].content || qBai2[0].text || '').toLowerCase();
+        // Phải nói về thông tin số, không được nói về thiết bị vào ra (bàn phím, chuột quang)
+        expect(text2).toMatch(/thông tin|dữ liệu|môi trường số|số hóa/);
+        expect(text2).not.toMatch(/thiết bị vào \(input device\)/);
+        expect(text2).not.toMatch(/bàn phím và chuột/);
+
+        // Bài 1 Lớp 8: Lược sử công cụ tính toán
+        const qBai1 = generateOfflineQuestions(
+            '8',
+            'Bài 1: Lược sử công cụ tính toán',
+            'NB',
+            '1.1 - Nêu được lược sử phát triển máy tính',
+            1,
+            'multiple-choice'
+        );
+        expect(qBai1).toHaveLength(1);
+        const text1 = (qBai1[0].content || qBai1[0].text || '').toLowerCase();
+        expect(text1).toMatch(/pascal|pascaline|babbage|lovelace|eniac|thế hệ thứ nhất|công cụ tính toán/);
+
+        // Bài 14 Lớp 8: Cấu trúc điều khiển
+        const qBai14 = generateOfflineQuestions(
+            '8',
+            'Bài 14: Cấu trúc điều khiển',
+            'NB',
+            '1.1',
+            1,
+            'multiple-choice'
+        );
+        expect(qBai14).toHaveLength(1);
+        const text14 = (qBai14[0].content || qBai14[0].text || '').toLowerCase();
+        expect(text14).toMatch(/rẽ nhánh|lặp|điều khiển|thuật toán|scratch|khối lệnh/);
+    });
+
+    it('6. createDynamicLessonTopic guarantees correct lesson and criteria for unlisted or custom lessons', () => {
+        const customLesson = 'Bài 99: Chuyên đề Trí tuệ nhân tạo nâng cao';
+        const customCriteria = 'YCCĐ 1.1: Trình bày được ứng dụng của thị giác máy tính';
+        const qCustom = generateOfflineQuestions(
+            '8',
+            customLesson,
+            'NB',
+            customCriteria,
+            1,
+            'multiple-choice'
+        );
+        expect(qCustom).toHaveLength(1);
+        const textCustom = qCustom[0].content || qCustom[0].text || '';
+        expect(textCustom).toContain('Bài 99: Chuyên đề Trí tuệ nhân tạo nâng cao');
+        expect(textCustom).toContain('thị giác máy tính');
+    });
 });
