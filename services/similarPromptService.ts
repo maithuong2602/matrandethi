@@ -148,21 +148,22 @@ D. <Lựa chọn D sai>.
             break;
 
         case 'essay':
-            typeSpecificRule = `- BẮT BUỘC DẠNG TỰ LUẬN 4 Ý (a, b, c, d) KÈM HƯỚNG DẪN CHẤM BẢNG 2 CỘT:
-  + Dòng đầu tiên: Nêu bối cảnh / đề bài bài toán tự luận thực tế ngắn gọn.
+            typeSpecificRule = `- BẮT BUỘC DẠNG TỰ LUẬN 4 Ý (a, b, c, d) KÈM HƯỚNG DẪN CHẤM ĐỂ DỰNG BẢNG BAREM 2 CỘT:
+  + Dòng đầu tiên: Nêu bối cảnh / đề bài tình huống tự luận thực tế ngắn gọn.
   + ĐÚNG 4 ý hỏi đánh dấu: a) ..., b) ..., c) ..., d) ...
-  + Hướng dẫn chấm: BẮT BUỘC gồm ĐÚNG 4 dòng tương ứng a), b), c), d) kèm biểu điểm chi tiết (mỗi ý 0,25 điểm, tổng 1,0 điểm).`;
+  + Hướng dẫn chấm: BẮT BUỘC ghi "Hướng dẫn chấm:" và trình bày ĐÚNG 4 dòng tương ứng a), b), c), d) kèm biểu điểm chi tiết (0,25 điểm/ý, tổng 1,0 điểm) để phần mềm tự động dựng "Bảng Hướng dẫn chấm / Barem (4 ý)" dạng bảng 2 cột (Cột 1: Ý hỏi a, b, c, d | Cột 2: Nội dung đáp án & Thang điểm).`;
             sampleFormat = `${fullHeaderTag}:
-<Bối cảnh đề bài mới>
-a) <Yêu cầu ý a>
-b) <Yêu cầu ý b>
-c) <Yêu cầu ý c>
-d) <Yêu cầu ý d>
+<Bối cảnh / tình huống đề bài tự luận mới>
+a) <Câu hỏi / Yêu cầu thành phần ý a?>
+b) <Câu hỏi / Yêu cầu thành phần ý b?>
+c) <Câu hỏi / Yêu cầu thành phần ý c?>
+d) <Câu hỏi / Yêu cầu thành phần ý d?>
 Hướng dẫn chấm:
-a) <Đáp án chuẩn ý a> - 0,25 điểm.
-b) <Đáp án chuẩn ý b> - 0,25 điểm.
-c) <Đáp án chuẩn ý c> - 0,25 điểm.
-d) <Đáp án chuẩn ý d> - 0,25 điểm.`;
+a) <Nội dung đáp án chi tiết ý a> (0,25 điểm).
+b) <Nội dung đáp án chi tiết ý b> (0,25 điểm).
+c) <Nội dung đáp án chi tiết ý c> (0,25 điểm).
+d) <Nội dung đáp án chi tiết ý d> (0,25 điểm).
+Học sinh có thể trình bày theo cách khác, hợp lí, chính xác thì cho điểm tối đa.`;
             break;
 
         case 'short-answer':
@@ -347,6 +348,19 @@ b) <Phát biểu b> [Sai]
 c) <Phát biểu c> [Đúng]
 d) <Phát biểu d> [Sai]
 Đáp án: a-Đ, b-S, c-Đ, d-S
+
+Câu 3 [VD - 3.1] [Tự luận] (Bài 3: Thực hành xử lý và bảo vệ thông tin):
+<Bối cảnh / Tình huống bài toán tự luận>
+a) <Câu hỏi / Yêu cầu thành phần ý a?>
+b) <Câu hỏi / Yêu cầu thành phần ý b?>
+c) <Câu hỏi / Yêu cầu thành phần ý c?>
+d) <Câu hỏi / Yêu cầu thành phần ý d?>
+Hướng dẫn chấm:
+a) <Nội dung đáp án chi tiết ý a> (0,25 điểm).
+b) <Nội dung đáp án chi tiết ý b> (0,25 điểm).
+c) <Nội dung đáp án chi tiết ý c> (0,25 điểm).
+d) <Nội dung đáp án chi tiết ý d> (0,25 điểm).
+Học sinh có thể trình bày theo cách khác, hợp lí, chính xác thì cho điểm tối đa.
 
 (Tiếp tục lần lượt đầy đủ các thành phần đến hết tất cả các câu theo danh sách ở trên...)
 `;

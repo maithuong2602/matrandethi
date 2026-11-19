@@ -12,7 +12,8 @@ import {
     cleanQuestionContentForWord,
     generateExamWordHtml,
     generateAzotaKeyHtml,
-    generateExamVariants
+    generateExamVariants,
+    parseParts
 } from '../utils';
 import {
     getSavedSimilarExams,
@@ -399,6 +400,28 @@ C. Hard Disk.
 
             // Cú pháp đầy đủ các thành phần
             expect(prompt).toContain('Câu 1 [NB - 1.1] [Trắc nghiệm 1 đáp án] (Bài 1: Lược sử công cụ tính toán):');
+        });
+
+        it('15. builds essay prompt and parses 4-part essay structure to generate 2-column barem table', () => {
+            const essayPrompt = buildSimilarQuestionPrompt(mockQuestionEssay, 2);
+            expect(essayPrompt).toContain('BẮT BUỘC DẠNG TỰ LUẬN 4 Ý (a, b, c, d) KÈM HƯỚNG DẪN CHẤM ĐỂ DỰNG BẢNG BAREM 2 CỘT');
+            expect(essayPrompt).toContain('Hướng dẫn chấm:');
+            expect(essayPrompt).toContain('a) <Nội dung đáp án chi tiết ý a> (0,25 điểm).');
+            expect(essayPrompt).toContain('Bảng Hướng dẫn chấm / Barem (4 ý)');
+
+            // Verify parseParts matches question stems and answer items
+            const qParts = parseParts(mockQuestionEssay.content);
+            const aParts = parseParts(mockQuestionEssay.answer);
+
+            const labeledQParts = qParts.filter(p => p.label);
+            expect(labeledQParts).toHaveLength(4);
+            expect(aParts).toHaveLength(4);
+
+            expect(labeledQParts[0].label).toBe('a)');
+            expect(labeledQParts[0].content).toBe('Nêu dữ liệu đầu vào và đầu ra.');
+            expect(aParts[0].label).toBe('a)');
+            expect(aParts[0].content).toContain('Input: số nguyên n');
+            expect(aParts[0].content).toContain('0,25 điểm');
         });
     });
 });
