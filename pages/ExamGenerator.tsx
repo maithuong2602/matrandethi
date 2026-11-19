@@ -67,6 +67,8 @@ import {
     importSimilarExamBankJson,
     subscribeSimilarExamChange
 } from '../services/similarExamService';
+import { ExamUploadModal } from '../components/ExamUploadModal';
+import { ParsedExamResult } from '../services/examUploadParserService';
 
 export const detectGradeFromContext = (questions?: any[], headerInfo?: any, importedMatrix?: any): string => {
     // 1. Ma trận được chọn (importedMatrix) luôn có độ ưu tiên cao nhất khi tạo/cấu hình đề từ Ma trận
@@ -247,6 +249,7 @@ const ExamGenerator: React.FC = () => {
     const [showSimilarRepoModal, setShowSimilarRepoModal] = useState<boolean>(false);
     const [similarGradeFilter, setSimilarGradeFilter] = useState<string>('all');
     const [similarSearchQuery, setSimilarSearchQuery] = useState<string>('');
+    const [showUploadModal, setShowUploadModal] = useState<boolean>(false);
 
     // Similar Question Modal (Single)
     const [similarModalQuestion, setSimilarModalQuestion] = useState<{ q: BankQuestion; index: number } | null>(null);
@@ -776,6 +779,109 @@ const ExamGenerator: React.FC = () => {
         };
         reader.readAsText(file);
         e.target.value = '';
+    };
+
+    // --- UPLOAD & RECOVER EXAM HANDLERS ---
+    const handleLoadUploadedExam = (parsed: ParsedExamResult) => {
+        const normalizedQs = normalizeExamQuestionPoints(parsed.questions as BankQuestion[]);
+        setGeneratedTest(normalizedQs);
+        if (parsed.headerInfo) {
+            setHeaderInfo(prev => ({
+                ...prev,
+                ...parsed.headerInfo,
+                tenKyThi: parsed.title || parsed.headerInfo.tenKyThi || prev.tenKyThi
+            }));
+        }
+        if (parsed.title) {
+            setCustomFileName(parsed.title);
+            setIsFileNameManuallyEdited(true);
+        }
+        if (parsed.matrixData) {
+            setImportedMatrix(parsed.matrixData);
+        }
+        const availableCodes = ['101', '102', '103', '104', '105', '106', '107', '108'].slice(0, variantCount);
+        const newVariants = parsed.variants && parsed.variants.length > 0
+            ? parsed.variants
+            : generateExamVariants(normalizedQs, availableCodes, shuffleOptions);
+        setVariants(newVariants);
+        setActiveVariantCode(newVariants[0]?.code || '101');
+        setHsktSelectedIds(getDefaultHsktQuestionIds(normalizedQs, parsed.headerInfo || headerInfo));
+        setCurrentDossierId(null);
+        setCurrentSimilarDossierId(null);
+        setReviewTab('regular');
+        setStep('review');
+        showNotice(`Đã tải lên và mở đề thi "${parsed.title}" (${normalizedQs.length} câu) thành công!`);
+    };
+
+    const handleSaveUploadedExamToMainBank = (parsed: ParsedExamResult) => {
+        const normalizedQs = normalizeExamQuestionPoints(parsed.questions as BankQuestion[]);
+        const availableCodes = ['101', '102', '103', '104', '105', '106', '107', '108'].slice(0, variantCount);
+        const variantsToSave = parsed.variants && parsed.variants.length > 0
+            ? parsed.variants
+            : generateExamVariants(normalizedQs, availableCodes, shuffleOptions);
+
+        const saved = saveExamDossier({
+            id: undefined,
+            title: parsed.title || 'Đề thi tải lên',
+            grade: parsed.grade || '8',
+            status: 'approved',
+            questions: normalizedQs,
+            variants: variantsToSave,
+            matrixData: parsed.matrixData || importedMatrix,
+            headerInfo: { ...headerInfo, ...parsed.headerInfo, tenKyThi: parsed.title || headerInfo.tenKyThi },
+            teacherName: teacherName || 'Giáo viên'
+        });
+
+        setCurrentDossierId(saved.id);
+        setCurrentSimilarDossierId(null);
+        setGeneratedTest(normalizedQs);
+        setVariants(variantsToSave);
+        setActiveVariantCode(variantsToSave[0]?.code || '101');
+        setCustomFileName(saved.title);
+        setIsFileNameManuallyEdited(true);
+        if (saved.headerInfo) setHeaderInfo(saved.headerInfo);
+        setHsktSelectedIds(getDefaultHsktQuestionIds(normalizedQs, saved.headerInfo));
+        setReviewTab('regular');
+        setStep('review');
+        showNotice(`Đã lưu thành công đề "${saved.title}" vào Kho Đề Gốc!`);
+    };
+
+    const handleSaveUploadedExamToSimilarBank = (parsed: ParsedExamResult) => {
+        const normalizedQs = normalizeExamQuestionPoints(parsed.questions as BankQuestion[]);
+        const availableCodes = ['101', '102', '103', '104', '105', '106', '107', '108'].slice(0, variantCount);
+        const variantsToSave = parsed.variants && parsed.variants.length > 0
+            ? parsed.variants
+            : generateExamVariants(normalizedQs, availableCodes, shuffleOptions);
+
+        let titleVal = parsed.title || 'Đề tương tự tải lên';
+        if (!titleVal.toLowerCase().includes('tương tự') && !titleVal.toLowerCase().includes('biến thể')) {
+            titleVal = `${titleVal} (Đề tương tự)`;
+        }
+
+        const saved = saveSimilarExamDossier({
+            id: undefined,
+            title: titleVal,
+            grade: parsed.grade || '8',
+            status: 'approved',
+            questions: normalizedQs,
+            variants: variantsToSave,
+            matrixData: parsed.matrixData || importedMatrix,
+            headerInfo: { ...headerInfo, ...parsed.headerInfo, tenKyThi: titleVal },
+            teacherName: teacherName || 'Giáo viên'
+        });
+
+        setCurrentSimilarDossierId(saved.id);
+        setCurrentDossierId(null);
+        setGeneratedTest(normalizedQs);
+        setVariants(variantsToSave);
+        setActiveVariantCode(variantsToSave[0]?.code || '101');
+        setCustomFileName(saved.title);
+        setIsFileNameManuallyEdited(true);
+        if (saved.headerInfo) setHeaderInfo(saved.headerInfo);
+        setHsktSelectedIds(getDefaultHsktQuestionIds(normalizedQs, saved.headerInfo));
+        setReviewTab('regular');
+        setStep('review');
+        showNotice(`Đã lưu thành công đề "${saved.title}" vào Kho Đề Tương Tự!`);
     };
 
     const [bulkPoints, setBulkPoints] = useState(0.25);
@@ -2698,7 +2804,7 @@ const ExamGenerator: React.FC = () => {
             <header className="mb-5 flex flex-wrap items-center justify-between gap-4 bg-white px-5 py-4 rounded-2xl border border-gray-200 shadow-xs">
                 <div>
                     <h1 className="text-xl sm:text-2xl font-extrabold text-gray-900 flex items-center gap-2.5">
-                        <Layers className="text-primary" size={24} /> Tạo Đề Kiểm Tra & Đề HSKT
+                        <Layers className="text-primary" size={24} /> Tạo Đề Thi & Đề HSKT
                     </h1>
                     <p className="text-gray-500 text-xs mt-0.5">
                         Tự động ra đề theo Ma trận chuẩn 7991, tách riêng Đề & Biểu mẫu chấm dành cho Học sinh khuyết tật (HSKT).
@@ -2741,12 +2847,46 @@ const ExamGenerator: React.FC = () => {
                         <Sparkles size={15} className="text-purple-600" />
                         Kho Đề Tương Tự ({allSavedSimilarExams.length})
                     </button>
+                    <button
+                        type="button"
+                        onClick={() => setShowUploadModal(true)}
+                        className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+                        title="Tải lên đề thi đã xuất (.doc, .json, text) để khôi phục vào ExamMaster Pro"
+                    >
+                        <Upload size={15} />
+                        Tải Lên Đề Thi (.doc / .json)
+                    </button>
                 </div>
             </header>
 
             {/* STEP 1: STREAMLINED CONFIGURATION & QUESTION SOURCE */}
             {(step === 'config' || step === 'upload') && (
                 <div className="space-y-5">
+                    {/* Upload / Restore Exam Banner */}
+                    <div className="bg-gradient-to-r from-indigo-50 via-blue-50 to-white border border-indigo-200/80 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
+                        <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-sm shrink-0">
+                                <Upload size={20} />
+                            </div>
+                            <div>
+                                <h4 className="text-xs font-bold text-slate-800 flex items-center gap-2">
+                                    Đã có đề thi xuất ra Word (.doc) hoặc tệp .json từ trước?
+                                    <span className="text-[10px] bg-indigo-100 text-indigo-700 font-bold px-2 py-0.5 rounded-full">Khôi phục nhanh</span>
+                                </h4>
+                                <p className="text-[11px] text-slate-500">
+                                    Quên chưa lưu vào Kho Pro? Tải tệp lên để hệ thống tự động bóc tách câu hỏi, bảng đáp án và đưa vào biên tập ngay!
+                                </p>
+                            </div>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setShowUploadModal(true)}
+                            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
+                        >
+                            <Upload size={14} /> Tải Lên Đề Thi Đã Có
+                        </button>
+                    </div>
+
                     {/* Compact Question Source & Grade Bar */}
                     <div className="bg-white rounded-2xl shadow-xs p-4 sm:p-5 border border-gray-200 flex flex-wrap items-center justify-between gap-4">
                         <div className="flex flex-wrap items-center gap-3">
@@ -3138,6 +3278,14 @@ const ExamGenerator: React.FC = () => {
                                         title="Lưu đề thi này vào Kho Đề Tương Tự riêng biệt (không lẫn đề gốc)"
                                     >
                                         <Sparkles size={14} className="text-purple-600" /> {currentSimilarDossierId ? 'Cập nhật Kho Đề Tương Tự' : 'Lưu Kho Đề Tương Tự'}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowUploadModal(true)}
+                                        className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-xl text-xs font-bold flex items-center gap-1 shrink-0 cursor-pointer"
+                                        title="Tải lên đề thi đã xuất (.doc, .json, text)"
+                                    >
+                                        <Upload size={14} /> Tải Lên Đề Khác
                                     </button>
                                 </div>
                             </div>
@@ -4705,6 +4853,15 @@ const ExamGenerator: React.FC = () => {
                     </div>
                 </div>
             )}
+
+            {/* UPLOAD & RECOVER EXAM MODAL */}
+            <ExamUploadModal
+                isOpen={showUploadModal}
+                onClose={() => setShowUploadModal(false)}
+                onLoadIntoEditor={handleLoadUploadedExam}
+                onSaveToMainBank={handleSaveUploadedExamToMainBank}
+                onSaveToSimilarBank={handleSaveUploadedExamToSimilarBank}
+            />
 
             {/* TOAST NOTIFICATION */}
             {toastMsg && (
